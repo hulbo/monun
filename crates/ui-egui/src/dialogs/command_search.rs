@@ -12,7 +12,8 @@ pub(super) fn command_search(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dial
         )
     });
     let width = ui.available_width();
-    let hint = crate::i18n::current(ui.ctx()).tr("Type a command, e.g. freeze, chart, bold…");
+    let lang = crate::i18n::current(ui.ctx());
+    let hint = lang.tr("Type a command, e.g. freeze, chart, bold…");
     let r = ui.add(egui::TextEdit::singleline(&mut d.search).desired_width(width).hint_text(hint));
 
     if !d.focus_initialized {
@@ -20,14 +21,18 @@ pub(super) fn command_search(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dial
         d.focus_initialized = true;
     }
 
-    let q = d.search.to_ascii_lowercase();
+    // Commands are found by their English label and id as well as the translated label.
+    let q = d.search.to_lowercase();
     let cmds: Vec<(String, String, String)> = app
         .session
         .commands()
         .into_iter()
         .filter(|c| c.enabled)
-        .filter(|c| q.is_empty() || c.label.to_ascii_lowercase().contains(&q) || c.id.to_ascii_lowercase().contains(&q))
-        .map(|c| (c.id.to_string(), c.label.to_string(), c.menu.join(" › ")))
+        .map(|c| (c.id, c.label, lang.tr_in("Command", c.label), c.menu))
+        .filter(|(id, english, label, _)| {
+            q.is_empty() || english.to_lowercase().contains(&q) || id.to_lowercase().contains(&q) || label.to_lowercase().contains(&q)
+        })
+        .map(|(id, _, label, menu)| (id.to_string(), label.to_string(), lang.menu_path(&menu)))
         .take(40)
         .collect();
 

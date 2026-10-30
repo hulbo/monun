@@ -288,9 +288,9 @@ fn short(v: &Json) -> String {
     if text.chars().count() > 40 { format!("{}…", text.chars().take(39).collect::<String>()) } else { text }
 }
 
-/// The label of command `id` (`Set Cell`), or the id when it isn't a command.
-pub fn command_label(id: &str) -> String {
-    monun_engine::find_command(id).map(|c| c.label.to_string()).unwrap_or_else(|| id.to_string())
+/// The label of command `id` in `lang` (`Enter Cell`, `셀 입력`), or the id when it isn't a command.
+pub fn command_label(lang: Language, id: &str) -> String {
+    monun_engine::find_command(id).map(|c| lang.tr_in("Command", c.label).to_string()).unwrap_or_else(|| id.to_string())
 }
 
 /// A step in one line: "Set D2 to =B2*C2", "Repeat for each row of Input.data".
@@ -302,7 +302,7 @@ pub fn summary(lang: Language, st: &Step) -> String {
                 ("cell.set", Some(c), Some(i), _) => fill(lang.tr("Set {cell} to {input}"), &[("{cell}", &c), ("{input}", &i)]),
                 ("selection.set", _, _, Some(r)) => lang.tr("Select {range}").replace("{range}", &r),
                 _ => {
-                    let label = command_label(id);
+                    let label = command_label(lang, id);
                     let args: Vec<String> =
                         params.as_object().map(|o| o.iter().take(3).map(|(k, v)| format!("{k}: {}", short(v))).collect()).unwrap_or_default();
                     if args.is_empty() { label } else { format!("{label} · {}", args.join(", ")) }
@@ -1237,7 +1237,7 @@ fn status_line(app: &SheetApp, ui: &mut Ui, ed: &Editor, t: &Tokens) {
         let cur = &st["current"];
         let step = cur["step"].as_str().unwrap_or("");
         let what = match cur["kind"].as_str() {
-            Some("command") => command_label(cur["command"].as_str().unwrap_or("")),
+            Some("command") => command_label(lang, cur["command"].as_str().unwrap_or("")),
             Some("repeat") => lang.tr("Repeat").into(),
             Some("if") => lang.tr("If").into(),
             Some("stop") => lang.tr("Stop").into(),
@@ -1489,8 +1489,8 @@ fn delete(ed: &mut Editor) {
 
 // ---------------------------------------------------------------- Add Step
 
-/// The steps the picker offers for `query`: control steps first (found by their English or
-/// translated label), then commands a macro may run.
+/// The steps the picker offers for `query`: control steps first, then commands a macro may run,
+/// each found by its English or translated label (a command also by its id).
 pub fn picker_items(lang: Language, query: &str) -> Vec<(String, String, String)> {
     let q = query.trim().to_lowercase();
     let mut out: Vec<(String, String, String)> = [
@@ -1506,8 +1506,9 @@ pub fn picker_items(lang: Language, query: &str) -> Vec<(String, String, String)
         if matches!(macro_policy(c.id, &json!({}), monun_engine::Trust::Local), Policy::Deny(_)) || c.id.starts_with("ui.") {
             continue;
         }
-        if q.is_empty() || c.label.to_ascii_lowercase().contains(&q) || c.id.to_ascii_lowercase().contains(&q) {
-            out.push((c.id.to_string(), c.label.to_string(), c.menu.join(" › ")));
+        let label = lang.tr_in("Command", c.label);
+        if q.is_empty() || c.label.to_lowercase().contains(&q) || c.id.to_lowercase().contains(&q) || label.to_lowercase().contains(&q) {
+            out.push((c.id.to_string(), label.to_string(), lang.menu_path(c.menu)));
         }
         if out.len() >= 60 {
             break;
@@ -1776,7 +1777,7 @@ fn step_tab(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, ed: &mut Editor) {
         let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
         icons::paint(ui.painter(), r, icon, t.cat(cat));
         let title = match &st.kind {
-            StepKind::Command { id, .. } => command_label(id),
+            StepKind::Command { id, .. } => command_label(lang, id),
             StepKind::Repeat { .. } => lang.tr("Repeat").into(),
             StepKind::If { .. } => lang.tr("If").into(),
             StepKind::Stop { .. } => lang.tr("Stop").into(),
@@ -2502,6 +2503,13 @@ mod tests {
         for query in ["반복", "repeat"] {
             assert_eq!(picker_items(Language::Ko, query).first().map(|x| (x.0.as_str(), x.1.as_str())), Some(("@repeat", "각 행 반복")), "{query}");
         }
+        // Commands show their Korean label, found by it, by the English one and by the id.
+        for query in ["셀 입력", "enter cell", "cell.set"] {
+            assert!(picker_items(Language::Ko, query).iter().any(|x| x.0 == "cell.set" && x.1 == "셀 입력"), "{query}");
+        }
+        assert_eq!(command_label(Language::Ko, "cell.set"), "셀 입력");
+        assert_eq!(command_label(Language::En, "cell.set"), "Enter Cell");
+        assert_eq!(summary(Language::Ko, &Step::command("home.bold", json!({"range": "A1:B2"}))), "굵게 · range: A1:B2");
     }
 
     #[test]

@@ -194,7 +194,28 @@ impl Language {
     /// A label that needs two translations (Home's text "Orientation" vs Page Layout's print
     /// "Orientation") is keyed `context|label`: English shows only the part after the `|`.
     pub fn tr(self, text: &str) -> &str {
-        let translated = match self {
+        self.translate(text).unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
+    }
+
+    /// Translates `text` as `context` uses it: the catalog's `context|text` row when it has one,
+    /// else `text`'s own. Command labels are looked up in context `Command` and their menu names
+    /// in `Menu` (engine text, English only), so only the ones that read differently from the
+    /// interface label of the same name need a row of their own.
+    pub fn tr_in<'a>(self, context: &str, text: &'a str) -> &'a str {
+        if self == Self::En {
+            return text;
+        }
+        self.translate(&format!("{context}|{text}")).unwrap_or_else(|| self.tr(text))
+    }
+
+    /// A command's menu placement in this language: `Home › Font`.
+    pub fn menu_path(self, menu: &[&str]) -> String {
+        menu.iter().map(|name| self.tr_in("Menu", name)).collect::<Vec<_>>().join(" › ")
+    }
+
+    /// This language's catalog row for `text`, if it has one.
+    fn translate(self, text: &str) -> Option<&'static str> {
+        match self {
             Self::En => None,
             Self::Es => es::translate(text),
             Self::El => el::translate(text),
@@ -214,8 +235,7 @@ impl Language {
             Self::Vi => vi::translate(text),
             Self::Nl => nl::translate(text),
             Self::Ro => ro::translate(text),
-        };
-        translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
+        }
     }
 
     pub(crate) fn tr_error(self, message: &str) -> String {
@@ -372,6 +392,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The command search and the macro steps show every engine command in Korean: its label and
+    /// its menu names have rows (a label without letters, `100%`, needs none).
+    #[test]
+    fn engine_commands_read_in_korean() {
+        for c in monun_engine::command_specs() {
+            if c.label.chars().any(char::is_alphabetic) {
+                assert_ne!(Language::Ko.tr_in("Command", c.label), c.label, "{} has no Korean label", c.id);
+            }
+            for name in c.menu {
+                assert_ne!(Language::Ko.tr_in("Menu", name), *name, "{}: menu {name:?} has no Korean name", c.id);
+            }
+        }
+        // A `Command|` or `Menu|` row wins over the interface label; English shows the text as is.
+        assert_eq!(Language::Ko.tr("Center"), "가운데");
+        assert_eq!(Language::Ko.tr_in("Command", "Center"), "가운데 맞춤");
+        assert_eq!(Language::Ko.tr_in("Command", "Enter Cell"), "셀 입력");
+        assert_eq!(Language::Ko.menu_path(&["Home", "Number"]), "홈 › 표시 형식");
+        assert_eq!(Language::En.tr_in("Command", "Center"), "Center");
+        assert_eq!(Language::En.menu_path(&["Home", "Number"]), "Home › Number");
     }
 
     /// The screen-reader names for the formula-bar controls must be translated in every catalog
