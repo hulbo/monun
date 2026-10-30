@@ -475,6 +475,7 @@ const MORE: &[(&str, &str)] = &[
     ("Gradebook", "성적표"),
     ("this workbook", "이 통합 문서"),
     ("Do you want to save the changes you made to {title}?", "{title}의 변경 내용을 저장하시겠습니까?"),
+    ("{title} — Edited", "{title} — 편집됨"),
     ("Save a copy as .{format}", ".{format} 형식으로 사본 저장"),
     ("Select a chart first.", "먼저 차트를 선택하세요."),
     // Dialog titles
