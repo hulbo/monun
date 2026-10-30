@@ -255,6 +255,20 @@ fn closing_the_window_asks_about_every_unsaved_workbook() {
 }
 
 #[test]
+fn the_save_prompt_asks_once_with_save_first() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("cell.set", serde_json::json!({"cell": "A1", "input": "42"})).unwrap();
+    h.run_steps(2);
+    request_window_close(&mut h);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("saveChanges"));
+    // The title asks; no second line repeats the question with the workbook's name.
+    assert!(h.query_by_label_contains("Do you want to save the changes").is_none());
+    // Excel for Windows' order: Save, Don't Save, Cancel, left to right.
+    let x = |label: &str| h.get_by_role_and_label(egui::accesskit::Role::Button, label).rect().left();
+    assert!(x("Save") < x("Don't Save") && x("Don't Save") < x("Cancel"));
+}
+
+#[test]
 fn closing_the_window_can_save_first_and_a_saved_workbook_closes_at_once() {
     let dir = std::env::temp_dir().join(format!("monun-close-window-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -565,7 +579,7 @@ fn save_a_copy_with_a_bare_name_asks_where_to_save_it() {
         h.run_steps(3);
         h.state_mut().dialog.as_mut().unwrap().values.insert("path".into(), serde_json::json!(path));
         h.run_steps(2);
-        h.get_by_label("   OK   ").click();
+        h.get_by_label("OK").click();
         h.run_steps(3);
     };
     let name = format!("monun-save-copy-{}", std::process::id());

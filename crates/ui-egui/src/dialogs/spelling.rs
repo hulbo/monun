@@ -10,7 +10,8 @@ pub(super) fn spelling(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, op
     let issues = r["issues"].as_array().cloned().unwrap_or_default();
     let Some(it) = issues.get(d.list_index) else {
         ui.label(lang.tr("The spelling check is complete for the entire sheet."));
-        if ui.button(lang.tr("OK")).clicked() {
+        ui.add_space(8.0);
+        if crate::widgets::dialog_buttons(ui, &[crate::widgets::DialogButton::confirm("OK")]).is_some() {
             *open = false;
         }
         return;

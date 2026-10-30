@@ -1,5 +1,6 @@
 use super::show::{form_fields, ok_cancel};
 use super::{Dialog, Field, Json, Map, SheetApp, json, vec2};
+use crate::widgets::DialogButton;
 
 pub(super) fn goal_seek(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
     let lang = app.ui.language;
@@ -116,16 +117,18 @@ pub(super) fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Di
     let lang = app.ui.language;
     if d.values.get("askOverwrite").and_then(Json::as_bool) == Some(true) {
         ui.label(lang.tr("The output range already holds data. Replace it with the report?"));
-        ui.horizontal(|ui| {
-            if ui.button(lang.tr("Replace")).clicked() {
+        ui.add_space(8.0);
+        match crate::widgets::dialog_buttons(ui, &[DialogButton::confirm("Replace"), DialogButton::neutral("Cancel")]) {
+            Some(0) => {
                 d.values.remove("askOverwrite");
                 d.values.insert("overwrite".into(), json!(true));
                 *confirm = true;
             }
-            if ui.button(lang.tr("Cancel")).clicked() {
+            Some(_) => {
                 d.values.remove("askOverwrite");
             }
-        });
+            None => {}
+        }
         return;
     }
     let tool = d.values.get("tool").and_then(Json::as_str).unwrap_or("").to_string();
@@ -290,16 +293,11 @@ pub(super) fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open
         .small(),
     );
     ui.add_space(8.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let t = crate::theme::Tokens::get(ui.ctx());
-        let solve = ui.add(egui::Button::new(egui::RichText::new(format!("  {}  ", lang.tr("Solve"))).color(t.on_accent)).fill(t.accent));
-        if solve.clicked() && !text(d, "objective").trim().is_empty() {
-            *confirm = true;
-        }
-        if ui.button(format!(" {} ", lang.tr("Close"))).clicked() {
-            *open = false;
-        }
-    });
+    match crate::widgets::dialog_buttons(ui, &[DialogButton::confirm("Solve"), DialogButton::neutral("Close")]) {
+        Some(0) if !text(d, "objective").trim().is_empty() => *confirm = true,
+        Some(1) => *open = false,
+        _ => {}
+    }
 }
 
 /// Solver Results: the outcome, and keeping or restoring the variable cells.

@@ -55,3 +55,12 @@ pub fn harness_with(builder: HarnessBuilder<SheetApp>, app: SheetApp, steps: usi
 pub fn os_harness(session: Session, os: egui::os::OperatingSystem) -> Harness {
     harness_with(builder().with_os(os).with_size(egui::vec2(1200.0, 800.0)), app(session), 4)
 }
+
+/// The dialog button `label` (OK, Cancel): the lowest button of that name, as the formula bar's
+/// ✕ (Cancel) and ✓ (Enter) sit above every dialog.
+pub fn dialog_button<'h>(h: &'h Harness, label: &'h str) -> egui_kittest::Node<'h> {
+    use egui_kittest::kittest::Queryable as _;
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, label)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .expect("get_all_by_role_and_label found the button")
+}

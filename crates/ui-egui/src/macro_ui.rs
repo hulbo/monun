@@ -10,6 +10,7 @@ use serde_json::{Value as Json, json};
 use crate::SheetApp;
 use crate::dialogs::Dialog;
 use crate::theme::{self, Tokens};
+use crate::widgets::DialogButton;
 
 /// Shortcut rules live in the engine, so the dialogs and `macro.record` agree.
 pub use monun_engine::macros::{RESERVED_SHORTCUTS, parse_shortcut, shortcut_conflict, shortcut_text};
@@ -202,20 +203,23 @@ pub fn question_box(app: &mut SheetApp, ctx: &egui::Context) {
         ui.label(egui::RichText::new(&q.title).strong());
         ui.add(egui::Label::new(&q.text).wrap());
         ui.add_space(8.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some(None);
-            }
-            // Right to left: list the choices reversed, so the first one ends up next to Cancel
-            // and Enter picks it.
-            for (k, (label, extra)) in q.choices.iter().enumerate().rev() {
-                if ui.add(egui::Button::new(label.as_str()).min_size(vec2(72.0, 0.0))).clicked()
-                    || (k == 0 && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    answer = Some(Some(extra.clone()));
-                }
-            }
-        });
+        // The macro's choices, the first one (Enter) going ahead, then Cancel (Esc).
+        let mut row: Vec<DialogButton<'_>> = q
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(k, (label, _))| if k == 0 { DialogButton::confirm(label) } else { DialogButton::neutral(label) })
+            .collect();
+        row.push(DialogButton::neutral("Cancel"));
+        let clicked = crate::widgets::dialog_buttons(ui, &row);
+        let pick = |k: usize| q.choices.get(k).map(|(_, extra)| extra.clone());
+        match clicked {
+            Some(k) if k < q.choices.len() => answer = Some(pick(k)),
+            Some(_) => answer = Some(None),
+            None if ui.input(|i| i.key_pressed(egui::Key::Escape)) => answer = Some(None),
+            None if !q.choices.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Enter)) => answer = Some(pick(0)),
+            None => {}
+        }
     });
     match answer {
         // Another workbook became active meanwhile (an agent): the answer would run there.
@@ -539,15 +543,11 @@ fn options(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog) {
     let mut desc = d.values.get("description").and_then(Json::as_str).unwrap_or("").to_string();
     ui.add(egui::TextEdit::multiline(&mut desc).desired_rows(3).desired_width(f32::INFINITY).id_salt("macro_description")).labelled_by(label.id);
     ui.add_space(6.0);
-    let mut done = false;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.button("Cancel").clicked() {
-            done = true;
-        }
-        if ui.add_enabled(conflict.is_none(), egui::Button::new("OK")).clicked() {
-            done = save_options(app, &name, letter, &desc);
-        }
-    });
+    let done = match crate::widgets::dialog_buttons(ui, &[DialogButton::confirm("OK").enabled(conflict.is_none()), DialogButton::neutral("Cancel")]) {
+        Some(0) => save_options(app, &name, letter, &desc),
+        Some(_) => true,
+        None => false,
+    };
     d.values.insert("shortcut".into(), json!(key));
     d.values.insert("description".into(), json!(desc));
     if done {
@@ -641,11 +641,8 @@ pub fn record_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
         ui.label(egui::RichText::new(p).color(Tokens::get(ui.ctx()).danger));
     }
     ui.add_space(6.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.button("Cancel").clicked() {
-            *open = false;
-        }
-        if ui.add_enabled(problem.is_none(), egui::Button::new("OK")).clicked() {
+    match crate::widgets::dialog_buttons(ui, &[DialogButton::confirm("OK").enabled(problem.is_none()), DialogButton::neutral("Cancel")]) {
+        Some(0) => {
             let mut p = json!({"name": name.trim(), "description": desc, "relative": app.macros.relative});
             if !key.trim().is_empty() {
                 p["shortcut"] = json!(key.trim());
@@ -655,7 +652,9 @@ pub fn record_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
                 Err(e) => app.message = Some(("Record Macro".into(), crate::clean_error(&e))),
             }
         }
-    });
+        Some(_) => *open = false,
+        None => {}
+    }
     d.values.insert("name".into(), json!(name));
     d.values.insert("shortcut".into(), json!(key));
     d.values.insert("description".into(), json!(desc));

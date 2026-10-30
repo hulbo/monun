@@ -12,6 +12,7 @@ use super::paste::{paste_special, paste_special_shortcuts};
 use super::spelling::spelling;
 use super::zoom::zoom;
 use super::{Dialog, Field, Json, Key, Map, RefPick, SheetApp, json, vec2};
+use crate::widgets::DialogButton;
 
 /// Builds the command params from form values for dialogs that need translation.
 /// The parameters OK sends to the dialog's command: its field values, reshaped per dialog.
@@ -308,19 +309,16 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     }
                 }
                 "saveChanges" => {
-                    let lang = app.ui.language;
-                    let title = d.values.get("title").and_then(Json::as_str).unwrap_or(lang.tr("this workbook"));
-                    ui.label(lang.tr("Do you want to save the changes you made to {title}?").replace("{title}", title));
+                    // The window title asks the question; the window bar names the workbook.
                     let quitting = d.values.get("quit").and_then(Json::as_bool) == Some(true);
-                    ui.horizontal(|ui| {
-                        for (label, answer) in
-                            [("Don't Save", crate::SaveAnswer::DontSave), ("Cancel", crate::SaveAnswer::Cancel), ("Save", crate::SaveAnswer::Save)]
-                        {
-                            if ui.button(lang.tr(label)).clicked() && app.answer_save_changes(answer, quitting, ui.ctx()) {
-                                open = false;
-                            }
-                        }
-                    });
+                    ui.add_space(6.0);
+                    let row = [DialogButton::confirm("Save"), DialogButton::discard("Don't Save"), DialogButton::neutral("Cancel")];
+                    let answers = [crate::SaveAnswer::Save, crate::SaveAnswer::DontSave, crate::SaveAnswer::Cancel];
+                    if let Some(answer) = crate::widgets::dialog_buttons(ui, &row).and_then(|i| answers.get(i).copied())
+                        && app.answer_save_changes(answer, quitting, ui.ctx())
+                    {
+                        open = false;
+                    }
                 }
                 "start" => {
                     let lang = app.ui.language;
@@ -433,21 +431,12 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
 
 pub(super) fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
     ui.add_space(8.0);
-    // A row as tall as the buttons: a right-to-left layout straight in the window takes all the
-    // height it is offered, which stretched every form dialog to the screen's height.
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let lang = crate::i18n::current(ui.ctx());
-            let t = crate::theme::Tokens::get(ui.ctx());
-            let ok = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(t.on_accent)).fill(t.accent));
-            if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
-                *confirm = true;
-            }
-            if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
-                *open = false;
-            }
-        })
-    });
+    match crate::widgets::dialog_buttons(ui, &[DialogButton::confirm("OK"), DialogButton::neutral("Cancel")]) {
+        Some(0) => *confirm = true,
+        Some(_) => *open = false,
+        None if ui.input(|i| i.key_pressed(Key::Enter)) => *confirm = true,
+        None => {}
+    }
 }
 
 fn form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {

@@ -73,6 +73,10 @@ pub struct Tokens {
     pub menu_bg: Color32,
     pub shadow: Color32,
     pub danger: Color32,
+    /// Dialog buttons, tinted softly by what they do: going ahead (OK, Save) and throwing work
+    /// away (Don't Save, Undo Changes). Text on them is `text`.
+    pub confirm_fill: Color32,
+    pub discard_fill: Color32,
     /// Background error checking: the corner triangle, and the warning button's diamond and mark.
     pub error_check_green: Color32,
     pub warning_fill: Color32,
@@ -211,6 +215,8 @@ impl Tokens {
             menu_bg: pick(dark, Color32::WHITE, Color32::from_rgb(0x30, 0x30, 0x30)),
             shadow: pick(dark, Color32::from_black_alpha(40), Color32::from_black_alpha(90)),
             danger: pick(dark, Color32::from_rgb(0xC4, 0x2B, 0x1C), Color32::from_rgb(0xFF, 0x95, 0x85)),
+            confirm_fill: pick(dark, Color32::from_rgb(0xDD, 0xEF, 0xE3), Color32::from_rgb(0x26, 0x43, 0x30)),
+            discard_fill: pick(dark, Color32::from_rgb(0xF8, 0xE3, 0xE0), Color32::from_rgb(0x4A, 0x2D, 0x2A)),
             error_check_green: pick(dark, Color32::from_rgb(0x1E, 0x8E, 0x3E), Color32::from_rgb(0x4C, 0xC2, 0x6B)),
             warning_fill: Color32::from_rgb(0xF2, 0xB7, 0x05),
             warning_ink: Color32::BLACK,
@@ -370,6 +376,8 @@ mod contrast_tests {
         }
         add("icon stroke on paper", t.text, t.paper, GLYPH);
         add("on_accent on accent", t.on_accent, t.accent, TEXT);
+        add("text on a confirm button", t.text, t.confirm_fill, TEXT);
+        add("text on a discard button", t.text, t.discard_fill, TEXT);
         add("warning glyph", t.on_warning, t.warning, TEXT);
         add("notice text (warning)", t.text, t.notice_warn_bg, TEXT);
         add("notice text (info)", t.text, t.notice_info_bg, TEXT);

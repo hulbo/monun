@@ -62,16 +62,9 @@ pub(super) fn paste_special(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialo
             d.values.insert("link".into(), json!(true));
             *confirm = true;
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let ok = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(t.on_accent)).fill(t.accent));
-            if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
-                *confirm = true;
-            }
-            if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
-                *open = false;
-            }
-        });
     });
+    ui.add_space(6.0);
+    super::show::ok_cancel(ui, confirm, open);
 }
 
 /// Paste Special's legacy mnemonics select options; Enter still performs the paste.

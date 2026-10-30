@@ -548,8 +548,8 @@ fn palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str, more_colors:
             ui.painter().rect_stroke(sw, 1.0, Stroke::new(1.0, Color32::from_gray(160)), StrokeKind::Inside);
             ui.label(egui::RichText::new(lang.tr("Color|New")).small());
         });
-        ui.horizontal(|ui| {
-            if ui.button(format!("  {}  ", lang.tr("OK"))).clicked() {
+        match dialog_buttons(ui, &[DialogButton::confirm("OK"), DialogButton::neutral("Cancel")]) {
+            Some(0) => {
                 // A hex still being typed that is not a colour falls back to the picker's.
                 let c = parse_hex(&m.hex).unwrap_or_else(|| m.hsva.to_srgb());
                 let hex = hex_of(c);
@@ -557,10 +557,9 @@ fn palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str, more_colors:
                 picked = Some(hex);
                 done = true;
             }
-            if ui.button(lang.tr("Cancel")).clicked() {
-                done = true;
-            }
-        });
+            Some(_) => done = true,
+            None => {}
+        }
         if done {
             more = None;
         }
@@ -569,6 +568,81 @@ fn palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str, more_colors:
     ui.data_mut(|d| d.insert_temp(more_id, more));
     ui.data_mut(|d| d.insert_temp(pal_id, cur));
     picked
+}
+
+/// What a dialog button does, which picks its tint: going ahead (OK, Save, Replace), throwing work
+/// away (Don't Save, Undo Changes), or only backing out (Cancel, Close).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonKind {
+    Confirm,
+    Discard,
+    Neutral,
+}
+
+/// One button of a [`dialog_buttons`] row; its English label is translated when drawn.
+#[derive(Clone, Copy, Debug)]
+pub struct DialogButton<'a> {
+    label: &'a str,
+    kind: ButtonKind,
+    enabled: bool,
+}
+
+impl<'a> DialogButton<'a> {
+    pub fn confirm(label: &'a str) -> Self {
+        Self { label, kind: ButtonKind::Confirm, enabled: true }
+    }
+    pub fn discard(label: &'a str) -> Self {
+        Self { label, kind: ButtonKind::Discard, enabled: true }
+    }
+    pub fn neutral(label: &'a str) -> Self {
+        Self { label, kind: ButtonKind::Neutral, enabled: true }
+    }
+    pub fn enabled(self, enabled: bool) -> Self {
+        Self { enabled, ..self }
+    }
+}
+
+/// Every dialog button is at least this big, a little larger than egui's.
+const DIALOG_BUTTON: egui::Vec2 = vec2(84.0, 26.0);
+
+/// A dialog's closing row: the buttons centred in Excel for Windows' order (going ahead first,
+/// Cancel last), a little larger than egui's, with soft fills by [`ButtonKind`] that tell them
+/// apart without shouting. Returns the index of the clicked button. Keys (Enter, Esc) stay with
+/// the caller, which knows what they mean in its dialog.
+pub fn dialog_buttons(ui: &mut Ui, buttons: &[DialogButton<'_>]) -> Option<usize> {
+    let lang = i18n::current(ui.ctx());
+    let t = Tokens::get(ui.ctx());
+    let pad = ui.spacing().button_padding.x * 2.0;
+    let labels: Vec<egui::WidgetText> = buttons
+        .iter()
+        .map(|b| {
+            let text = egui::RichText::new(lang.tr(b.label));
+            if b.kind == ButtonKind::Neutral { text.into() } else { text.color(t.text).into() }
+        })
+        .collect();
+    let widths: Vec<f32> = labels
+        .iter()
+        .map(|l| {
+            (l.clone().into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button).size().x + pad).max(DIALOG_BUTTON.x)
+        })
+        .collect();
+    let total = widths.iter().sum::<f32>() + ui.spacing().item_spacing.x * (widths.len().saturating_sub(1)) as f32;
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+        for (i, (b, label)) in buttons.iter().zip(labels).enumerate() {
+            let mut button = egui::Button::new(label).min_size(vec2(widths.get(i).copied().unwrap_or(DIALOG_BUTTON.x), DIALOG_BUTTON.y));
+            match b.kind {
+                ButtonKind::Confirm => button = button.fill(t.confirm_fill),
+                ButtonKind::Discard => button = button.fill(t.discard_fill),
+                ButtonKind::Neutral => {}
+            }
+            if ui.add_enabled(b.enabled, button).clicked() {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
 }
 
 /// Draws the modal warning/error message; OK, Enter or Esc clears it and restores editor focus when an edit exists.
@@ -590,11 +664,11 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
             });
         });
         ui.add_space(8.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("  OK  ").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
-                close = true;
-            }
-        });
+        if dialog_buttons(ui, &[DialogButton::confirm("OK")]).is_some()
+            || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
+        {
+            close = true;
+        }
     });
     if close {
         app.message = None;

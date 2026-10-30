@@ -29,7 +29,7 @@ use crate::dialogs::Dialog;
 use crate::i18n::Language;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Cat, Tokens};
-use crate::widgets::small_button;
+use crate::widgets::{DialogButton, small_button};
 use crate::{SheetApp, dnd, macro_ui};
 
 /// The inspector's tabs.
@@ -1042,6 +1042,20 @@ fn ref_edit(app: &SheetApp, ui: &mut Ui, d: &mut Dialog, refs: &mut RefPick, key
 }
 
 /// Keep changes? (stopping a debugged run) and Save changes? (closing with unsaved edits).
+/// A three-way question's answer from its buttons (go ahead, throw away, Cancel) or keys: going
+/// ahead (Enter) is `Some(true)`, throwing away `Some(false)`, Cancel (Esc) `None`; no answer yet
+/// is `None` outside.
+fn ask(ui: &mut egui::Ui, row: [DialogButton<'_>; 3]) -> Option<Option<bool>> {
+    match crate::widgets::dialog_buttons(ui, &row) {
+        Some(0) => Some(Some(true)),
+        Some(1) => Some(Some(false)),
+        Some(_) => Some(None),
+        None if ui.input(|i| i.key_pressed(egui::Key::Escape)) => Some(None),
+        None if ui.input(|i| i.key_pressed(egui::Key::Enter)) => Some(Some(true)),
+        None => None,
+    }
+}
+
 fn prompts(app: &mut SheetApp, ctx: &egui::Context, ed: &mut Editor, open: &mut bool) {
     let lang = app.ui.language;
     if ed.ask_stop {
@@ -1051,17 +1065,7 @@ fn prompts(app: &mut SheetApp, ctx: &egui::Context, ed: &mut Editor, open: &mut 
             ui.label(egui::RichText::new(lang.tr("Stop debugging")).strong());
             ui.label(lang.tr("Keep the changes the macro has made so far? They are one undo step either way."));
             ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(lang.tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    answer = Some(None);
-                }
-                if ui.button(lang.tr("Undo Changes")).clicked() {
-                    answer = Some(Some(false));
-                }
-                if ui.button(lang.tr("Keep Changes")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    answer = Some(Some(true));
-                }
-            });
+            answer = ask(ui, [DialogButton::confirm("Keep Changes"), DialogButton::discard("Undo Changes"), DialogButton::neutral("Cancel")]);
         });
         match answer {
             Some(Some(keep)) => {
@@ -1087,17 +1091,7 @@ fn prompts(app: &mut SheetApp, ctx: &egui::Context, ed: &mut Editor, open: &mut 
             ui.set_width(360.0);
             ui.label(egui::RichText::new(lang.tr("Save changes to macro “{name}”?").replace("{name}", &ed.draft.name)).strong());
             ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(lang.tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    answer = Some(None);
-                }
-                if ui.button(lang.tr("Don't Save")).clicked() {
-                    answer = Some(Some(false));
-                }
-                if ui.button(lang.tr("Save")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    answer = Some(Some(true));
-                }
-            });
+            answer = ask(ui, [DialogButton::confirm("Save"), DialogButton::discard("Don't Save"), DialogButton::neutral("Cancel")]);
         });
         match answer {
             Some(Some(true)) => {
