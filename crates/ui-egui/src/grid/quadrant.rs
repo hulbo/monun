@@ -329,6 +329,8 @@ fn paint_cell(q: &QuadrantPaint<'_>, painted: &(CellRef, Rect, Look, Option<CfLo
     let char_w = p.layout_no_wrap("0".to_string(), font.clone(), Color32::PLACEHOLDER).size().x.max(1.0);
     let avail_w = rect.right() - text_left;
     let (mut text, ncolor, numeric, fill_char) = display_text(wb, sh, c, &v, st, avail_w / z.max(0.1) * z, char_w);
+    // Han or kana the loaded faces lack loads the Han faces, from the next frame on.
+    theme::note_text(p.ctx(), &text, &font);
     if sh.show_formulas && sh.cell(c).is_some_and(|cell| cell.formula.is_some()) {
         text = crate::formula_locale::display(&text, crate::i18n::current(p.ctx()).formula_locale(), wb, si);
     }

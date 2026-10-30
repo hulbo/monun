@@ -407,6 +407,44 @@ impl HanOrder {
     pub fn of(language: crate::i18n::Language) -> Self {
         if language == crate::i18n::Language::Ja { Self::Japanese } else { Self::Chinese }
     }
+
+    /// Whether the font set for `language` carries the Han faces from the start: the Japanese and
+    /// Chinese interfaces show Han in every label. Any other interface gets them only once text
+    /// needs them ([`note_text`]): together they hold tens of MB (Yu Gothic and Microsoft YaHei
+    /// are 13 and 19 MB) that a Korean or English session rarely uses, as the Korean faces carry
+    /// kana and the common Hanja.
+    pub fn eager(language: crate::i18n::Language) -> bool {
+        matches!(language, crate::i18n::Language::Ja | crate::i18n::Language::Zh)
+    }
+}
+
+/// Set once text needed a Han or kana glyph the loaded faces lack ([`note_text`]); from then on
+/// every font set this process builds carries the Han faces.
+static HAN_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the font set built for `language` now carries the Han faces.
+pub fn han_included(language: crate::i18n::Language) -> bool {
+    HanOrder::eager(language) || HAN_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Asks for the Han faces when `text` has a Han or kana character that `font`'s chain can't draw,
+/// and returns whether this call asked. Only Han and kana characters are looked up, and nothing
+/// once the faces were asked for, so calling this for every painted cell costs next to nothing.
+pub fn note_text(ctx: &egui::Context, text: &str, font: &FontId) -> bool {
+    if HAN_REQUESTED.load(std::sync::atomic::Ordering::Relaxed) || !text.chars().any(is_han_or_kana) {
+        return false;
+    }
+    let missing = ctx.fonts_mut(|f| text.chars().filter(|&c| is_han_or_kana(c)).any(|c| !f.has_glyph(font, c)));
+    if missing {
+        HAN_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+        ctx.request_repaint();
+    }
+    missing
+}
+
+/// Kana, CJK punctuation and Han ideographs: the characters the Han faces exist for.
+fn is_han_or_kana(c: char) -> bool {
+    matches!(c, '\u{3000}'..='\u{30FF}' | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{20000}'..='\u{3134F}')
 }
 
 /// Builds the font set with the Han fallback faces ordered for the interface language.
@@ -421,25 +459,25 @@ pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDef
 /// machine see the same font set. Craft-fonts remains a pinned build input rather than a repository
 /// asset; without it only egui's bundled faces are available, which is the documented no-font mode.
 pub fn pinned_font_definitions() -> FontDefinitions {
-    font_definitions_impl(crate::i18n::Language::En, &[], false)
+    font_definitions_impl(crate::i18n::Language::En, &[], false, false)
 }
 
 /// [`font_definitions_for_language`] that also binds the workbook fonts in `used` that are
 /// installed, so cells set in them render with them; the rest fall back to the roles. The bound
 /// families are recorded in [`crate::fonts`] so [`cell_family`] only names a family egui has.
 pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -> FontDefinitions {
-    font_definitions_impl(language, used, true)
+    font_definitions_impl(language, used, true, han_included(language))
 }
 
-/// Builds the role font chains, script fallbacks, installed workbook fonts and optional craft-font faces, drops unparseable data and records which families were bound.
-fn font_definitions_impl(language: crate::i18n::Language, used: &[String], system: bool) -> FontDefinitions {
+/// Builds the role font chains, script fallbacks (the Han faces only `with_han`), installed workbook fonts and optional craft-font faces, drops unparseable data and records which families were bound.
+pub(super) fn font_definitions_impl(language: crate::i18n::Language, used: &[String], system: bool, with_han: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let base_prop: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let base_mono: Vec<String> = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
     let mut bound: Vec<String> = Vec::new();
     // The non-Latin fallback faces have to sit at the end of each chain: a Latin font owns Latin,
     // and epaint picks the first face that has the glyph, so they only catch their own scripts.
-    let fallback = if system { load_fallback(&mut fonts, HanOrder::of(language)) } else { Vec::new() };
+    let fallback = if system { load_fallback(&mut fonts, HanOrder::of(language), with_han) } else { Vec::new() };
     let hack = fonts.font_data.contains_key(HACK).then_some(HACK);
     for role in [UI, UI_BOLD, CELL, CELL_BOLD, CELL_ITALIC, CELL_BOLD_ITALIC, SERIF, MONO] {
         let chain = build_role_chain(&mut fonts, role, &base_prop, &base_mono, &fallback, hack, system);

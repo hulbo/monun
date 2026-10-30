@@ -166,7 +166,7 @@ fn fallback_faces_load_each_file_once() {
     // The region-merged Noto Sans CJK .ttc serves Japanese, Chinese and Hangul; it must be loaded
     // once, not once per script (tens of MB each).
     for language in [Language::En, Language::Ja] {
-        let fonts = font_definitions_for_language(language);
+        let fonts = font_setup::font_definitions_impl(language, &[], true, true);
         let present: Vec<&Arc<FontData>> = fallback_faces(HanOrder::of(language)).into_iter().filter_map(|(k, _)| fonts.font_data.get(k)).collect();
         for (i, a) in present.iter().enumerate() {
             for b in present.iter().skip(i + 1) {
@@ -201,7 +201,8 @@ fn fallback_covers_its_script() {
     ];
     for language in [Language::En, Language::Ja] {
         let ctx = egui::Context::default();
-        ctx.set_fonts(font_definitions_for_language(language));
+        // With the Han faces, as once text asked for them (see `han_faces_wait_for_text`).
+        ctx.set_fonts(font_setup::font_definitions_impl(language, &[], true, true));
         let mut out = ctx.run_ui(egui::RawInput::default(), |_ui| {});
         out.textures_delta.clear(); // nothing consumes the atlas in a headless test
         for family in [FontFamily::Proportional, FontFamily::Name(CELL.into())] {
@@ -218,6 +219,39 @@ fn fallback_covers_its_script() {
                 assert!(missing.is_empty(), "{key} is present but {sample:?} has no glyph for {missing:?} ({language:?}, {family:?})");
             }
         }
+    }
+}
+
+#[test]
+/// Outside a Japanese or Chinese interface the Han faces (tens of MB) stay unloaded until asked for.
+fn han_faces_wait_for_text() {
+    assert!(HanOrder::eager(Language::Ja) && HanOrder::eager(Language::Zh));
+    assert!(!HanOrder::eager(Language::Ko) && !HanOrder::eager(Language::En));
+    let han = |fonts: &FontDefinitions| fonts.font_data.keys().filter(|k| k.starts_with("sys-cjk-han-")).count();
+    for language in [Language::Ko, Language::En] {
+        assert_eq!(han(&font_setup::font_definitions_impl(language, &[], true, false)), 0, "{language:?} loads no Han face up front");
+    }
+    // Asked for, they load like a Japanese interface's (when this machine has them).
+    let installed = cjk_han_japanese().iter().chain(cjk_han_simplified().iter()).any(|(p, _)| std::path::Path::new(p).exists());
+    if installed {
+        assert!(han(&font_setup::font_definitions_impl(Language::Ko, &[], true, true)) > 0);
+    }
+}
+
+#[test]
+/// Only Han or kana a font chain can't draw asks for the Han faces; Hangul and Latin never look.
+fn han_or_kana_text_without_glyphs_asks_for_the_han_faces() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(pinned_font_definitions());
+    let mut out = ctx.run_ui(egui::RawInput::default(), |_ui| {});
+    out.textures_delta.clear();
+    let font = FontId::new(14.0, FontFamily::Proportional);
+    assert!(!note_text(&ctx, "한글 ABC 123", &font), "no Han or kana: nothing to look up");
+    // The pinned set has no Han face (unless the optional craft fonts bring Chinese): after this
+    // the next font set carries the Han faces, whatever the interface language.
+    if !chinese_font_loaded() {
+        let _ = note_text(&ctx, "页面 カテゴリ", &font);
+        assert!(han_included(Language::Ko));
     }
 }
 

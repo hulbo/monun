@@ -10,14 +10,16 @@ use super::font_setup::{in_dirs, try_load};
 /// without this a Thai, Hebrew, Japanese or Chinese workbook shows tofu boxes even though the text
 /// was read correctly. With a face installed those scripts get real glyphs instead of tofu; nothing
 /// is bundled, and a machine without the face keeps the old behaviour.
+///
+/// `with_han` false leaves out the Japanese and Chinese Han faces (see `HanOrder::eager`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
+pub(super) fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder, with_han: bool) -> Vec<String> {
     let mut keys = Vec::new();
     // Files already loaded as a fallback face. A file serves at most one key: the region-merged
     // Noto Sans CJK .ttc found for Han also carries Hangul (and Tahoma carries both Thai and
     // Hebrew), so loading it again for a later script would only duplicate tens of MB in memory.
     let mut loaded: Vec<String> = Vec::new();
-    for (key, cands) in fallback_faces(han) {
+    for (key, cands) in fallback_faces(han).into_iter().filter(|(key, _)| with_han || !key.starts_with(HAN_PREFIX)) {
         for (path, index) in &cands {
             if loaded.contains(path) {
                 break; // a face loaded for an earlier script already covers this one
@@ -40,9 +42,13 @@ pub(super) fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<S
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(super) fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
+pub(super) fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder, _with_han: bool) -> Vec<String> {
     Vec::new()
 }
+
+/// The keys of the Japanese and Chinese Han faces start with this.
+#[cfg(not(target_arch = "wasm32"))]
+const HAN_PREFIX: &str = "sys-cjk-han-";
 
 /// Every fallback face we look for, in chain order: `(key, candidate files)`. One file per script
 /// family is enough — epaint picks the first face with the glyph, and a script's glyphs live in one

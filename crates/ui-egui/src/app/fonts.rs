@@ -60,14 +60,29 @@ impl SheetApp {
             self.fonts_ready = false;
             self.fonts_set = false;
         }
+        // Text being typed asks for the Han faces as a painted cell does (`theme::note_text`).
+        if let Some(ed) = &self.editor {
+            theme::note_text(ctx, &ed.text, &theme::ui_font(13.0));
+        }
         if !self.fonts_ready {
             self.start_font_setup(ctx);
         } else if self.fonts_rebind {
             // A font-set change made last frame is active now.
             self.fonts_rebind = false;
+        } else if !defer_font_change && !self.prepared_fonts && !self.fonts_with_han && theme::han_included(self.ui.language) {
+            self.add_han_faces(ctx);
         } else if !defer_font_change && !self.prepared_fonts && fonts::scan_done() {
             self.rebind_workbook_fonts(ctx);
         }
+    }
+
+    /// Rebuilds the font set with the Han faces, once text needed them or the interface language
+    /// shows Han, keeping the workbook fonts bound now. Same one-frame paint gate as a rebind.
+    fn add_han_faces(&mut self, ctx: &egui::Context) {
+        ctx.set_fonts(theme::font_definitions_with(self.ui.language, &self.fonts_bound));
+        self.fonts_with_han = true;
+        self.fonts_rebind = true;
+        ctx.request_repaint();
     }
 
     /// Applies the pending font set. New fonts apply from the next frame on: paint nothing until
@@ -88,6 +103,7 @@ impl SheetApp {
         self.fonts_bound.clear();
         self.fonts_seen = (0, 0);
         self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
+        self.fonts_with_han = !self.prepared_fonts && theme::han_included(self.ui.language);
         ctx.request_repaint();
     }
 
@@ -104,6 +120,7 @@ impl SheetApp {
         if used == self.fonts_bound {
             return;
         }
+        self.fonts_with_han = theme::han_included(self.ui.language);
         ctx.set_fonts(theme::font_definitions_with(self.ui.language, &used));
         self.fonts_bound = used;
         self.fonts_rebind = true;

@@ -14,8 +14,6 @@ mod apple_events;
 mod control_server;
 #[cfg(any(target_os = "windows", test))]
 mod file_types;
-#[cfg(any(target_os = "windows", test))]
-mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -63,7 +61,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.1.show(&mut self.0, ui);
     }
-    fn on_exit(&mut self) {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
         save_prefs(&self.0);
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
@@ -357,7 +355,10 @@ fn main() -> eframe::Result<()> {
         viewport = viewport.with_icon(i);
     }
     let window_builder = viewport.clone();
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    // OpenGL through egui's glow renderer: on Windows it needs about 110 MB less memory than wgpu on
+    // DirectX 12 and starts faster, and the exe carries no wgpu or shader compiler. Nothing in the
+    // app paints with renderer-specific callbacks.
+    let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Glow, ..Default::default() };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut options = options;
     // winit has no file drag-and-drop on Wayland (only on X11), so dropping files from the file
@@ -370,70 +371,36 @@ fn main() -> eframe::Result<()> {
             b.with_x11();
         }));
     }
-    // Before eframe creates the wgpu instance: Windows starts on DirectX 12, or OpenGL when
-    // DirectX 12 has no GPU driver, and never touches Vulkan unless asked (see graphics.rs).
-    #[cfg(target_os = "windows")]
-    let backend_override = eframe::wgpu::Backends::from_env();
-    #[cfg(target_os = "windows")]
-    let (options, first_backends) = {
-        let mut options = options;
-        let backends = graphics::configure(&mut options, backend_override);
-        (options, backends)
-    };
-    #[cfg(target_os = "windows")]
-    let retry_options = options.clone();
     // Registered before the event loop starts, so it catches the Finder event that launched us as
     // well as later ones. Lives until the event loop returns; the app creator only borrows it.
     #[cfg(target_os = "macos")]
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    // The app waits here until a start gets as far as creating it; a start that fails before
-    // (no graphics adapter, device or surface) leaves it here for the next attempt.
-    let pending = std::cell::Cell::new(Some(app));
-    let run = |options: eframe::NativeOptions| {
-        eframe::run_native(
-            "Monun",
-            options,
-            Box::new(|cc| {
-                let Some(mut app) = pending.take() else {
-                    return Err("the app was already created".into());
-                };
-                // Catalog the installed fonts in the background, so the font lists offer them and
-                // cells set in them render with them once it is done.
-                monun_ui_egui::fonts::start_scan();
-                SheetApp::setup_context_for_language(&cc.egui_ctx, app.ui.dark, app.ui.language);
-                if let Some(port) = control_port {
-                    match control_server::start(port, control_token.clone(), cc.egui_ctx.clone()) {
-                        Ok(rx) => app.control_rx = Some(rx),
-                        Err(e) => log::error!("control channel on port {port}: {e}"),
-                    }
+    eframe::run_native(
+        "Monun",
+        options,
+        Box::new(move |cc| {
+            let mut app = app;
+            // Catalog the installed fonts in the background, so the font lists offer them and
+            // cells set in them render with them once it is done.
+            monun_ui_egui::fonts::start_scan();
+            SheetApp::setup_context_for_language(&cc.egui_ctx, app.ui.dark, app.ui.language);
+            if let Some(port) = control_port {
+                match control_server::start(port, control_token, cc.egui_ctx.clone()) {
+                    Ok(rx) => app.control_rx = Some(rx),
+                    Err(e) => log::error!("control channel on port {port}: {e}"),
                 }
-                let windows = DocWindows::new(&mut app, window_builder.clone(), DocWindows::platform_quits_with_last_window());
-                Ok(Box::new(App(
-                    app,
-                    windows,
-                    #[cfg(target_os = "macos")]
-                    None,
-                    #[cfg(target_os = "macos")]
-                    apple_events.connect(&cc.egui_ctx),
-                )))
-            }),
-        )
-    };
-    let result = run(options);
-    // A graphics error before the app existed: start once more with the other backend (eframe
-    // reuses its event loop for the second run). Errors after that, or from winit, are returned.
-    #[cfg(target_os = "windows")]
-    if let Err(eframe::Error::Wgpu(e)) = &result
-        && let Some(app) = pending.take()
-        && let Some(backends) = graphics::fallback_backends(backend_override, first_backends)
-    {
-        log::error!("graphics: the renderer didn't start on {first_backends:?} ({e}); trying {backends:?}");
-        pending.set(Some(app));
-        let mut options = retry_options;
-        graphics::configure_backends(&mut options, backends);
-        return run(options);
-    }
-    result
+            }
+            let windows = DocWindows::new(&mut app, window_builder, DocWindows::platform_quits_with_last_window());
+            Ok(Box::new(App(
+                app,
+                windows,
+                #[cfg(target_os = "macos")]
+                None,
+                #[cfg(target_os = "macos")]
+                apple_events.connect(&cc.egui_ctx),
+            )))
+        }),
+    )
 }
