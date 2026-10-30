@@ -13,6 +13,8 @@
 mod apple_events;
 mod control_server;
 #[cfg(any(target_os = "windows", test))]
+mod file_types;
+#[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
@@ -312,6 +314,13 @@ fn main() -> eframe::Result<()> {
             },
             None => logger.no_file(),
         }
+    }
+    // Explorer's Open with lists 모눈 for spreadsheet files (`file_types`). Debug builds and runs an
+    // agent or a test drives (no preferences, or the control channel) may be a build from another
+    // checkout, so they leave the registration to the user's own app.
+    #[cfg(target_os = "windows")]
+    if !cfg!(debug_assertions) && prefs_enabled() && control_port.is_none() {
+        file_types::register_running_app();
     }
     let mut session = Session::new();
     session.prefs.default_font = NEW_WORKBOOK_FONT.into();

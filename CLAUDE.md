@@ -48,6 +48,9 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Headless: `monun-cli eval '=SUM(1,2,3)'`,
   `monun-cli run --cmd 'cell.set={"cell":"A1","input":"1"}' --out book.xlsx`.
 - Settings and logs: `%APPDATA%\Monun` (`prefs.json`, `ui.json`, `logs/monun.log`).
+- A normal start of the release build registers the running exe for .xlsx and the other types it
+  opens under `HKCU` (Open with, Default apps; `apps/monun/src/file_types.rs`). Debug builds and
+  `--control` runs don't, so a worktree's build never takes over the user's file types.
 
 ## Skill and subagents (`.claude/`)
 - `verify` skill: `.claude/skills/verify/verify.ps1` runs fmt, clippy, `cargo xtask layers` and

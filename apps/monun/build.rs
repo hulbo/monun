@@ -13,10 +13,10 @@ fn main() {
         return;
     }
     let mut res = winresource::WindowsResource::new();
+    // FileDescription is the name Task Manager and Open with show for the exe (the .rc file is UTF-8).
     res.set_icon("../../assets/app-icon/monun.ico")
         .set("ProductName", "Monun")
-        .set("FileDescription", "Monun spreadsheet")
-        .set("CompanyName", "Learning Machines LLC")
+        .set("FileDescription", "모눈")
         .set("LegalCopyright", "Copyright (c) the Monun authors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "monun.exe")
         .set("InternalName", "monun");
