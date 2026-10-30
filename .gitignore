@@ -5,6 +5,8 @@ plan/
 /corpus
 /log
 .DS_Store
-/.claude/
+/.claude/*
+!/.claude/agents/
+!/.claude/skills/
 /target-*/
 /craft-fonts/

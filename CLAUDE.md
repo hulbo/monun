@@ -41,9 +41,19 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 ## Running and looking at the app
 - `cargo build --release -p monun -p monun-cli`; the desktop shortcut runs
   `target/release/monun.exe`. Close the app before building (Windows locks the exe).
-- Drive it: start with `--control 7979` and `MONUN_CONTROL_TOKEN` set, then
+- Drive it: start with `--control 7979` (monun-cli reads the token file the app writes), then
   `monun-cli send 7979 <method> '<json>'` (`ui.screenshot`, `ui.click`, `ui.text`,
   `engine.execute`; see `crates/ui-egui/src/control.rs`).
+- After moving the checkout, run `cargo clean -p xtask`: xtask compiles its own path in.
 - Headless: `monun-cli eval '=SUM(1,2,3)'`,
   `monun-cli run --cmd 'cell.set={"cell":"A1","input":"1"}' --out book.xlsx`.
 - Settings and logs: `%APPDATA%\Monun` (`prefs.json`, `ui.json`, `logs/monun.log`).
+
+## Skill and subagents (`.claude/`)
+- `verify` skill: `.claude/skills/verify/verify.ps1` runs fmt, clippy, `cargo xtask layers` and
+  `assets`, the touched crates' tests (the known failures pass), a release build, then the app with
+  `-Setup` commands and a screenshot in `target\verify\app.png`. It runs in the `verifier`
+  subagent. Use it before every commit.
+- `verifier` runs the checks and reports, `reviewer` reviews the diff read-only, and `ko-translator`
+  fills `ko.rs`; only `ko-translator` edits files. Cargo runs one at a time (one target directory),
+  and two agents never edit the same file.
