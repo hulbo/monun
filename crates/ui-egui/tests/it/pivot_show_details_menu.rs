@@ -74,7 +74,7 @@ fn labels_of_the_report_and_ordinary_cells_have_no_show_details_item() {
     let mut h = harness();
     for cell in ["D4", "D3", "A2"] {
         right_click(&mut h, cell);
-        assert!(h.query_by_label("Sort A to Z").is_some(), "the cell menu is up on {cell}");
+        assert!(h.query_by_label("Pick From Drop-down List…").is_some(), "the cell menu is up on {cell}");
         assert!(h.query_by_label("Show Details").is_none(), "{cell} offers no Show Details");
         let escape = Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
         h.input_mut().events.push(escape);
@@ -89,7 +89,7 @@ fn no_cell_offers_show_details_while_it_is_turned_off() {
     h.run_steps(2);
     for cell in ["E4", "E6"] {
         right_click(&mut h, cell);
-        assert!(h.query_by_label("Sort A to Z").is_some(), "the cell menu is up on {cell}");
+        assert!(h.query_by_label("Pick From Drop-down List…").is_some(), "the cell menu is up on {cell}");
         assert!(h.query_by_label("Show Details").is_none(), "{cell} offers no Show Details");
         let escape = Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
         h.input_mut().events.push(escape);

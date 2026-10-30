@@ -14,13 +14,18 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
     let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
     // An open filter menu owns the keyboard even when a click inside it left focus on nothing (#1516).
     // So do the fill menu (its Esc closes it, not the copy) and the right-drag that opens it (an
-    // arrow key would move the selection the menu fills from), and a macro's question.
+    // arrow key would move the selection the menu fills from), and a macro's question. The
+    // right-click menus take their access keys and arrows (a letter would start typing in the cell).
     if editing
         || app.dialog.is_some()
         || other_focus
         || app.message.is_some()
         || app.grid.filter_menu.is_some()
         || app.grid.fill_menu.is_some()
+        || app.grid.context_menu.is_some()
+        || app.grid.header_menu.is_some()
+        || app.grid.object_menu.is_some()
+        || app.grid.tab_menu.is_some()
         || matches!(app.grid.drag, Drag::Fill { menu: true, .. })
         || app.macros.question.is_some()
     {

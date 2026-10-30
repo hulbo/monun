@@ -178,6 +178,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Group" => "그룹",
         "Ungroup" => "그룹 해제",
         "Show Detail" => "세부 정보 표시",
+        "Show Details" => "세부 정보 표시",
         "Hide Detail" => "세부 정보 숨기기",
         "Subtotal" => "부분합",
         "Data\nAnalysis" => "데이터 분석",

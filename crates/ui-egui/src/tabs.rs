@@ -7,6 +7,7 @@ use monun_engine::model::{Sheet, Visibility};
 use serde_json::json;
 
 use crate::SheetApp;
+use crate::access_menu::{self, Entry};
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
@@ -248,54 +249,14 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                         app.run_or_alert("sheet.move", params);
                                     }
                                 }
-                                resp.context_menu(|ui| {
-                                    ui.set_min_width(180.0);
-                                    if ui.button(app.ui.language.tr("Insert Sheet")).clicked() {
-                                        app.run_or_alert("home.insertSheet", json!({"before": i}));
-                                    }
-                                    if ui.button(app.ui.language.tr("Delete")).clicked() {
-                                        app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
-                                    }
-                                    if ui.button(app.ui.language.tr("Rename")).clicked() {
-                                        app.grid.renaming_tab = Some(i);
-                                        app.grid.rename_text = name.clone();
-                                    }
-                                    if ui.button(app.ui.language.tr("Move or Copy…")).clicked() {
-                                        app.open_dialog("moveSheet", json!({"sheet": i}));
-                                    }
-                                    if ui.button(app.ui.language.tr("Duplicate")).clicked() {
-                                        app.run_or_alert("sheet.move", json!({"sheet": i, "to": i + 1, "copy": true}));
-                                    }
-                                    ui.menu_button(app.ui.language.tr("Tab Color"), |ui| {
-                                        let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
-                                        if let Some(c) = crate::widgets::color_palette_fixed(ui, &colors, app.ui.language.tr("No Color")) {
-                                            app.run_or_alert("sheet.tabColor", json!({"sheet": i, "color": c}));
-                                            ui.close();
-                                        }
-                                    });
-                                    ui.separator();
-                                    if ui.button(app.ui.language.tr("Hide")).clicked() {
-                                        app.run_or_alert("sheet.hide", json!({"sheet": i}));
-                                    }
-                                    if ui.button(app.ui.language.tr("Unhide…")).clicked() {
-                                        app.run_or_alert("sheet.unhide", json!({}));
-                                    }
-                                    ui.separator();
-                                    let protected = app.active_sheet_protected();
-                                    if ui
-                                        .button(if protected {
-                                            app.ui.language.tr("Unprotect Sheet…")
-                                        } else {
-                                            app.ui.language.tr("Protect Sheet…")
-                                        })
-                                        .clicked()
-                                    {
-                                        app.open_dialog("protectSheet", json!({}));
-                                    }
-                                    if ui.button(app.ui.language.tr("Select All Sheets")).clicked() {
-                                        ui.close();
-                                    }
-                                });
+                                // An edit still open (on the sheet that was active) is entered first, so the
+                                // menu's letters can't leave it half done.
+                                if resp.secondary_clicked()
+                                    && let Some(p) = ui.input(|inp| inp.pointer.interact_pos())
+                                    && (app.editor.is_none() || app.commit_edit(0, 0, false, false))
+                                {
+                                    app.grid.tab_menu = Some((i, p, ui.ctx().cumulative_frame_nr()));
+                                }
                             }
                         });
                     });
@@ -317,6 +278,69 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             crate::grid::horizontal_scrollbar(app, ui, track, &t);
         });
     });
+    tab_menu(app, ui);
+}
+
+/// The right-click menu of a sheet tab, opening upward from the pointer, with Excel's access keys
+/// (Duplicate is Monun's own, on a letter free in the menu). It is drawn before the grid, so its
+/// keys never reach the cells.
+fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
+    let Some((i, at, opened)) = app.grid.tab_menu else { return };
+    let protect = if app.active_sheet_protected() { "Un&protect Sheet…" } else { "&Protect Sheet…" };
+    let items = [
+        Entry::item("&Insert Sheet", "insert"),
+        Entry::item("&Delete", "delete"),
+        Entry::item("&Rename", "rename"),
+        Entry::item("&Move or Copy…", "move"),
+        Entry::item("Dupli&cate", "duplicate"),
+        Entry::custom("&Tab Color", "tabColor"),
+        Entry::separator(),
+        Entry::item("&Hide", "hide"),
+        Entry::item("&Unhide…", "unhide"),
+        Entry::separator(),
+        Entry::item(protect, "protect"),
+        Entry::item("&Select All Sheets", "selectAll"),
+    ];
+    let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
+    let mut chosen = None;
+    let mut submenu = None;
+    let area = egui::Area::new(egui::Id::unique("sheet_tab_menu")).order(egui::Order::Foreground).pivot(Align2::LEFT_BOTTOM).fixed_pos(at);
+    let resp = area.show(ui.ctx(), |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            ui.set_min_width(180.0);
+            let out = access_menu::show(ui, egui::Id::unique("sheet_tab_menu_items"), (i, opened), &items, 170.0, |ui, _| {
+                let Some(c) = crate::widgets::color_palette_fixed(ui, &colors, app.ui.language.tr("No Color")) else { return false };
+                app.run_or_alert("sheet.tabColor", json!({"sheet": i, "color": c}));
+                true
+            });
+            chosen = out.chosen;
+            submenu = out.submenu;
+        });
+    });
+    match chosen {
+        Some("insert") => app.run_or_alert("home.insertSheet", json!({"before": i})),
+        Some("delete") => app.run_or_alert("home.deleteSheet", json!({"sheet": i})),
+        Some("rename") => {
+            app.grid.renaming_tab = Some(i);
+            app.grid.rename_text = app.session.active().and_then(|d| d.wb.sheet(i)).map(|s| s.name.clone()).unwrap_or_default();
+        }
+        Some("move") => app.open_dialog("moveSheet", json!({"sheet": i})),
+        Some("duplicate") => app.run_or_alert("sheet.move", json!({"sheet": i, "to": i + 1, "copy": true})),
+        Some("hide") => app.run_or_alert("sheet.hide", json!({"sheet": i})),
+        Some("unhide") => app.run_or_alert("sheet.unhide", json!({})),
+        Some("protect") => app.open_dialog("protectSheet", json!({})),
+        _ => {}
+    }
+    // The press of a quick right-click that opened the menu is not a press elsewhere. Escape is
+    // taken here: the grid, drawn next, would clear the copy marquee with it.
+    let outside = |p: egui::Pos2| !resp.response.rect.contains(p) && !submenu.is_some_and(|r: Rect| r.contains(p));
+    if chosen.is_some()
+        || ui.input_mut(|inp| inp.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        || ui.input(|inp| !inp.focused)
+        || (opened != ui.ctx().cumulative_frame_nr() && ui.input(|inp| inp.pointer.any_pressed() && inp.pointer.interact_pos().is_some_and(outside)))
+    {
+        app.grid.tab_menu = None;
+    }
 }
 
 /// Draws status mode/messages, zoom controls/view-mode buttons and selection statistics.

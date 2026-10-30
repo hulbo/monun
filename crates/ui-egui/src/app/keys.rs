@@ -11,6 +11,7 @@ impl SheetApp {
             && self.grid.context_menu.is_none()
             && self.grid.object_menu.is_none()
             && self.grid.header_menu.is_none()
+            && self.grid.tab_menu.is_none()
             && self.grid.fill_menu.is_none()
             && self.grid.filter_menu.is_none()
             && self.grid.list_picker.is_none()

@@ -537,9 +537,11 @@ fn handle_context_menu_and_keyboard(app: &mut SheetApp, input: &InteractionInput
     let primary_clicked = input.primary_clicked;
     let (in_cells, in_col_header, in_row_header) = (input.in_cells, input.in_column_header, input.in_row_header);
     let ctx = input.context.clone();
-    // Right-click: context menu.
+    // Right-click: context menu. An open edit is entered first, as a left press enters it, so the
+    // menu's letters and Enter can't act around it.
     if resp.secondary_clicked()
         && let Some(p) = pos
+        && (app.editor.is_none() || app.commit_edit(0, 0, false, false))
     {
         if in_cells && !sel.contains(geo.cell_at(sh, p)) {
             let _ = app.session.run("selection.set", json!({"cell": geo.cell_at(sh, p).a1()}));

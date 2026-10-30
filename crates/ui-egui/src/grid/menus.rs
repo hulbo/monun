@@ -2,6 +2,7 @@ use super::editor::popup_dismissed;
 use super::geo::Geo;
 use super::tables::filter_table_range;
 use super::{Arc, Drag, FillTag, RangeRef, Rect, Sense, Sheet, SheetApp, Stroke, Tokens, col_to_letters, json, pos2, vec2};
+use crate::access_menu::{self, Entry};
 
 /// Draws the filter-header popup: sort, search/select-all, apply/clear, a lazily installed table autofilter, new-open search focus and dismissal.
 pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool) {
@@ -124,95 +125,97 @@ pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
 }
 
 /// Draws and dispatches the cell context menu, including Show Details when offered, clipboard and insert/format actions; closes on Esc or an outside press.
+/// The letters are Excel's: Shift+F10, E, V filters by the cell's value as it does there.
 pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     let Some(at) = app.grid.context_menu else { return };
-    let mut close = false;
+    let opened = app.grid.context_menu_frame;
+    let mut chosen = None;
+    let mut submenu = None;
     let resp = egui::Area::new(egui::Id::unique("cell_context")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(200.0);
-            let insert_copied = insert_copied_item(app);
-            let mut items: Vec<(&str, &str)> = vec![
-                ("Cut", "edit.cut"),
-                ("Copy", "edit.copy"),
-                ("Paste", "edit.paste"),
-                ("Paste Special…", "ui:pasteSpecial"),
-                ("-", ""),
-                ("Insert…", "ui:insertCells"),
-                ("Delete…", "ui:deleteCells"),
-                ("Clear Contents", "edit.clearContents"),
-                ("-", ""),
-                ("Filter by Selected Cell's Value", "ui:filterValue"),
-                ("Sort A to Z", "data.sortAscending"),
-                ("Sort Z to A", "data.sortDescending"),
-                ("-", ""),
-                ("New Comment", "ui:newComment"),
-                ("New Note", "ui:newNote"),
-                ("-", ""),
-                ("Format Cells…", "ui:formatCells"),
-                ("Pick From Drop-down List…", "ui:pickList"),
-                ("Define Name…", "ui:defineName"),
-                ("Link…", "ui:insertLink"),
+            let mut items = vec![
+                Entry::item("Cu&t", "edit.cut"),
+                Entry::item("&Copy", "edit.copy"),
+                Entry::item("&Paste", "edit.paste"),
+                Entry::item("Paste &Special…", "ui:pasteSpecial"),
+                Entry::separator(),
+                Entry::item("&Insert…", "ui:insertCells"),
+                Entry::item("&Delete…", "ui:deleteCells"),
+                Entry::item("Clear Co&ntents", "edit.clearContents"),
+                Entry::separator(),
+                Entry::submenu("Filt&er", "filter", vec![Entry::item("Filter by Selected Cell's &Value", "ui:filterValue")]),
+                Entry::submenu(
+                    "S&ort",
+                    "sort",
+                    vec![Entry::item("&Sort A to Z", "data.sortAscending"), Entry::item("S&ort Z to A", "data.sortDescending")],
+                ),
+                Entry::separator(),
+                Entry::item("New Co&mment", "ui:newComment"),
+                Entry::item("New &Note", "ui:newNote"),
+                Entry::separator(),
+                Entry::item("&Format Cells…", "ui:formatCells"),
+                Entry::item("Pic&k From Drop-down List…", "ui:pickList"),
+                Entry::item("Define N&ame…", "ui:defineName"),
+                Entry::item("L&ink…", "ui:insertLink"),
             ];
-            if let Some(item) = insert_copied {
+            if let Some(item) = insert_copied_item(app) {
                 items.insert(6, item);
             }
             if show_details_offered(app)
-                && let Some(i) = items.iter().position(|(_, id)| *id == "data.sortDescending")
+                && let Some(i) = items.iter().position(|e| e.id() == "sort")
             {
-                items.insert(i + 1, ("-", ""));
-                items.insert(i + 2, ("Show Details", "pivot.showDetails"));
+                items.insert(i + 1, Entry::separator());
+                items.insert(i + 2, Entry::item("Show D&etails", "pivot.showDetails"));
             }
-            let lang = crate::i18n::current(ui.ctx());
-            for (label, id) in items {
-                if label == "-" {
-                    ui.separator();
-                    continue;
-                }
-                if ui.add(egui::Button::new(lang.tr(label)).frame_when_inactive(false).min_size(vec2(190.0, 20.0))).clicked() {
-                    close = true;
-                    match id {
-                        "ui:pasteSpecial" => app.open_dialog("pasteSpecial", json!({})),
-                        "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
-                        "ui:insertCells" => app.open_dialog("insertCells", json!({})),
-                        "ui:deleteCells" => app.open_dialog("deleteCells", json!({})),
-                        "ui:formatCells" => app.open_dialog("formatCells", json!({})),
-                        "ui:newComment" => app.open_dialog("comment", json!({"threaded": true})),
-                        "ui:newNote" => app.open_dialog("comment", json!({"threaded": false})),
-                        "ui:defineName" => app.open_dialog("defineName", json!({})),
-                        "ui:insertLink" => app.open_dialog("insertLink", json!({})),
-                        "ui:pickList" => app.open_dialog("pickList", json!({})),
-                        "ui:filterValue" => {
-                            if let Some(d) = app.session.active() {
-                                let a = d.selection.active;
-                                let text = d.wb.active().map(|sh| monun_engine::display::cell_text(&d.wb, sh, a)).unwrap_or_default();
-                                let has = d.wb.active().is_some_and(|sh| sh.autofilter.is_some());
-                                if !has {
-                                    let _ = app.run("data.filter", json!({}));
-                                }
-                                app.run_or_alert("data.filterBy", json!({"column": col_to_letters(a.col), "values": [text]}));
-                            }
-                        }
-                        "edit.copy" | "edit.cut" => {
-                            app.copy_to_clipboard(ui.ctx(), id);
-                        }
-                        "edit.paste" => app.paste_from_clipboard(),
-                        other => app.run_or_alert(other, json!({})),
-                    }
-                }
-            }
+            let out =
+                access_menu::show(ui, egui::Id::unique("cell_context_items"), (at.x.to_bits(), at.y.to_bits(), opened), &items, 190.0, |_, _| false);
+            chosen = out.chosen;
+            submenu = out.submenu;
         });
     });
+    if let Some(id) = chosen {
+        match id {
+            "ui:pasteSpecial" => app.open_dialog("pasteSpecial", json!({})),
+            "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
+            "ui:insertCells" => app.open_dialog("insertCells", json!({})),
+            "ui:deleteCells" => app.open_dialog("deleteCells", json!({})),
+            "ui:formatCells" => app.open_dialog("formatCells", json!({})),
+            "ui:newComment" => app.open_dialog("comment", json!({"threaded": true})),
+            "ui:newNote" => app.open_dialog("comment", json!({"threaded": false})),
+            "ui:defineName" => app.open_dialog("defineName", json!({})),
+            "ui:insertLink" => app.open_dialog("insertLink", json!({})),
+            "ui:pickList" => app.open_dialog("pickList", json!({})),
+            "ui:filterValue" => {
+                if let Some(d) = app.session.active() {
+                    let a = d.selection.active;
+                    let text = d.wb.active().map(|sh| monun_engine::display::cell_text(&d.wb, sh, a)).unwrap_or_default();
+                    let has = d.wb.active().is_some_and(|sh| sh.autofilter.is_some());
+                    if !has {
+                        let _ = app.run("data.filter", json!({}));
+                    }
+                    app.run_or_alert("data.filterBy", json!({"column": col_to_letters(a.col), "values": [text]}));
+                }
+            }
+            "edit.copy" | "edit.cut" => {
+                app.copy_to_clipboard(ui.ctx(), id);
+            }
+            "edit.paste" => app.paste_from_clipboard(),
+            other => app.run_or_alert(other, json!({})),
+        }
+    }
     // A quick right-click presses and releases in one frame, and the menu's corner snaps to the
     // nearest physical pixel, which can put the pointer just outside it: that press opened the
     // menu, so it doesn't count as a click elsewhere.
     let opened_now = app.grid.context_menu_frame == ui.ctx().cumulative_frame_nr();
-    if close
+    let outside = |p: egui::Pos2| !resp.response.rect.contains(p) && !submenu.is_some_and(|r: Rect| r.contains(p));
+    if chosen.is_some()
         || ui.input(|i| i.key_pressed(egui::Key::Escape))
         || (!opened_now
             && ui.input(|i| i.pointer.any_pressed())
             && !resp.response.contains_pointer()
             && !resp.response.hovered()
-            && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| !resp.response.rect.contains(p)))
+            && ui.input(|i| i.pointer.interact_pos()).is_some_and(outside))
     {
         app.grid.context_menu = None;
     }
@@ -374,35 +377,33 @@ pub(super) fn fill_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
 /// The right-click menu of a chart, picture, shape or slicer.
 pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     let Some((at, kind, id)) = app.grid.object_menu else { return };
-    let mut close = false;
+    let mut chosen = None;
     let resp = egui::Area::new(egui::Id::unique("object_context")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(200.0);
-            let mut items = vec![("Delete", "object.delete")];
+            let mut items = vec![Entry::item("&Delete", "object.delete")];
             if kind == "chart" {
-                items.extend([("-", ""), ("Select Data…", "ui:selectData"), ("Format Chart Area…", "ui:formatChart")]);
+                items.extend([
+                    Entry::separator(),
+                    Entry::item("Select Data…", "ui:selectData"),
+                    Entry::item("&Format Chart Area…", "ui:formatChart"),
+                ]);
             }
-            let lang = crate::i18n::current(ui.ctx());
-            for (label, action) in items {
-                if label == "-" {
-                    ui.separator();
-                    continue;
-                }
-                if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(190.0, 20.0))).clicked() {
-                    close = true;
-                    match action {
-                        "ui:selectData" => app.open_dialog("selectData", json!({"chart": id})),
-                        "ui:formatChart" => app.grid.pane = Some("formatChart".into()),
-                        _ => {
-                            app.run_or_alert("object.delete", json!({"kind": kind, "id": id}));
-                            app.selected_chart = None;
-                        }
-                    }
-                }
-            }
+            chosen =
+                access_menu::show(ui, egui::Id::unique("object_context_items"), (at.x.to_bits(), at.y.to_bits(), id), &items, 190.0, |_, _| false)
+                    .chosen;
         });
     });
-    if close
+    match chosen {
+        Some("ui:selectData") => app.open_dialog("selectData", json!({"chart": id})),
+        Some("ui:formatChart") => app.grid.pane = Some("formatChart".into()),
+        Some(_) => {
+            app.run_or_alert("object.delete", json!({"kind": kind, "id": id}));
+            app.selected_chart = None;
+        }
+        None => {}
+    }
+    if chosen.is_some()
         || ui.input(|i| i.key_pressed(egui::Key::Escape))
         || (ui.input(|i| i.pointer.any_pressed())
             && !resp.response.contains_pointer()
@@ -460,74 +461,69 @@ pub(super) fn error_check_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, 
 /// Draws row/column header context menus with insert/delete, format, size, hide/unhide and group actions, plus Insert Copied Cells when available.
 pub(super) fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
     let Some((at, rows)) = app.grid.header_menu else { return };
-    let mut close = false;
+    let mut chosen = None;
     let response = egui::Area::new(egui::Id::unique("header_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(190.0);
-            let insert_copied = insert_copied_item(app);
-            let mut items: Vec<(&str, &str)> = if rows {
+            // Excel's letters; AutoFit, Group and Sort are Monun's own items, on letters free in the menu.
+            let mut items = if rows {
                 vec![
-                    ("Cut", "edit.cut"),
-                    ("Copy", "edit.copy"),
-                    ("Paste", "edit.paste"),
-                    ("-", ""),
-                    ("Insert", "home.insertRows"),
-                    ("Delete", "home.deleteRows"),
-                    ("Clear Contents", "edit.clearContents"),
-                    ("-", ""),
-                    ("Format Cells…", "ui:formatCells"),
-                    ("Row Height…", "ui:rowHeight"),
-                    ("AutoFit Row Height", "home.autofitRowHeight"),
-                    ("Hide", "home.hideRows"),
-                    ("Unhide", "home.unhideRows"),
-                    ("Group", "data.group"),
+                    Entry::item("Cu&t", "edit.cut"),
+                    Entry::item("&Copy", "edit.copy"),
+                    Entry::item("&Paste", "edit.paste"),
+                    Entry::separator(),
+                    Entry::item("&Insert", "home.insertRows"),
+                    Entry::item("&Delete", "home.deleteRows"),
+                    Entry::item("Clear Co&ntents", "edit.clearContents"),
+                    Entry::separator(),
+                    Entry::item("&Format Cells…", "ui:formatCells"),
+                    Entry::item("&Row Height…", "ui:rowHeight"),
+                    Entry::item("&AutoFit Row Height", "home.autofitRowHeight"),
+                    Entry::item("&Hide", "home.hideRows"),
+                    Entry::item("&Unhide", "home.unhideRows"),
+                    Entry::item("&Group", "data.group"),
                 ]
             } else {
                 vec![
-                    ("Cut", "edit.cut"),
-                    ("Copy", "edit.copy"),
-                    ("Paste", "edit.paste"),
-                    ("-", ""),
-                    ("Insert", "home.insertColumns"),
-                    ("Delete", "home.deleteColumns"),
-                    ("Clear Contents", "edit.clearContents"),
-                    ("-", ""),
-                    ("Format Cells…", "ui:formatCells"),
-                    ("Column Width…", "ui:columnWidth"),
-                    ("AutoFit Column Width", "home.autofitColumnWidth"),
-                    ("Hide", "home.hideColumns"),
-                    ("Unhide", "home.unhideColumns"),
-                    ("Sort A to Z", "data.sortAscending"),
-                    ("Group", "data.group"),
+                    Entry::item("Cu&t", "edit.cut"),
+                    Entry::item("&Copy", "edit.copy"),
+                    Entry::item("&Paste", "edit.paste"),
+                    Entry::separator(),
+                    Entry::item("&Insert", "home.insertColumns"),
+                    Entry::item("&Delete", "home.deleteColumns"),
+                    Entry::item("Clear Co&ntents", "edit.clearContents"),
+                    Entry::separator(),
+                    Entry::item("&Format Cells…", "ui:formatCells"),
+                    Entry::item("Column &Width…", "ui:columnWidth"),
+                    Entry::item("&AutoFit Column Width", "home.autofitColumnWidth"),
+                    Entry::item("&Hide", "home.hideColumns"),
+                    Entry::item("&Unhide", "home.unhideColumns"),
+                    Entry::item("&Sort A to Z", "data.sortAscending"),
+                    Entry::item("&Group", "data.group"),
                 ]
             };
-            if let Some(item) = insert_copied {
+            if let Some(item) = insert_copied_item(app) {
                 items.insert(5, item);
             }
-            let lang = crate::i18n::current(ui.ctx());
-            for (label, id) in items {
-                if label == "-" {
-                    ui.separator();
-                    continue;
-                }
-                if ui.add(egui::Button::new(lang.tr(label)).frame_when_inactive(false).min_size(vec2(180.0, 20.0))).clicked() {
-                    close = true;
-                    match id {
-                        "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
-                        "ui:rowHeight" => app.open_dialog("rowHeight", json!({})),
-                        "ui:formatCells" => app.open_dialog("formatCells", json!({})),
-                        "ui:columnWidth" => app.open_dialog("columnWidth", json!({})),
-                        "edit.copy" | "edit.cut" => {
-                            app.copy_to_clipboard(ui.ctx(), id);
-                        }
-                        "edit.paste" => app.paste_from_clipboard(),
-                        other => app.run_or_alert(other, json!({})),
-                    }
-                }
-            }
+            chosen =
+                access_menu::show(ui, egui::Id::unique("header_menu_items"), (at.x.to_bits(), at.y.to_bits(), rows), &items, 180.0, |_, _| false)
+                    .chosen;
         });
     });
-    if close || popup_dismissed(&response.response, was_open) {
+    if let Some(id) = chosen {
+        match id {
+            "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
+            "ui:rowHeight" => app.open_dialog("rowHeight", json!({})),
+            "ui:formatCells" => app.open_dialog("formatCells", json!({})),
+            "ui:columnWidth" => app.open_dialog("columnWidth", json!({})),
+            "edit.copy" | "edit.cut" => {
+                app.copy_to_clipboard(ui.ctx(), id);
+            }
+            "edit.paste" => app.paste_from_clipboard(),
+            other => app.run_or_alert(other, json!({})),
+        }
+    }
+    if chosen.is_some() || popup_dismissed(&response.response, was_open) {
         app.grid.header_menu = None;
     }
 }
@@ -535,15 +531,15 @@ pub(super) fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool)
 /// The context-menu entry for Insert Copied Cells / Insert Cut Cells, when the clipboard holds a
 /// copy or cut of this app: whole rows or columns insert at once, a block asks which way to shift
 /// (Insert Paste). A cut block can only be pasted, so it gets no entry.
-fn insert_copied_item(app: &SheetApp) -> Option<(&'static str, &'static str)> {
+fn insert_copied_item(app: &SheetApp) -> Option<Entry<'static>> {
     let clip = app.session.clipboard.as_ref()?;
     let lines = clip.selected.is_full_rows() != clip.selected.is_full_cols();
     let cut = clip.cut && app.session.active().is_some_and(|d| d.uid == clip.doc_uid);
     match (cut, lines) {
-        (true, true) => Some(("Insert Cut Cells", "home.insertCopiedCells")),
+        (true, true) => Some(Entry::item("Insert Cut C&ells", "home.insertCopiedCells")),
         (true, false) => None,
-        (false, true) => Some(("Insert Copied Cells", "home.insertCopiedCells")),
-        (false, false) => Some(("Insert Copied Cells…", "ui:insertPaste")),
+        (false, true) => Some(Entry::item("Insert Copi&ed Cells", "home.insertCopiedCells")),
+        (false, false) => Some(Entry::item("Insert Copi&ed Cells…", "ui:insertPaste")),
     }
 }
 
