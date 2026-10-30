@@ -1,0 +1,13 @@
+[package]
+name = "monun-functions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun worksheet function library: math, statistics, text, dates, lookup, financial, engineering"
+
+[lints]
+workspace = true
+
+[dependencies]
+monun-core = { workspace = true }
+regex = { workspace = true }

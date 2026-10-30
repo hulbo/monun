@@ -1,0 +1,32 @@
+# Asset attribution
+
+Every non-code asset in this repository is listed here with its author, source and licence.
+`cargo xtask assets` fails if an asset file is missing from this table.
+
+Every asset is original or third-party material under an open licence; no vendor's iconography,
+artwork, fonts, templates or sample files are included. Generated-in-code art (the UI icon set in
+`crates/ui-egui/src/icons.rs`, themes, cell and table styles, chart palettes and the sample
+workbooks) is original and has no file to list.
+
+| Asset | Author | Source | Licence | Notes |
+|---|---|---|---|---|
+| `epaint_default_fonts::EGUI_ICONS`, `epaint_default_fonts::EMOJI_ICON` (dependency font inputs) | John Slegers | [egui 6d518fc](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [emoji-icon-font](https://github.com/jslegers/emoji-icon-font) | MIT (Copyright (c) 2014 John Slegers; full upstream text in `NOTICE`) | egui-icons.ttf is the five-glyph subset; emoji-icon-font.ttf is the full monochrome fallback. No font file copied into this repository. |
+| `epaint_default_fonts::HACK_REGULAR` (dependency font input) | Source Foundry Authors (Hack; DejaVu and Bitstream Vera foundations) | [egui 6d518fc](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [Hack](https://github.com/source-foundry/Hack) | MIT + Bitstream Vera License (full upstream texts in `NOTICE`) | egui's bundled monospace face and the last-resort symbol fallback. No font file copied into this repository. |
+| `epaint_default_fonts::NOTO_EMOJI_REGULAR` (dependency font input) | The Noto Project Authors | [egui 6d518fc](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) | SIL Open Font License 1.1 (full upstream text in `NOTICE`) | The monochrome emoji fallback. No font file copied into this repository. |
+| `epaint_default_fonts::UBUNTU_LIGHT` (dependency font input) | Canonical Ltd. and the Ubuntu Font Family authors | [egui 6d518fc](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [Ubuntu font](https://design.ubuntu.com/font) | Ubuntu Font Licence 1.0 (full upstream text in `NOTICE`) | egui's default proportional face. No font file copied into this repository. |
+| `assets/app-icon/monun.svg` | Authors credited in `NOTICE` | original (hand-written SVG) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | App icon |
+| `assets/app-icon/monun-1024.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | App icon render |
+| `assets/app-icon/monun-macos-512.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | macOS grid render |
+| `assets/app-icon/monun.icns` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | macOS bundle icon |
+| `assets/app-icon/monun.ico` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Windows exe icon |
+| `assets/app-icon/hicolor/16x16/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/24x24/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/32x32/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/48x48/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/64x64/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/128x128/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/256x256/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/512x512/apps/kr.hulbo.monun.png` | Authors credited in `NOTICE` | rendered from monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux hicolor render |
+| `assets/app-icon/hicolor/scalable/apps/kr.hulbo.monun.svg` | Authors credited in `NOTICE` | copy of monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux scalable icon |
+| `assets/app-icon/README.md` | Authors credited in `NOTICE` | original | MIT OR Apache-2.0 | Icon documentation |
+| `assets/app-icon/LICENSE.txt` | (licence text) | original | — | Licence of the app icon files |

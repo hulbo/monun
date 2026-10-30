@@ -1,0 +1,10 @@
+Monun app icon (monun.svg and every file derived from it in this directory:
+monun-1024.png, monun-macos-512.png, monun.icns, monun.ico, hicolor/).
+
+Original artwork (simple hand-written SVG geometry) by the authors credited in NOTICE. No
+third-party material. Licensed like the rest of this repository, under either of
+
+  * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  * MIT license (https://opensource.org/licenses/MIT)
+
+at your option.

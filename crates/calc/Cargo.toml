@@ -1,0 +1,17 @@
+[package]
+name = "monun-calc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun calculation engine: dependency graph, recalculation, evaluator, dynamic arrays"
+
+[lints]
+workspace = true
+
+[dependencies]
+monun-core = { workspace = true }
+monun-formula = { workspace = true }
+monun-functions = { workspace = true }
+monun-numfmt = { workspace = true }
+monun-model = { workspace = true }
+log = { workspace = true }

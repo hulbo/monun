@@ -1,0 +1,16 @@
+[package]
+name = "monun-chart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun charts: data resolution, layout into toolkit-free primitives, sparklines and a small rasteriser"
+
+[lints]
+workspace = true
+
+[dependencies]
+monun-core = { workspace = true }
+monun-model = { workspace = true }
+monun-calc = { workspace = true }
+monun-numfmt = { workspace = true }
+serde = { workspace = true }

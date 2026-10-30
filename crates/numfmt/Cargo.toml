@@ -1,0 +1,12 @@
+[package]
+name = "monun-numfmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun number formats: Excel format codes, General display, TEXT()"
+
+[lints]
+workspace = true
+
+[dependencies]
+monun-core = { workspace = true }
