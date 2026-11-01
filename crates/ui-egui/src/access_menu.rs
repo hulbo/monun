@@ -445,6 +445,9 @@ mod tests {
         assert_eq!(display(Language::Ko, "Cu&t"), ("잘라내기(T)".to_string(), Some("잘라내기(".len().."잘라내기(T".len())));
         assert_eq!(display(Language::Ko, "&Delete…").0, "삭제(D)…");
         assert_eq!(display(Language::Ko, "&Format Cells…").0, "셀 서식(F)…");
+        // Korean Excel calls threaded comments 메모 and notes 노트.
+        assert_eq!(display(Language::Ko, "New Co&mment").0, "새 메모(M)");
+        assert_eq!(display(Language::Ko, "New &Note").0, "새 노트(N)");
         // A label with no translation keeps its English look.
         assert_eq!(display(Language::Ko, "Zz &Untranslated"), ("Zz Untranslated".to_string(), Some(3..4)));
     }
