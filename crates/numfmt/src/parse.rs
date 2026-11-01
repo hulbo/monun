@@ -1,6 +1,7 @@
 //! Format code parsing: sections, bracket tags and tokens.
 
 use crate::FormatColor;
+use crate::korean::Locale;
 
 /// At most this many sections are honoured (`pos;neg;zero;text`); extra ones are ignored.
 const MAX_SECTIONS: usize = 4;
@@ -21,11 +22,13 @@ pub(crate) enum DatePart {
     AmPm,
     /// `A/P` with the letters as typed.
     AP(char, char),
+    /// `aaa` (`월`) and `aaaa` (`월요일`): the weekday in Korean, whatever the locale.
+    KoreanDay(u8),
 }
 
 impl DatePart {
     pub(crate) fn is_calendar(self) -> bool {
-        matches!(self, DatePart::Year(_) | DatePart::Month(_) | DatePart::Day(_))
+        matches!(self, DatePart::Year(_) | DatePart::Month(_) | DatePart::Day(_) | DatePart::KoreanDay(_))
     }
 }
 
@@ -122,6 +125,10 @@ pub(crate) struct Section {
     pub fraction: bool,
     pub currency: bool,
     pub fill: bool,
+    /// A Korean locale tag (`[$-412]`): month, weekday and AM/PM names in Korean.
+    pub korean: bool,
+    /// `[DBNum1]`–`[DBNum4]`: numbers in Korean numerals (see [`crate::korean`]); 0 = none.
+    pub dbnum: u8,
 }
 
 /// Splits a code into sections at unquoted, unescaped, unbracketed semicolons.
@@ -251,11 +258,33 @@ struct Raw {
     color: Option<FormatColor>,
     cond: Option<Cond>,
     currency: bool,
+    tags: Tags,
+}
+
+/// What locale and numeral tags (`[$-412]`, `[$-F800]`, `[DBNum4]`) ask of a section.
+#[derive(Default)]
+struct Tags {
+    korean: bool,
+    /// `[$-F800]` or `[$-F400]`: the system long date or time replaces the section's codes.
+    system: Option<Locale>,
+    dbnum: u8,
 }
 
 fn tokenize(src: &str) -> Raw {
+    let raw = tokenize_codes(src);
+    // Korean Windows' long date or time in place of the codes written after the tag.
+    let system = match raw.tags.system {
+        Some(Locale::LongDate) => crate::korean::LONG_DATE,
+        Some(Locale::LongTime) => crate::korean::LONG_TIME,
+        _ => return raw,
+    };
+    let Raw { color, cond, currency, tags, .. } = raw;
+    Raw { toks: tokenize_codes(system).toks, color, cond, currency, tags: Tags { korean: true, system: None, ..tags } }
+}
+
+fn tokenize_codes(src: &str) -> Raw {
     let cs: Vec<char> = src.chars().collect();
-    let mut raw = Raw { toks: Vec::new(), color: None, cond: None, currency: false };
+    let mut raw = Raw { toks: Vec::new(), color: None, cond: None, currency: false, tags: Tags::default() };
     let toks = &mut raw.toks;
     // With no `]` at or after a `[`, that `[` is a literal; checking this once keeps the scan linear.
     let last_close = cs.iter().rposition(|&c| c == ']');
@@ -306,7 +335,10 @@ fn tokenize(src: &str) -> Raw {
                 let close = if last_close.is_some_and(|l| l > i) { cs.get(i + 1..).and_then(|r| r.iter().position(|&d| d == ']')) } else { None };
                 if let Some(p) = close {
                     let content: String = cs.get(i + 1..i + 1 + p).unwrap_or(&[]).iter().collect();
-                    bracket(&mut raw_parts(toks, &mut raw.color, &mut raw.cond, &mut raw.currency), &content);
+                    bracket(
+                        &mut RawParts { toks, color: &mut raw.color, cond: &mut raw.cond, currency: &mut raw.currency, tags: &mut raw.tags },
+                        &content,
+                    );
                     i += p + 2;
                 } else {
                     push_lit(toks, "[");
@@ -345,6 +377,12 @@ fn tokenize(src: &str) -> Raw {
                 i += 7;
                 continue;
             }
+            // Korean Excel's name for General in `TEXT` codes (`[DBNum4]G/표준`).
+            'G' | 'g' if starts_with_ci(&cs, i, "g/표준") => {
+                toks.push(Tok::General);
+                i += 4;
+                continue;
+            }
             'A' | 'a' if starts_with_ci(&cs, i, "am/pm") => {
                 toks.push(Tok::Date(DatePart::AmPm));
                 i += 5;
@@ -354,6 +392,15 @@ fn tokenize(src: &str) -> Raw {
                 let p = cs.get(i + 2).copied().unwrap_or('P');
                 toks.push(Tok::Date(DatePart::AP(c, p)));
                 i += 3;
+                continue;
+            }
+            'A' | 'a' if starts_with_ci(&cs, i, "aaa") => {
+                let mut n = 0usize;
+                while cs.get(i + n).is_some_and(|d| d.eq_ignore_ascii_case(&'a')) {
+                    n += 1;
+                }
+                toks.push(Tok::Date(DatePart::KoreanDay(n.min(255) as u8)));
+                i += n;
                 continue;
             }
             'y' | 'Y' | 'm' | 'M' | 'd' | 'D' | 'h' | 'H' | 's' | 'S' | 'e' | 'E' => {
@@ -391,10 +438,7 @@ struct RawParts<'a> {
     color: &'a mut Option<FormatColor>,
     cond: &'a mut Option<Cond>,
     currency: &'a mut bool,
-}
-
-fn raw_parts<'a>(toks: &'a mut Vec<Tok>, color: &'a mut Option<FormatColor>, cond: &'a mut Option<Cond>, currency: &'a mut bool) -> RawParts<'a> {
-    RawParts { toks, color, cond, currency }
+    tags: &'a mut Tags,
 }
 
 /// Handles the content of a `[...]` tag.
@@ -411,11 +455,20 @@ fn bracket(p: &mut RawParts<'_>, content: &str) {
         return;
     }
     if let Some(body) = content.strip_prefix('$') {
-        let sym = body.split('-').next().unwrap_or("");
+        let (sym, locale) = body.split_once('-').unwrap_or((body, ""));
         if !sym.is_empty() {
             *p.currency = true;
             push_lit(p.toks, sym);
         }
+        match crate::korean::locale(locale) {
+            Locale::Korean => p.tags.korean = true,
+            system @ (Locale::LongDate | Locale::LongTime) => p.tags.system = Some(system),
+            Locale::Other => {}
+        }
+        return;
+    }
+    if let Some(n) = lc.strip_prefix("dbnum").and_then(|n| n.parse::<u8>().ok()) {
+        p.tags.dbnum = n;
         return;
     }
     let mut chars = lc.chars();
@@ -430,7 +483,7 @@ fn bracket(p: &mut RawParts<'_>, content: &str) {
             _ => DatePart::ElapsedS(n),
         }));
     }
-    // Anything else ([DBNum1], [natural], locale tags…) is ignored.
+    // Anything else ([natural]…) is ignored.
 }
 
 fn date_part(t: &Tok) -> Option<DatePart> {
@@ -438,7 +491,7 @@ fn date_part(t: &Tok) -> Option<DatePart> {
 }
 
 fn analyze(raw: Raw) -> Section {
-    let Raw { toks, color, cond, currency } = raw;
+    let Raw { toks, color, cond, currency, tags } = raw;
     let is_date = toks.iter().any(|t| matches!(t, Tok::Date(_)));
     let has_general = toks.iter().any(|t| matches!(t, Tok::General));
     let mut sec = Section {
@@ -455,6 +508,8 @@ fn analyze(raw: Raw) -> Section {
         fraction: false,
         currency,
         fill: toks.iter().any(|t| matches!(t, Tok::Fill(_))),
+        korean: tags.korean,
+        dbnum: tags.dbnum,
     };
     if is_date {
         sec.kind = SecKind::Date;

@@ -382,7 +382,9 @@ impl Dialog {
                 // The file rides along in the values (`path` on the desktop, `name` and `base64`
                 // on the web) and goes back to `file.open` with the password.
                 let source = p("path").as_str().or(p("name").as_str()).map(str::to_string).unwrap_or_default();
-                let file = std::path::Path::new(&source).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or("This workbook").to_string();
+                let lang = app.ui.language;
+                let file =
+                    std::path::Path::new(&source).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(lang.tr("This workbook")).to_string();
                 // An empty password from the start, so OK on the untouched field says "incorrect"
                 // rather than asking for the password again.
                 let mut values = params.clone();
@@ -391,7 +393,8 @@ impl Dialog {
                     "openPassword",
                     "Password",
                     "file.open",
-                    vec![Note(format!("'{file}' is protected.")), Password { key: "password", label: "Password:" }],
+                    // Translated before the name goes in: the note is shown as it is.
+                    vec![Note(lang.tr("'{file}' is protected.").replace("{file}", &file)), Password { key: "password", label: "Password:" }],
                     values,
                 )
             }

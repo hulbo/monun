@@ -122,16 +122,27 @@ pub struct Backstage {
     preview_page: usize,
     /// Print: the preview for (document, revision, whole workbook, fit to page).
     preview: Option<((u64, u64, bool, bool), Json)>,
-    /// Save As: the chosen file type (an extension from [`SAVE_TYPES`]).
+    /// Save As: the chosen file type, a format from [`SAVE_TYPES`] (its file extension: [`extension`]).
     pub save_format: &'static str,
     /// Home and Open: when the recent workbooks were last changed.
     recent: RecentFiles,
 }
 
-/// Save As file types: (extension, label). The first is the workbook itself; the others are
-/// exports that leave the workbook's own file and unsaved state alone.
-pub const SAVE_TYPES: [(&str, &str); 4] =
-    [("xlsx", "Excel Workbook (*.xlsx)"), ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"), ("html", "Web Page (*.html)"), ("pdf", "PDF (*.pdf)")];
+/// Save As file types: (format, label), in Excel's order. The first is the workbook itself; the
+/// others are exports that leave the workbook's own file and unsaved state alone. CSV comes in
+/// Excel's two encodings: "CSV UTF-8" (`csv`) and plain "CSV" in code page 949 (`csv-cp949`).
+pub const SAVE_TYPES: [(&str, &str); 5] = [
+    ("xlsx", "Excel Workbook (*.xlsx)"),
+    ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"),
+    ("html", "Web Page (*.html)"),
+    ("csv-cp949", "CSV (Comma delimited) (*.csv)"),
+    ("pdf", "PDF (*.pdf)"),
+];
+
+/// The file extension of a [`SAVE_TYPES`] format (`csv-cp949` is a `.csv` file).
+fn extension(fmt: &str) -> &str {
+    fmt.split_once('-').map_or(fmt, |(ext, _)| ext)
+}
 
 impl Backstage {
     pub fn new(page: Page) -> Backstage {
@@ -693,7 +704,7 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     ui.add_space(14.0);
     // Desktop: the system Save dialog. Web: the file downloads.
     let web = app.services.pick_save.is_none() && app.services.download.is_some();
-    let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
+    let label = if web { format!("{} (.{})", lang.tr("Download"), extension(fmt)) } else { lang.tr("Browse…").to_string() };
     if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
         if fmt == "xlsx" {
             let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
@@ -720,7 +731,7 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     ui.add_space(14.0);
     section(ui, lang, "Change File Type");
     for (fmt, icon, title, detail) in [
-        ("csv", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
+        ("csv-cp949", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
         ("html", Icon::Link, "Web Page (.html)", "Save the workbook as a web page."),
     ] {
         if action_row(ui, icon, lang.tr(title), lang.tr(detail)).clicked() && export_as(app, fmt) {
@@ -729,25 +740,32 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     }
 }
 
-/// Exports the active workbook as `pdf`, `csv` or `html`: through the save picker on the desktop,
-/// as a browser download on the web. Returns whether a file was written or handed over.
+/// Exports the active workbook as `pdf`, `csv` (CSV UTF-8), `csv-cp949` (plain CSV) or `html`:
+/// through the save picker on the desktop, as a browser download on the web. Returns whether a
+/// file was written or handed over.
 pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     if !app.commit_edit(0, 0, false, false) {
         return false;
     }
-    let id = match fmt {
-        "pdf" => "file.exportPdf",
-        "csv" => "file.exportCsv",
-        "html" => "file.exportHtml",
+    let (id, encoding) = match fmt {
+        "pdf" => ("file.exportPdf", None),
+        "csv" => ("file.exportCsv", Some("utf-8")),
+        "csv-cp949" => ("file.exportCsv", Some("cp949")),
+        "html" => ("file.exportHtml", None),
         _ => return false,
     };
+    let fmt = extension(fmt);
     let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
     let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
     if let Some(pick) = &app.services.pick_save {
         let Some(path) = pick(&format!("{stem}.{fmt}")) else { return false };
         // The picker may suggest a workbook extension; the export writes the chosen format.
         let path = std::path::Path::new(&path).with_extension(fmt).to_string_lossy().into_owned();
-        return match app.run(id, json!({"path": path})) {
+        let params = match encoding {
+            Some(encoding) => json!({"path": path, "encoding": encoding}),
+            None => json!({"path": path}),
+        };
+        return match app.run(id, params) {
             Ok(_) => true,
             Err(e) => {
                 app.message = Some(("Monun".into(), crate::clean_error(&e)));
@@ -770,7 +788,11 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         };
     }
     app.store_view_state();
-    match app.session.run("file.saveBytes", json!({"format": fmt})) {
+    let params = match encoding {
+        Some(encoding) => json!({"format": fmt, "encoding": encoding}),
+        None => json!({"format": fmt}),
+    };
+    match app.session.run("file.saveBytes", params) {
         Ok(r) => {
             let bytes = r.get("base64").and_then(Json::as_str).and_then(monun_engine::io::base64_decode);
             let name = r.get("name").and_then(Json::as_str).map_or_else(|| format!("{stem}.{fmt}"), str::to_string);

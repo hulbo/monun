@@ -108,6 +108,8 @@ fn convert_xlsx_csv_roundtrip() {
     ]);
     ok(&["convert", xlsx.to_str().unwrap(), csv.to_str().unwrap()]);
     let text = std::fs::read_to_string(&csv).unwrap();
+    // CSV UTF-8, with the byte order mark Excel reads it by.
+    let text = text.strip_prefix('\u{feff}').unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines, ["Name,Qty", "apple,3", "\"pear, green\",4", "total,7"], "{text}");
     ok(&["convert", csv.to_str().unwrap(), back.to_str().unwrap()]);

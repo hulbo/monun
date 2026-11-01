@@ -6,6 +6,7 @@ mod chart_area_stacked100;
 mod chart_workbook_names;
 mod command_sequence_fuzz;
 mod cross_sheet_cut;
+mod csv_encoding;
 mod csv_export_budget;
 mod custom_filter_blanks;
 mod custom_view_freeze;

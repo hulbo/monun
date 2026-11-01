@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use monun_core::parse::parse_input;
 use monun_core::{CellRef, MAX_COLS, MAX_ROWS, Value};
-use monun_model::{Cell, NumFmt, Sheet, StyleId, Workbook};
+use monun_model::{Cell, NumFmt, Sheet, StyleId, TextEncoding, Workbook};
 
 use crate::{CsvOptions, IoError};
 
@@ -115,37 +115,97 @@ fn is_cp1256_arabic(b: u8) -> bool {
     )
 }
 
+/// Whether bytes that aren't UTF-8 read as Korean in code page 949, the ANSI code page of Korean
+/// Windows that Excel there writes plain CSV in: at least half of the two-byte characters are
+/// KS X 1001 Hangul syllables (lead 0xB0–0xC8, trail 0xA1–0xFE). The caller still decodes them
+/// strictly, so a byte that starts no valid character rules code page 949 out. Western accents
+/// seldom pair up at all, and Windows-1256 Arabic letters pair into Hanja.
+fn reads_as_cp949_korean(bytes: &[u8]) -> bool {
+    let (mut pairs, mut hangul) = (0usize, 0usize);
+    let mut i = 0;
+    while let Some(&lead) = bytes.get(i) {
+        if lead < 0x80 {
+            i += 1;
+            continue;
+        }
+        let Some(&trail) = bytes.get(i + 1) else { return false };
+        pairs += 1;
+        if (0xB0..=0xC8).contains(&lead) && (0xA1..=0xFE).contains(&trail) {
+            hangul += 1;
+        }
+        i += 2;
+    }
+    hangul > 0 && hangul * 2 >= pairs
+}
+
 /// Decodes CSV bytes with BOM-aware UTF-8 and UTF-16 handling. Without a BOM, valid UTF-8 is kept.
-/// Other bytes decode as Windows-1256 when they read as Arabic (see [`Cp1256Evidence`]), else as
-/// Windows-1252.
-pub fn decode_text(bytes: &[u8]) -> String {
+/// Other bytes decode as code page 949 when they read as Korean (see [`reads_as_cp949_korean`]),
+/// else as Windows-1256 when they read as Arabic (see [`Cp1256Evidence`]), else as Windows-1252.
+/// Also returns the encoding to write the text back in: UTF-8 and code page 949 as they came,
+/// plain ASCII as code page 949 (Excel on Korean Windows reads and writes a CSV without a byte
+/// order mark that way, so Hangul typed into it later still opens there), the rest as "CSV UTF-8".
+pub fn decode_text_with_encoding(bytes: &[u8]) -> (String, TextEncoding) {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        return String::from_utf8_lossy(rest).into_owned();
+        return (String::from_utf8_lossy(rest).into_owned(), TextEncoding::Utf8Bom);
     }
     let utf16 = |b: &[u8], le: bool| -> String {
         let units = b.as_chunks::<2>().0.iter().map(|c| if le { u16::from_le_bytes(*c) } else { u16::from_be_bytes(*c) });
         char::decode_utf16(units).map(|r| r.unwrap_or('\u{FFFD}')).collect()
     };
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        return utf16(rest, true);
+        return (utf16(rest, true), TextEncoding::Utf8Bom);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        return utf16(rest, false);
+        return (utf16(rest, false), TextEncoding::Utf8Bom);
     }
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            let use_windows_1256 = Cp1256Evidence::of(bytes).is_arabic();
-            bytes
-                .iter()
-                .map(|&b| match b {
-                    0x80..=0xFF if use_windows_1256 => {
-                        char::from_u32(CP1256.get((b - 0x80) as usize).copied().unwrap_or(0xFFFD)).unwrap_or('\u{FFFD}')
-                    }
-                    0x80..=0x9F => char::from_u32(CP1252.get((b - 0x80) as usize).copied().unwrap_or(0xFFFD)).unwrap_or('\u{FFFD}'),
-                    _ => b as char,
-                })
-                .collect()
+    if bytes.is_ascii() {
+        return (String::from_utf8_lossy(bytes).into_owned(), TextEncoding::Cp949);
+    }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return (s.to_string(), TextEncoding::Utf8);
+    }
+    if reads_as_cp949_korean(bytes)
+        && let Some(text) = encoding_rs::EUC_KR.decode_without_bom_handling_and_without_replacement(bytes)
+    {
+        return (text.into_owned(), TextEncoding::Cp949);
+    }
+    let use_windows_1256 = Cp1256Evidence::of(bytes).is_arabic();
+    let text = bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0xFF if use_windows_1256 => char::from_u32(CP1256.get((b - 0x80) as usize).copied().unwrap_or(0xFFFD)).unwrap_or('\u{FFFD}'),
+            0x80..=0x9F => char::from_u32(CP1252.get((b - 0x80) as usize).copied().unwrap_or(0xFFFD)).unwrap_or('\u{FFFD}'),
+            _ => b as char,
+        })
+        .collect();
+    (text, TextEncoding::Utf8Bom)
+}
+
+/// Encodes UTF-8 CSV text (what [`write_csv`] returns) in `encoding`. "CSV UTF-8" starts with a
+/// byte order mark, which is how Excel tells it from the ANSI code page; code page 949 writes the
+/// characters it lacks as `?`, as Excel does.
+pub fn encode_text(utf8: Vec<u8>, encoding: TextEncoding) -> Vec<u8> {
+    match encoding {
+        TextEncoding::Utf8 => utf8,
+        TextEncoding::Utf8Bom => [&[0xEF, 0xBB, 0xBF][..], &utf8].concat(),
+        TextEncoding::Cp949 => match std::str::from_utf8(&utf8) {
+            Ok(text) => encode_cp949(text),
+            Err(_) => utf8,
+        },
+    }
+}
+
+fn encode_cp949(text: &str) -> Vec<u8> {
+    let mut encoder = encoding_rs::EUC_KR.new_encoder();
+    let mut out = Vec::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let (result, read) = encoder.encode_from_utf8_to_vec_without_replacement(rest, &mut out, true);
+        rest = rest.get(read..).unwrap_or_default();
+        match result {
+            encoding_rs::EncoderResult::InputEmpty => return out,
+            encoding_rs::EncoderResult::OutputFull => out.reserve(rest.len().max(16)),
+            encoding_rs::EncoderResult::Unmappable(_) => out.push(b'?'),
         }
     }
 }
@@ -249,7 +309,7 @@ pub(crate) fn parse_records(text: &str, delim: char, quote: char, mut on_record:
 }
 
 pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
-    let text = decode_text(bytes);
+    let (text, encoding) = decode_text_with_encoding(bytes);
     let quote = if opts.quote == 0 { '"' } else { opts.quote as char };
     let delim = if opts.delimiter == 0 { sniff_delimiter(&text, quote) } else { opts.delimiter } as char;
     if delim == quote {
@@ -258,6 +318,7 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
     let mut wb = Workbook::new();
     wb.date_system = opts.date_system;
     wb.csv_delimiter = u8::try_from(delim).ok();
+    wb.csv_encoding = Some(encoding);
     let mut sheet = Sheet::new("Sheet1");
     let mut styles = std::mem::take(&mut wb.styles);
     let mut fmt_cache: Vec<(&'static str, StyleId)> = vec![];
@@ -303,9 +364,10 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
 }
 
 /// Writes the sheet as CSV from A1 to the end of its used range, so leading empty columns and rows
-/// stay as empty fields and every cell keeps its position (CRLF line ends, UTF-8 without BOM). `cell_text` gives
-/// each cell's field text: the caller decides how values look (Save As CSV writes them as
-/// displayed, number formats applied); quoting is done here.
+/// stay as empty fields and every cell keeps its position (CRLF line ends, UTF-8 without BOM;
+/// [`encode_text`] puts it in the file's encoding). `cell_text` gives each cell's field text: the
+/// caller decides how values look (Save As CSV writes them as displayed, number formats applied);
+/// quoting is done here.
 ///
 /// The output is capped at [`MAX_CSV_BYTES`]: a cell far from A1 makes the file as big as the whole
 /// rectangle between them (`A1` and `XFD1048576` are 16 GiB of commas).

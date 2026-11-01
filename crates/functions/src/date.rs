@@ -4,7 +4,7 @@ use monun_core::date::{DateTime, datetime_from_serial, days_in_month, is_leap, s
 use monun_core::parse::parse_input;
 use monun_core::{CellError, DateSystem, Value};
 
-use crate::util::{R, S, arg, as_array, has, num, num_val, opt_bool, opt_num, scalar, text, to_int};
+use crate::util::{R, S, arg, as_array, has, num, num_val, opt_bool, opt_num, scalar, text, text_val, to_int};
 use crate::{Arg, Ctx, FnSpec};
 
 const MAX_SERIAL: f64 = 2_958_465.0;
@@ -251,6 +251,14 @@ fn datevalue(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
         return Err(CellError::Value);
     }
     num_val(n.floor())
+}
+
+/// DATESTRING(date): a date as Korean Excel writes it, `yy년 mm월 dd일` (2026-11-02 is
+/// `26년 11월 02일`). The date is a serial number or text that reads as one; a time is dropped.
+fn datestring(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let sys = c.date_system();
+    let d = dt(sys, day_arg(a, 0, sys)? as f64)?;
+    text_val(format!("{:02}년 {:02}월 {:02}일", d.year.rem_euclid(100), d.month, d.day))
 }
 
 fn timevalue(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
@@ -522,6 +530,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             datedif
         ),
         f!("DATEVALUE", 1, 1, DateTime, S, "DATEVALUE(date_text)", "Converts a date written as text into a date serial number.", datevalue),
+        f!("DATESTRING", 1, 1, DateTime, S, "DATESTRING(date)", "Writes a date as Korean Excel does: yy년 mm월 dd일.", datestring),
         f!("TIMEVALUE", 1, 1, DateTime, S, "TIMEVALUE(time_text)", "Converts a time written as text into a fraction of a day.", timevalue),
         f!("DAYS", 2, 2, DateTime, S, "DAYS(end_date, start_date)", "Returns the number of days between two dates.", days),
         f!(
@@ -751,6 +760,15 @@ mod tests {
         close(ev("TIMEVALUE", vec![t("6:00 PM")]), 0.75);
         close(ev("TIMEVALUE", vec![t("1/2/2020 12:00")]), 0.5);
         is_err(ev("TIMEVALUE", vec![t("x")]), CellError::Value);
+    }
+
+    #[test]
+    fn datestring_writes_korean_dates() {
+        is_text(ev("DATESTRING", vec![n(d(2026.0, 11.0, 2.0) + 0.75)]), "26년 11월 02일");
+        is_text(ev("DATESTRING", vec![t("2009-03-04")]), "09년 03월 04일");
+        is_text(ev("DATESTRING", vec![n(d(2000.0, 1.0, 1.0))]), "00년 01월 01일");
+        is_err(ev("DATESTRING", vec![t("hello")]), CellError::Value);
+        is_err(ev("DATESTRING", vec![n(-1.0)]), CellError::Num);
     }
 
     #[test]

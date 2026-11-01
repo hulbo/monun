@@ -283,6 +283,44 @@ fn dates_and_times() {
 }
 
 #[test]
+fn korean_weekdays_months_and_system_dates() {
+    // 2026-10-07 is a Wednesday.
+    assert_eq!(f("yyyy-mm-dd(aaa)", 46302.0), "2026-10-07(수)");
+    assert_eq!(f("AAAA", 46302.0), "수요일");
+    assert_eq!(f("[$-412]yyyy\"년\" mmmm d\"일\" dddd", 46302.0), "2026년 10월 7일 수요일");
+    assert_eq!(f("[$-ko-KR]mmm ddd", 46302.0), "10월 수");
+    assert_eq!(f("[$-412]AM/PM h:mm", 46302.75), "오후 6:00");
+    // Korean Windows' long date and time, whatever codes follow the tag.
+    assert_eq!(f("[$-F800]dddd, mmmm dd, yyyy", 46302.0), "2026년 10월 7일 수요일");
+    assert_eq!(f("[$-x-systime]h:mm:ss AM/PM", 46302.25), "오전 6:00:00");
+    // Without a Korean tag names stay English, as in Excel.
+    assert_eq!(f("dddd AM/PM", 46302.75), "Wednesday PM");
+    assert_eq!(f("[$-409]dddd", 46302.0), "Wednesday");
+    assert_eq!(f("[$₩-412]#,##0", 1234.0), "₩1,234");
+    assert_eq!(NumberFormat::parse("yyyy-mm-dd aaa").kind(), FormatKind::Date);
+}
+
+#[test]
+fn korean_numerals() {
+    assert_eq!(f("[DBNum4][$-412]General", 12345.0), "일만이천삼백사십오");
+    assert_eq!(f("[DBNum1][$-412]General", 12345.0), "一萬二千三百四十五");
+    assert_eq!(f("[DBNum2][$-412]General", 12345.0), "壹萬貳阡參百四拾五");
+    assert_eq!(f("[DBNum4]General", 100_010_000.0), "일억일만");
+    assert_eq!(f("[DBNum4]General", 1_500_000.0), "일백오십만");
+    assert_eq!(f("[DBNum4]General", 10.0), "일십");
+    assert_eq!(f("[DBNum4]General", 0.0), "영");
+    assert_eq!(f("[DBNum4]General", 123.45), "일백이십삼.사오");
+    assert_eq!(f("[DBNum4]General", -20.0), "-이십");
+    assert_eq!(f("[DBNum4]\"일금 \"General\"원정\"", 1_230_000.0), "일금 일백이십삼만원정");
+    // Placeholders write each digit; literals keep theirs.
+    assert_eq!(f("[DBNum4]000\"-1\"", 123.0), "일이삼-1");
+    // `[DBNum3]` is not drawn.
+    assert_eq!(f("[DBNum3]0", 12.0), "12");
+    // Korean Excel's `TEXT` codes name General `G/표준`.
+    assert_eq!(text_function(&Value::Number(1_230_000.0), "[DBNum4]G/표준", S), Ok("일백이십삼만".into()));
+}
+
+#[test]
 fn time_formats() {
     assert_eq!(f("yyyy-mm-dd hh:mm:ss", 46302.5), "2026-10-07 12:00:00");
     assert_eq!(f("h:mm AM/PM", 0.75), "6:00 PM");

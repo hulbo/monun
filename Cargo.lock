@@ -2800,6 +2800,7 @@ name = "monun-functions"
 version = "0.13.0"
 dependencies = [
  "monun-core",
+ "monun-numfmt",
  "regex",
 ]
 
@@ -2880,6 +2881,7 @@ name = "monun-xlsx"
 version = "0.13.0"
 dependencies = [
  "aes",
+ "encoding_rs",
  "monun-core",
  "monun-formula",
  "monun-functions",

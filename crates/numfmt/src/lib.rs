@@ -1,10 +1,12 @@
 //! Monun number formats: Excel format codes (`#,##0.00;[Red](#,##0.00)`, dates, fractions,
-//! scientific…), the General display format and the `TEXT()` worksheet function. en-US only.
+//! scientific…), the General display format and the `TEXT()` worksheet function. en-US, plus the
+//! Korean that codes ask for (`aaaa`, `[$-412]`, `[DBNum4]`, the system date of `[$-F800]`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod builtin;
 mod decimal;
+mod korean;
 mod parse;
 mod render;
 
@@ -408,6 +410,13 @@ impl NumberFormat {
     pub fn parse_cached(code: &str) -> NumberFormat {
         parse_cache::get(code)
     }
+}
+
+/// A whole number, given as ASCII digits, in the Korean numerals of `[DBNum{dbnum}]`: 4 is Hangul
+/// (`일만이천삼백사십오`), 2 formal hanja (`壹萬貳阡參百四拾五`) and 1 hanja, written out with place
+/// units, or with `units` false digit by digit (`일이삼`). Another `dbnum` keeps the digits.
+pub fn korean_numerals(digits: &str, dbnum: u8, units: bool) -> String {
+    if units { korean::with_units(digits, dbnum) } else { korean::digits(digits, dbnum) }
 }
 
 /// The `TEXT()` worksheet function: formats a value with a format code. Numeric text is

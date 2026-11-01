@@ -10,4 +10,6 @@ workspace = true
 
 [dependencies]
 monun-core = { workspace = true }
+# Korean numerals for NUMBERSTRING, shared with `[DBNumN]` formats.
+monun-numfmt = { workspace = true }
 regex = { workspace = true }

@@ -11,9 +11,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html} → {base64}", has_doc, save_bytes),
+        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|cp949} → {base64} (encoding: csv and tsv only, see file.exportCsv)", has_doc, save_bytes),
         cmd!(noundo "file.close", "Close", ["File"], Some("Cmd+W"), "{force?: bool, document?: bool} (closes the active window, or with `document` the workbook and all its windows; the workbook closes with its last window)", has_doc, close),
-        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?}", has_doc, |s, p| export(s, p, "csv")),
+        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, encoding?: utf-8|cp949} (utf-8 is Excel's CSV UTF-8, with a byte order mark; cp949 its plain CSV on Korean Windows; without it a workbook read from CSV or text keeps that file's encoding, any other is CSV UTF-8)", has_doc, |s, p| export(s, p, "csv")),
         cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path}", has_doc, |s, p| export(s, p, "html")),
         cmd!("file.properties", "Properties", ["File"], None, "{title?, subject?, author?, company?, keywords?, description?}", has_doc, properties),
         cmd!(
@@ -155,11 +155,31 @@ fn save_as(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn save_bytes(s: &mut Session, p: &Json) -> Result<Json> {
     let fmt = str_param(p, "format").unwrap_or("xlsx");
+    let encoding = csv_encoding(p, "file.saveBytes")?;
     let d = s.doc()?;
     let name = format!("{}.{fmt}", std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book"));
     // The file name goes into a PivotChart's link to its PivotTable.
-    let bytes = crate::io::save_bytes(&d.wb, &name)?;
+    let bytes = match encoding {
+        Some(encoding) => {
+            let mut wb = (*d.wb).clone();
+            wb.csv_encoding = Some(encoding);
+            crate::io::save_bytes(&wb, &name)?
+        }
+        None => crate::io::save_bytes(&d.wb, &name)?,
+    };
     Ok(json!({"name": name, "base64": crate::io::base64_encode(&bytes), "bytes": bytes.len()}))
+}
+
+/// The `encoding` of a CSV or text export: `utf-8` is Excel's "CSV UTF-8" (with a byte order mark),
+/// `cp949` its plain "CSV" on Korean Windows. `None` keeps the encoding of the file the workbook
+/// was read from.
+fn csv_encoding(p: &Json, id: &str) -> Result<Option<monun_model::TextEncoding>> {
+    match str_param(p, "encoding") {
+        None => Ok(None),
+        Some(e) if e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8") => Ok(Some(monun_model::TextEncoding::Utf8Bom)),
+        Some(e) if e.eq_ignore_ascii_case("cp949") => Ok(Some(monun_model::TextEncoding::Cp949)),
+        Some(e) => Err(bad(id, format!("unknown encoding `{e}`: use utf-8 or cp949"))),
+    }
 }
 
 /// File › Close closes the active window; the workbook closes with its last window.
@@ -185,8 +205,12 @@ fn close(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn export(s: &mut Session, p: &Json, ext: &str) -> Result<Json> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.export", "missing `path`"))?.to_string();
+    let encoding = if ext == "csv" { csv_encoding(p, "file.exportCsv")? } else { None };
     let d = s.doc()?;
-    let wb = (*d.wb).clone();
+    let mut wb = (*d.wb).clone();
+    if encoding.is_some() {
+        wb.csv_encoding = encoding;
+    }
     if p.get("sheet").is_some() {
         wb.set_active_sheet(target_sheet(s, p)?);
     }

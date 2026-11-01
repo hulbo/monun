@@ -1,8 +1,12 @@
 use monun_core::{CellRef, DateSystem, MAX_COLS, Value};
-use monun_model::{Sheet, Workbook};
+use monun_model::{Sheet, TextEncoding, Workbook};
 
-use crate::csv::{decode_text, parse_records, sniff_delimiter};
-use crate::{CsvOptions, Format, IoError, read_csv, sniff, write_csv, write_csv_limited};
+use crate::csv::{decode_text_with_encoding, parse_records, sniff_delimiter};
+use crate::{CsvOptions, Format, IoError, encode_text, read_csv, sniff, write_csv, write_csv_limited};
+
+fn decode_text(bytes: &[u8]) -> String {
+    decode_text_with_encoding(bytes).0
+}
 
 fn v(wb: &Workbook, r: u32, c: u32) -> Value {
     wb.sheet(0).unwrap().value(CellRef::new(r, c))
@@ -138,6 +142,39 @@ fn western_1252_text_stays_latin() {
     assert_eq!(decode_text(&ordinals), "1º,2º,3º\n1ª,2ª");
     let inside_words = [b'K', 0xE4, b's', b'e', b',', b'B', 0xE4, b'c', b'k', b'e', b'r'];
     assert_eq!(decode_text(&inside_words), "Käse,Bäcker");
+}
+
+#[test]
+fn korean_code_page_949_reads_as_hangul_and_is_written_back() {
+    // 똠 is outside EUC-KR proper: code page 949's extension (lead byte 0x8C, trail `c`).
+    let text = "거래처,금액,비고\r\n(주)모눈상사,\"1,000\",똠방각하\r\n";
+    let (bytes, _, lossy) = encoding_rs::EUC_KR.encode(text);
+    assert!(!lossy);
+    assert_eq!(decode_text_with_encoding(&bytes), (text.to_string(), TextEncoding::Cp949));
+    let wb = read_csv(&bytes, &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
+    assert_eq!(wb.csv_encoding, Some(TextEncoding::Cp949));
+    assert_eq!(v(&wb, 1, 0), Value::text("(주)모눈상사"));
+    assert_eq!(v(&wb, 1, 1), Value::Number(1000.0));
+    assert_eq!(v(&wb, 1, 2), Value::text("똠방각하"));
+    assert_eq!(encode_text(text.as_bytes().to_vec(), TextEncoding::Cp949), bytes.as_ref());
+    // Characters code page 949 lacks are written as `?`, as Excel does.
+    assert_eq!(encode_text("가😀나".as_bytes().to_vec(), TextEncoding::Cp949), [0xB0, 0xA1, b'?', 0xB3, 0xAA]);
+    assert_eq!(encode_text(b"a".to_vec(), TextEncoding::Utf8Bom), [0xEF, 0xBB, 0xBF, b'a']);
+    assert_eq!(encode_text(b"a".to_vec(), TextEncoding::Utf8), b"a");
+}
+
+#[test]
+fn the_encoding_read_is_the_one_written_back() {
+    let read = |bytes: &[u8]| decode_text_with_encoding(bytes).1;
+    assert_eq!(read("가,b".as_bytes()), TextEncoding::Utf8);
+    // Plain ASCII is Excel's plain CSV: Hangul typed into it later is written in code page 949.
+    assert_eq!(read(b"a,b"), TextEncoding::Cp949);
+    assert_eq!(read(&[0xEF, 0xBB, 0xBF, b'a']), TextEncoding::Utf8Bom);
+    assert_eq!(read(&[0xFF, 0xFE, b'a', 0]), TextEncoding::Utf8Bom);
+    assert_eq!(read(&[0x80, b'a', 0xE9]), TextEncoding::Utf8Bom, "Windows-1252 is written back as CSV UTF-8");
+    // Two accented letters in a row pair up into a valid code page 949 Hanja, but nothing reads as
+    // Hangul, so the text stays Western.
+    assert_eq!(decode_text(&[b'G', b'r', 0xF6, 0xDF, b'e']), "Größe");
 }
 
 #[test]

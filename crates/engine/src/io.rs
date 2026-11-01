@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use monun_core::{CellRef, RangeRef};
-use monun_model::{Sheet, Workbook};
+use monun_model::{Sheet, TextEncoding, Workbook};
 
 use crate::{EngineError, Result};
 
@@ -290,7 +290,9 @@ pub fn source_path(path: &str) -> Option<std::path::PathBuf> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
+/// A workbook read from CSV or text is written in that file's encoding, any other as "CSV UTF-8".
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
+    let encoding = wb.csv_encoding.unwrap_or(TextEncoding::Utf8Bom);
     monun_xlsx::write_csv(sh, delimiter, |c| {
         // General's grid-width formatting rounds large identifiers to scientific notation.
         // Delimited files have no column width, so preserve the whole numeric value instead.
@@ -303,6 +305,7 @@ fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
             crate::display::value_text(wb, sh, c)
         }
     })
+    .map(|utf8| monun_xlsx::encode_text(utf8, encoding))
     .map_err(|e| EngineError::Other(e.to_string()))
 }
 

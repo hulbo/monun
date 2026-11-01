@@ -30,6 +30,19 @@ pub enum ShowObjects {
     None,
 }
 
+/// The character encoding of a CSV or text file. Excel for Windows has two CSV formats: "CSV
+/// UTF-8", UTF-8 with a byte order mark, and plain "CSV", the system's ANSI code page (949 on Korean
+/// Windows), with characters it lacks written as `?`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextEncoding {
+    /// UTF-8 without a byte order mark.
+    Utf8,
+    /// UTF-8 with a byte order mark: Excel's "CSV UTF-8".
+    Utf8Bom,
+    /// Code page 949 (Korean, a superset of EUC-KR).
+    Cp949,
+}
+
 /// File › Options › Formulas › Calculation options, stored per workbook (`<calcPr>`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CalcSettings {
@@ -181,6 +194,11 @@ pub struct Workbook {
     /// separator back (a `;` file stays a `;` file). `None` = not read from CSV: CSV saves use `,`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub csv_delimiter: Option<u8>,
+    /// Encoding of the CSV or text file this workbook was read from, so saving it as CSV or text
+    /// writes it back the same way (a code page 949 file stays one, so the program it came from
+    /// can still read it). `None` = not read from such a file: saves are "CSV UTF-8".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csv_encoding: Option<TextEncoding>,
     /// Monun macros (typed command lists, not VBA), in the order the macro list shows them.
     /// The JSON format keeps them as this field; xlsx keeps them in hidden defined names.
     #[serde(default, skip_serializing_if = "crate::macros::Macros::is_empty", skip_deserializing)]
@@ -292,6 +310,7 @@ impl Workbook {
             phonetics: vec![],
             vba_project: None,
             csv_delimiter: None,
+            csv_encoding: None,
             macros: crate::macros::Macros::default(),
             macros_read: vec![],
             macros_unread: Arc::default(),

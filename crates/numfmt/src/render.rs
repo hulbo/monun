@@ -4,6 +4,7 @@ use monun_core::DateSystem;
 use monun_core::date::{MONTHS, WEEKDAYS, datetime_from_serial, max_serial};
 
 use crate::decimal::{decimal_digits, fixed, fixed_from_digits, format_general_fit};
+use crate::korean;
 use crate::parse::{DatePart, Section, Tok};
 
 /// Text being built plus the first repeat-fill position.
@@ -50,6 +51,7 @@ pub(crate) fn render_general(sec: &Section, v: f64, width: usize) -> Out {
     let mut out = Out::default();
     for t in &sec.toks {
         match t {
+            Tok::General if korean::draws(sec.dbnum) => out.push(&korean::general(v, sec.dbnum)),
             Tok::General => out.push(&format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)))),
             Tok::Fill(c) => out.fill(*c),
             other => out.push(&other.literal_text()),
@@ -80,8 +82,18 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
     let second = (ms / 1000) % 60;
     let milli = ms % 1000;
     let pad = |n: i64, w: u8| if w >= 2 { format!("{:0w$}", n, w = w.min(20) as usize) } else { n.to_string() };
-    let month_name = MONTHS.get((dt.month as usize).wrapping_sub(1)).copied().unwrap_or("");
-    let day_name = WEEKDAYS.get(dt.weekday as usize).copied().unwrap_or("");
+    // Built when a code shows a name, so plain dates don't allocate them.
+    let month_name = || {
+        if sec.korean { korean::month(dt.month) } else { MONTHS.get((dt.month as usize).wrapping_sub(1)).copied().unwrap_or("").to_string() }
+    };
+    let day_name = |long: bool| {
+        if sec.korean {
+            korean::weekday(dt.weekday as usize, long)
+        } else {
+            WEEKDAYS.get(dt.weekday as usize).map(|d| d.chars().take(if long { usize::MAX } else { 3 }).collect()).unwrap_or_default()
+        }
+    };
+    let (am, pm) = if sec.korean { ("오전", "오후") } else { ("AM", "PM") };
     let mut out = Out::default();
     for t in &sec.toks {
         match t {
@@ -96,15 +108,16 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
                     }
                     DatePart::Month(n) => match n {
                         1 | 2 => pad(dt.month as i64, n),
-                        3 => month_name.chars().take(3).collect(),
-                        5 => month_name.chars().take(1).collect(),
-                        _ => month_name.to_string(),
+                        // Korean short names are the long ones (`11월`).
+                        3 if !sec.korean => month_name().chars().take(3).collect(),
+                        5 => month_name().chars().take(1).collect(),
+                        _ => month_name(),
                     },
                     DatePart::Day(n) => match n {
                         1 | 2 => pad(dt.day as i64, n),
-                        3 => day_name.chars().take(3).collect(),
-                        _ => day_name.to_string(),
+                        _ => day_name(n > 3),
                     },
+                    DatePart::KoreanDay(n) => korean::weekday(dt.weekday as usize, n >= 4),
                     DatePart::Hour(n) => {
                         let h = if ampm {
                             let h = hour % 12;
@@ -127,7 +140,7 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
                     DatePart::ElapsedH(n) => pad(total_ms / 3_600_000, n),
                     DatePart::ElapsedM(n) => pad(total_ms / 60_000, n),
                     DatePart::ElapsedS(n) => pad(total_ms / 1000, n),
-                    DatePart::AmPm => (if hour >= 12 { "PM" } else { "AM" }).to_string(),
+                    DatePart::AmPm => (if hour >= 12 { pm } else { am }).to_string(),
                     DatePart::AP(a, p) => (if hour >= 12 { p } else { a }).to_string(),
                 };
                 out.push(&s);
@@ -335,6 +348,12 @@ pub(crate) fn render_number(sec: &Section, v: f64) -> Out {
             && let Some(s) = pieces.get_mut(p)
         {
             *s = ".".into();
+        }
+    }
+    if korean::draws(sec.dbnum) {
+        // The number's own digits; literals keep theirs.
+        for s in pieces.iter_mut().chain(before.iter_mut()) {
+            *s = korean::digits(s, sec.dbnum);
         }
     }
     let mut out = Out::default();

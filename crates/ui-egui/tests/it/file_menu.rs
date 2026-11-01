@@ -205,6 +205,29 @@ fn save_as_offers_pdf_and_leaves_the_workbook_file_alone() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Save As offers Excel's two CSV types: "CSV UTF-8" starts with a byte order mark, plain "CSV" is
+/// code page 949, as on Korean Windows. Both are `.csv` files.
+#[test]
+fn save_as_offers_csv_utf8_and_code_page_949_csv() {
+    let dir = std::env::temp_dir().join(format!("monun-save-as-csv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.clone();
+    let mut h = harness(Services {
+        pick_save: Some(Box::new(move |suggested| Some(target.join(suggested).to_string_lossy().into_owned()))),
+        ..Default::default()
+    });
+    // The test fonts have no Hangul; `°` differs between the two encodings too.
+    h.state_mut().run("cell.set", serde_json::json!({"cell": "A1", "input": "°"})).unwrap();
+    for (format, bytes) in [("csv", &b"\xEF\xBB\xBF\xC2\xB0\r\n"[..]), ("csv-cp949", &b"\xA1\xC6\r\n"[..])] {
+        choose(&mut h, "Save As");
+        h.state_mut().backstage.as_mut().unwrap().save_format = format;
+        h.run_steps(2);
+        click(&mut h, "Browse…");
+        assert_eq!(std::fs::read(dir.join("Book1.csv")).unwrap(), bytes, "{format}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The window's close button (or Alt+F4, or the OS quitting the app): steps until the request
 /// has been handled and returns the viewport commands the app answered with.
 fn request_window_close(h: &mut egui_kittest::Harness<'static, SheetApp>) -> Vec<egui::ViewportCommand> {

@@ -381,12 +381,13 @@ fn csv_save_of_a_workbook_not_read_from_csv_uses_commas() {
         sh.set_value(CellRef::new(0, 0), monun_core::Value::text("a"));
         sh.set_value(CellRef::new(0, 1), monun_core::Value::Number(1.0));
     }
-    assert_eq!(save_bytes(&wb, "new.csv").unwrap(), b"a,1\r\n");
+    // CSV UTF-8, which starts with a byte order mark as Excel writes it.
+    assert_eq!(save_bytes(&wb, "new.csv").unwrap(), b"\xEF\xBB\xBFa,1\r\n");
     // Through .xlsx the CSV origin is gone, as in Excel.
     let (from_csv, _) = open_bytes("cut list.csv", CUT_LIST.as_bytes()).unwrap();
     let (reopened, _) = open_bytes("book.xlsx", &save_bytes(&from_csv, "book.xlsx").unwrap()).unwrap();
     assert_eq!(reopened.csv_delimiter, None);
-    assert!(String::from_utf8(save_bytes(&reopened, "again.csv").unwrap()).unwrap().starts_with("1,511,184,"));
+    assert!(String::from_utf8(save_bytes(&reopened, "again.csv").unwrap()).unwrap().starts_with("\u{feff}1,511,184,"));
     // A .tsv/.txt saved as .csv gets commas; as .tsv it keeps tabs.
     let (tsv, _) = open_bytes("list.txt", b"a\tb\r\n").unwrap();
     assert_eq!(save_bytes(&tsv, "list.csv").unwrap(), b"a,b\r\n");
@@ -458,9 +459,9 @@ fn csv_writes_displayed_text() {
     sh.cols.insert(1, LineInfo { size: Some(1.0), ..Default::default() });
     sh.show_formulas = true;
     let csv = String::from_utf8(save_bytes(&wb, "out.csv").unwrap()).unwrap();
-    assert_eq!(csv, "2026-01-01,\"$1,234.50\",12.5%,1 1/2,007,#N/A,TRUE\r\n2026-01-02,12345678.90,-0.25,\"1,234,567\",,,\r\n");
+    assert_eq!(csv, "\u{feff}2026-01-01,\"$1,234.50\",12.5%,1 1/2,007,#N/A,TRUE\r\n2026-01-02,12345678.90,-0.25,\"1,234,567\",,,\r\n");
     let tsv = String::from_utf8(save_bytes(&wb, "out.tsv").unwrap()).unwrap();
-    assert!(tsv.starts_with("2026-01-01\t$1,234.50\t12.5%\t"), "{tsv}");
+    assert!(tsv.starts_with("\u{feff}2026-01-01\t$1,234.50\t12.5%\t"), "{tsv}");
 }
 
 #[test]
@@ -475,7 +476,7 @@ fn delimited_exports_preserve_general_precision_and_explicit_number_formats() {
     sheet.set_cell(CellRef::new(0, 2), Cell { value: Value::Number(124412140710.0), style: scientific, ..Default::default() });
     for (path, separator) in [("data.csv", ","), ("data.tsv", "\t")] {
         let output = String::from_utf8(save_bytes(&workbook, path).unwrap()).unwrap();
-        assert_eq!(output, format!("124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
+        assert_eq!(output, format!("\u{feff}124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
     }
 }
 

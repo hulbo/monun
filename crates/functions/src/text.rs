@@ -489,52 +489,18 @@ fn bahttext(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
 // ---------------------------------------------------------------------------------------------
 // NUMBERSTRING
 
-const HANGUL_DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
-/// Formal hanja numerals (갖은자): 1, 2 and 3 take their formal forms, the rest stay plain.
-const HANJA_DIGITS: [&str; 10] = ["零", "壹", "貳", "參", "四", "五", "六", "七", "八", "九"];
-/// Ones, tens, hundreds and thousands inside a group of four digits.
-const HANGUL_PLACES: [&str; 4] = ["", "십", "백", "천"];
-const HANJA_PLACES: [&str; 4] = ["", "拾", "百", "阡"];
-/// Units of the four-digit groups: ones, 10^4, 10^8 and 10^12.
-const HANGUL_GROUPS: [&str; 4] = ["", "만", "억", "조"];
-const HANJA_GROUPS: [&str; 4] = ["", "萬", "億", "兆"];
-
-/// Korean words for a whole number with place units, four digits to a group. Every non-zero digit
-/// is written, so a one before a unit is spelled out (일백, 일만), and a group of zeros drops its
-/// unit (일억, not 일억만).
-fn korean_number(n: u64, digits: &[&str; 10], places: &[&str; 4], groups: &[&str; 4]) -> String {
-    if n == 0 {
-        return digits.first().copied().unwrap_or_default().to_string();
-    }
-    let d: Vec<usize> = n.to_string().bytes().filter(u8::is_ascii_digit).map(|b| usize::from(b - b'0')).collect();
-    let mut out = String::new();
-    let mut group_used = false;
-    for (i, &x) in d.iter().enumerate() {
-        let pos = d.len() - 1 - i;
-        if x != 0 {
-            out.push_str(digits.get(x).copied().unwrap_or_default());
-            out.push_str(places.get(pos % 4).copied().unwrap_or_default());
-            group_used = true;
-        }
-        if pos.is_multiple_of(4) && group_used {
-            out.push_str(groups.get(pos / 4).copied().unwrap_or_default());
-            group_used = false;
-        }
-    }
-    out
-}
-
 /// NUMBERSTRING(number, type): a number in Korean words, from Korean Excel. Type 1 reads it in
 /// Hangul with place units (1,234,567 is 일백이십삼만사천오백육십칠), type 2 in formal hanja
-/// (12,345 is 壹萬貳阡參百四拾五) and type 3 digit by digit in Hangul (일이삼사오육칠). The number
-/// is rounded to a whole number first; a negative one starts with -.
+/// (12,345 is 壹萬貳阡參百四拾五) and type 3 digit by digit in Hangul (일이삼사오육칠): the
+/// numerals of `[DBNum4]` and `[DBNum2]` formats. The number is rounded to a whole number first; a
+/// negative one starts with -.
 fn numberstring(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     let n = to_int(round_half_away(num(a, 0)?, 0))?;
-    let abs = n.unsigned_abs();
+    let digits = n.unsigned_abs().to_string();
     let body = match int(a, 1)? {
-        1 => korean_number(abs, &HANGUL_DIGITS, &HANGUL_PLACES, &HANGUL_GROUPS),
-        2 => korean_number(abs, &HANJA_DIGITS, &HANJA_PLACES, &HANJA_GROUPS),
-        3 => abs.to_string().bytes().filter(u8::is_ascii_digit).filter_map(|b| HANGUL_DIGITS.get(usize::from(b - b'0')).copied()).collect(),
+        1 => monun_numfmt::korean_numerals(&digits, 4, true),
+        2 => monun_numfmt::korean_numerals(&digits, 2, true),
+        3 => monun_numfmt::korean_numerals(&digits, 4, false),
         _ => return Err(CellError::Value),
     };
     text_val(if n < 0 { format!("-{body}") } else { body })
