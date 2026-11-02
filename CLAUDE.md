@@ -51,6 +51,11 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - A normal start of the release build registers the running exe for .xlsx and the other types it
   opens under `HKCU` (Open with, Default apps; `apps/monun/src/file_types.rs`). Debug builds and
   `--control` runs don't, so a worktree's build never takes over the user's file types.
+- AutoRecover (`crates/ui-egui/src/recovery.rs`) keeps copies of unsaved work in
+  `%APPDATA%\Monun\recovery\<pid>-<stamp>` and reopens a crashed run's copies at start. `--control`
+  and `MONUN_NO_PREFS` runs neither write nor pick them up.
+- `update.cmd` (the user's "모눈 업데이트" desktop shortcut) runs `scripts/update.ps1` in
+  `C:\Project\monun`: fast-forwards `main` from origin and rebuilds the release exe.
 
 ## Skill and subagents (`.claude/`)
 - `verify` skill: `.claude/skills/verify/verify.ps1` runs fmt, clippy, `cargo xtask layers` and

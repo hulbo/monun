@@ -36,6 +36,7 @@ impl SheetApp {
             message: None,
             toast: None,
             notice: None,
+            recovery: None,
             services,
             printing: Default::default(),
             print_feedback_seen: None,
@@ -131,6 +132,7 @@ impl SheetApp {
         // Files read asynchronously (web file picker, dropped files).
         self.poll_async_opens();
         self.autosave(ctx);
+        self.auto_recover(ctx);
         self.update_title(ctx);
         self.request_hidden_paint(ctx);
         // One window always shows a workbook, unless each workbook has a native window of its own

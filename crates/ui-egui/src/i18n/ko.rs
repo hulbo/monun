@@ -566,6 +566,12 @@ const MORE: &[(&str, &str)] = &[
     ("New title (Modify):", "새 제목(수정):"),
     ("Remove the password (Modify)", "암호 제거(수정)"),
     ("'{file}' is protected.", "'{file}'은(는) 보호되어 있습니다."),
+    // AutoRecover
+    ("{title} (Recovered)", "{title} (복구됨)"),
+    (
+        "Monun closed unexpectedly last time and recovered {count} unsaved workbook(s): save the ones you want to keep.",
+        "지난번에 모눈이 비정상적으로 종료되어 저장하지 않은 통합 문서 {count}개를 복구했습니다. 필요한 문서는 저장하세요.",
+    ),
     (
         "This file is encrypted by document security (DRM): only Excel on a PC running that security program can open it. Ask the sender or your security administrator for a copy without DRM.",
         "문서 보안(DRM)으로 암호화된 파일입니다. 그 보안 프로그램이 설치된 PC의 엑셀에서만 열 수 있습니다. 보낸 사람이나 보안 담당자에게 DRM이 해제된 파일을 요청하세요.",

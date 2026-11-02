@@ -64,6 +64,8 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
         save_prefs(&self.0);
+        // A clean exit: the save questions are answered, so the recovery copies go.
+        self.0.finish_recovery();
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -336,6 +338,14 @@ fn main() -> eframe::Result<()> {
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;
     load_prefs(&mut app);
+    // AutoRecover, and the unsaved work of a run that crashed. Not for agents' runs (`--control`,
+    // no prefs), which must never pick up or leave the user's recovery copies.
+    if prefs_enabled()
+        && control_port.is_none()
+        && let Some(dir) = config_dir()
+    {
+        app.start_recovery(&dir.join("recovery"));
+    }
     // Files named on the command line (a double-click on Windows and Linux) open as File › Open
     // opens them: a password-protected one asks for its password, and errors are shown, not
     // only logged. Each replaces the untouched blank Book1, as a file opened from Finder does.

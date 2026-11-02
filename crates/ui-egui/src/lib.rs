@@ -35,6 +35,7 @@ pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
 pub mod printing;
+pub mod recovery;
 pub mod ribbon;
 pub mod selection_glide;
 pub mod tabs;
@@ -204,6 +205,9 @@ pub struct SheetApp {
     pub toast: Option<(String, f64)>,
     /// Dismissible info bar under the ribbon (open-time notices).
     pub notice: Option<Notice>,
+    /// AutoRecover's folder for this run: copies of unsaved work, reopened after a crash. `None`
+    /// where the host keeps no settings (tests, the web, agents' runs).
+    pub recovery: Option<recovery::Recovery>,
     pub services: Services,
     pub printing: printing::State,
     print_feedback_seen: Option<printing::Feedback>,
