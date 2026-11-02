@@ -21,7 +21,7 @@ pub struct HfContext {
 /// Today's date and the current time as headers and footers show them (`&D`, `&T`).
 pub fn hf_date_time(wb: &Workbook) -> (String, String) {
     let now = monun_core::date::serial_in_system(wb.date_system, monun_calc::now_serial());
-    let date = crate::display::format(&Value::Number(now.floor()), "m/d/yyyy", wb).text;
+    let date = crate::display::format(&Value::Number(now.floor()), monun_core::date::SHORT_DATE, wb).text;
     let time = crate::display::format(&Value::Number(now), "h:mm AM/PM", wb).text;
     (date, time)
 }

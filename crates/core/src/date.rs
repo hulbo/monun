@@ -59,6 +59,19 @@ pub fn unix_now_ms() -> Option<f64> {
     }
 }
 
+/// The system's offset from UTC now, in milliseconds (Seoul: 9 hours): `NOW()`, `TODAY()` and
+/// Ctrl+; give local time, as Excel does.
+pub fn local_offset_ms() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        f64::from(chrono::Local::now().offset().local_minus_utc()) * 1000.0
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        -js_sys::Date::new_0().get_timezone_offset() * 60_000.0
+    }
+}
+
 /// Date serial (1900 system, with fraction) for a Unix time in milliseconds.
 pub fn serial_from_unix_ms(ms: f64) -> f64 {
     25569.0 + ms / 86_400_000.0
@@ -214,6 +227,14 @@ pub fn time_fraction(h: f64, m: f64, s: f64) -> f64 {
     (h * 3600.0 + m * 60.0 + s) / 86400.0
 }
 
+/// The short date of Korean Windows (`yyyy-MM-dd`): what Excel there shows for built-in number
+/// format 14, and the format typed dates, `TODAY()` and Ctrl+; get.
+pub const SHORT_DATE: &str = "yyyy-mm-dd";
+/// [`SHORT_DATE`] with the time: built-in format 22, typed dates with a time, `NOW()`.
+pub const SHORT_DATE_TIME: &str = "yyyy-mm-dd h:mm";
+/// A month and day typed without a year (`11/2`, `11-2`), as Korean Excel shows them: `11월 02일`.
+pub const MONTH_DAY: &str = "mm\"월\" dd\"일\"";
+
 pub const MONTHS: [&str; 12] =
     ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 pub const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -298,6 +319,10 @@ mod tests {
         // 2026-10-10T12:00:00Z
         assert_eq!(serial_from_unix_ms(1_791_633_600_000.0), 46305.5);
         assert!(unix_now_ms().is_some_and(|ms| serial_from_unix_ms(ms) > 46305.0));
+        // Time zones run from UTC−12 to UTC+14 in whole quarter hours.
+        let offset = local_offset_ms();
+        assert!((-12.0 * 3_600_000.0..=14.0 * 3_600_000.0).contains(&offset), "{offset}");
+        assert_eq!(offset % 900_000.0, 0.0);
     }
 
     #[test]

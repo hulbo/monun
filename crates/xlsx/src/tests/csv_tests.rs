@@ -159,6 +159,11 @@ fn korean_code_page_949_reads_as_hangul_and_is_written_back() {
     assert_eq!(encode_text(text.as_bytes().to_vec(), TextEncoding::Cp949), bytes.as_ref());
     // Characters code page 949 lacks are written as `?`, as Excel does.
     assert_eq!(encode_text("가😀나".as_bytes().to_vec(), TextEncoding::Cp949), [0xB0, 0xA1, b'?', 0xB3, 0xAA]);
+    // The won sign is the backslash Korean fonts draw as ₩, as Windows writes it; it reads back as
+    // a won amount.
+    assert_eq!(encode_text("₩1,000".as_bytes().to_vec(), TextEncoding::Cp949), b"\\1,000");
+    let wb = read_csv(b"\"\\1,000\",x\r\n", &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::Number(1000.0));
     assert_eq!(encode_text(b"a".to_vec(), TextEncoding::Utf8Bom), [0xEF, 0xBB, 0xBF, b'a']);
     assert_eq!(encode_text(b"a".to_vec(), TextEncoding::Utf8), b"a");
 }

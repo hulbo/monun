@@ -496,11 +496,11 @@ fn fill_spill(sheet: &mut monun_model::Sheet, anchor: CellRef, range: RangeRef, 
     sheet.spill_ranges.insert(anchor, range);
 }
 
-/// Current date-time as a serial (1900 system), from the system clock (browser clock on wasm).
-/// UTC; the local offset isn't available without platform calls. Falls back to a fixed date only
-/// when no clock is available.
+/// Current local date-time as a serial (1900 system), from the system clock and time zone
+/// (browser clock on wasm), as Excel's `NOW()`. Falls back to a fixed date only when no clock is
+/// available.
 pub fn now_serial() -> f64 {
-    monun_core::date::unix_now_ms().map_or(46302.5, monun_core::date::serial_from_unix_ms)
+    monun_core::date::unix_now_ms().map_or(46302.5, |ms| monun_core::date::serial_from_unix_ms(ms + monun_core::date::local_offset_ms()))
 }
 
 /// Evaluates a formula in the context of a cell without storing it (conditional formats, data

@@ -307,7 +307,8 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
                 .active()
                 .map(|d| {
                     let now = monun_engine::core::date::serial_in_system(d.wb.date_system, monun_engine::calc::now_serial());
-                    let (value, format) = if shortcut == Shortcut::Date { (now.floor(), "m/d/yyyy") } else { (now.fract(), "h:mm AM/PM") };
+                    let (value, format) =
+                        if shortcut == Shortcut::Date { (now.floor(), monun_engine::core::date::SHORT_DATE) } else { (now.fract(), "h:mm AM/PM") };
                     monun_engine::display::format(&monun_engine::core::Value::Number(value), format, &d.wb).text
                 })
                 .unwrap_or_default();

@@ -76,7 +76,7 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
                 .active()
                 .map(|d| {
                     let today = monun_engine::core::date::serial_in_system(d.wb.date_system, monun_engine::calc::now_serial()).floor();
-                    monun_engine::display::format(&monun_engine::core::Value::Number(today), "m/d/yyyy", &d.wb).text
+                    monun_engine::display::format(&monun_engine::core::Value::Number(today), monun_engine::core::date::SHORT_DATE, &d.wb).text
                 })
                 .unwrap_or_default();
             app.begin_edit(Some(text), false);

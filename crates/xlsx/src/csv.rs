@@ -182,8 +182,8 @@ pub fn decode_text_with_encoding(bytes: &[u8]) -> (String, TextEncoding) {
 }
 
 /// Encodes UTF-8 CSV text (what [`write_csv`] returns) in `encoding`. "CSV UTF-8" starts with a
-/// byte order mark, which is how Excel tells it from the ANSI code page; code page 949 writes the
-/// characters it lacks as `?`, as Excel does.
+/// byte order mark, which is how Excel tells it from the ANSI code page; code page 949 writes ₩ as
+/// a backslash and the other characters it lacks as `?`, as Excel does.
 pub fn encode_text(utf8: Vec<u8>, encoding: TextEncoding) -> Vec<u8> {
     match encoding {
         TextEncoding::Utf8 => utf8,
@@ -205,6 +205,8 @@ fn encode_cp949(text: &str) -> Vec<u8> {
         match result {
             encoding_rs::EncoderResult::InputEmpty => return out,
             encoding_rs::EncoderResult::OutputFull => out.reserve(rest.len().max(16)),
+            // Windows writes the won sign as the byte Korean fonts draw as ₩ (a backslash).
+            encoding_rs::EncoderResult::Unmappable('₩') => out.push(b'\\'),
             encoding_rs::EncoderResult::Unmappable(_) => out.push(b'?'),
         }
     }

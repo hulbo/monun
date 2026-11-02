@@ -150,14 +150,15 @@ fn assert_style_definitions(wb: &monun_model::Workbook, s: &monun_model::Sheet) 
     assert!(!st1.borders.diag_up.is_none() && st1.borders.diag_down.is_none());
     assert_eq!(st1.borders.top.color, Color::Rgb(0x0000FF));
     let st2 = wb.styles.get(s.cell(at("B1")).unwrap().style);
-    assert_eq!(st2.num_fmt.as_str(), "m/d/yyyy");
+    assert_eq!(st2.num_fmt.as_str(), "yyyy-mm-dd");
     assert_eq!(st2.font.color, Color::Theme(4, -250));
     assert_eq!(st2.fill.fg, Color::Rgb(0x00FF00), "gradient approximated by first stop");
     let st3 = wb.styles.get(s.cell(at("C1")).unwrap().style);
     assert_eq!(st3.num_fmt.as_str(), "0.00%");
     assert_eq!(st3.fill.pattern, PatternType::DarkGrid);
     assert_eq!(st3.fill.fg, Color::Theme(5, 0));
-    assert_eq!(wb.styles.get(s.cell(at("D1")).unwrap().style).num_fmt.as_str(), "General");
+    // An East Asian built-in id reads as Korean Excel shows it.
+    assert_eq!(wb.styles.get(s.cell(at("D1")).unwrap().style).num_fmt.as_str(), "mm-dd-yy");
 }
 
 fn assert_theme(wb: &monun_model::Workbook) {

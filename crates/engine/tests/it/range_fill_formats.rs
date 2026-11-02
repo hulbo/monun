@@ -73,8 +73,8 @@ fn filled_formulas_still_shift_and_get_their_date_format() {
     s.execute("cell.set", json!({"cell": "A2", "input": "1"})).unwrap();
     fill(&mut s, "A1:A2", "=DATE(2026,3,ROW())");
     assert_eq!(get(&mut s, "A2")["formula"], "=DATE(2026,3,ROW())");
-    for (a, text) in [("A1", "3/1/2026"), ("A2", "3/2/2026")] {
-        assert_eq!(fmt_of(&s, a), "m/d/yyyy", "{a}");
+    for (a, text) in [("A1", "2026-03-01"), ("A2", "2026-03-02")] {
+        assert_eq!(fmt_of(&s, a), "yyyy-mm-dd", "{a}");
         assert_eq!(get(&mut s, a)["text"], text, "{a}");
     }
     fill(&mut s, "A1:A2", "=C1*2");

@@ -859,8 +859,8 @@ fn show_details_lists_a_value_cells_records_on_a_new_sheet() {
         sheet_rows(&mut s),
         vec![
             vec!["Region", "Product", "Date", "Units", "Sales"],
-            vec!["East", "Apples", "1/15/2026", "10", "100"],
-            vec!["East", "Apples", "9/9/2026", "6", "60"],
+            vec!["East", "Apples", "2026-01-15", "10", "100"],
+            vec!["East", "Apples", "2026-09-09", "6", "60"],
         ]
     );
     // The dates fit their column instead of showing ####.

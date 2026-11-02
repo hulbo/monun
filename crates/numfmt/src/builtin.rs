@@ -1,4 +1,5 @@
-//! Built-in number formats (ECMA-376 §18.8.30, en-US).
+//! Built-in number formats (ECMA-376 §18.8.30): en-US, but for the short date of 14 and 22, which
+//! Excel shows in the system's form: Korean Windows' `yyyy-mm-dd`.
 
 const BUILTINS: [(u32, &str); 36] = [
     (0, "General"),
@@ -15,7 +16,7 @@ const BUILTINS: [(u32, &str); 36] = [
     (11, "0.00E+00"),
     (12, "# ?/?"),
     (13, "# ??/??"),
-    (14, "m/d/yyyy"),
+    (14, monun_core::date::SHORT_DATE),
     (15, "d-mmm-yy"),
     (16, "d-mmm"),
     (17, "mmm-yy"),
@@ -23,7 +24,7 @@ const BUILTINS: [(u32, &str); 36] = [
     (19, "h:mm:ss AM/PM"),
     (20, "h:mm"),
     (21, "h:mm:ss"),
-    (22, "m/d/yyyy h:mm"),
+    (22, monun_core::date::SHORT_DATE_TIME),
     (37, "#,##0 ;(#,##0)"),
     (38, "#,##0 ;[Red](#,##0)"),
     (39, "#,##0.00;(#,##0.00)"),
@@ -39,7 +40,7 @@ const BUILTINS: [(u32, &str); 36] = [
     (49, "@"),
 ];
 
-/// Built-in format code for an id (0..=49, en-US), e.g. 14 => "m/d/yyyy". Locale-specific ids
+/// Built-in format code for an id (0..=49), e.g. 14 => "yyyy-mm-dd". Locale-specific ids
 /// (23–36) and unknown ids return `None`.
 pub fn builtin_format(id: u32) -> Option<&'static str> {
     BUILTINS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)

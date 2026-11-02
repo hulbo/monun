@@ -93,11 +93,12 @@ pub fn builtin_cell_style(name: &str, theme: &Theme) -> Option<Style> {
             s.borders.top = BorderLine { style: BorderStyle::Thin, color: accent(4, 0) };
             s.borders.bottom = BorderLine { style: BorderStyle::Double, color: accent(4, 0) };
         }
-        "Currency" => s.num_fmt = NumFmt::new(ACCOUNTING),
-        "Comma" => s.num_fmt = NumFmt::new(COMMA),
+        // Korean Excel's built-ins 44, 43, 42 and 41.
+        "Currency" => s.num_fmt = NumFmt::new("_-\"₩\"* #,##0.00_-;\\-\"₩\"* #,##0.00_-;_-\"₩\"* \"-\"??_-;_-@_-"),
+        "Comma" => s.num_fmt = NumFmt::new("_-* #,##0.00_-;\\-* #,##0.00_-;_-* \"-\"??_-;_-@_-"),
         "Percent" => s.num_fmt = NumFmt::new("0%"),
-        "Currency [0]" => s.num_fmt = NumFmt::new("_(\"$\"* #,##0_);_(\"$\"* \\(#,##0\\);_(\"$\"* \"-\"_);_(@_)"),
-        "Comma [0]" => s.num_fmt = NumFmt::new("_(* #,##0_);_(* \\(#,##0\\);_(* \"-\"_);_(@_)"),
+        "Currency [0]" => s.num_fmt = NumFmt::new(ACCOUNTING),
+        "Comma [0]" => s.num_fmt = NumFmt::new(COMMA),
         n => {
             // AccentN, 20%/40%/60% - AccentN
             let (pct, rest) = match n.split_once("% - ") {

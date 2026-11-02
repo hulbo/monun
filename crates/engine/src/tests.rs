@@ -1014,7 +1014,7 @@ fn only_a_number_in_a_date_format_offers_the_date_fills() {
     s.execute("home.numberFormat", json!({"range": "A3", "code": "YYYY-MM-DD"})).unwrap();
     s.execute("cell.set", json!({"cell": "A4", "input": "=A1"})).unwrap();
     s.execute("cell.set", json!({"cell": "A5", "input": "13:30"})).unwrap();
-    assert!(dates(&s, "A1") && dates(&s, "A3"), "m/d/yyyy and YYYY-MM-DD are dates");
+    assert!(dates(&s, "A1") && dates(&s, "A3"), "typed dates and YYYY-MM-DD are dates");
     assert!(!dates(&s, "A2"), "quoted text in a number format is not a date field");
     assert!(!dates(&s, "A4"), "a formula is not offered");
     assert!(!dates(&s, "A5"), "a time is not a date");
@@ -1947,9 +1947,9 @@ fn accounting_format_takes_the_symbol_it_is_given() {
     s.execute("cell.set", json!({"cell": "A1", "input": "1234.5"})).unwrap();
     s.execute("home.accounting", json!({"range": "A1", "symbol": "L"})).unwrap();
     assert_eq!(text(&s, "A1"), " L 1,234.50 ");
-    // Without a symbol it stays the default `$` format, character for character.
+    // Without a symbol it is Korean Excel's button: the system's ₩, with no decimals.
     s.execute("home.accounting", json!({"range": "A1"})).unwrap();
-    assert_eq!(text(&s, "A1"), " $ 1,234.50 ");
+    assert_eq!(text(&s, "A1"), " ₩ 1,235 ");
     // A quote or a backslash would end the format's quoted text, and a control character would
     // reach it as-is, so those symbols are refused.
     for bad in ["\"", "\\", "\n", "L\t"] {

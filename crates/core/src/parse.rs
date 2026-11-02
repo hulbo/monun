@@ -111,7 +111,7 @@ fn parenthesized(t: &str) -> Option<String> {
 fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     let mut s = t;
     let mut neg = false;
-    let mut currency = false;
+    let mut currency = None;
     let mut percent = false;
     if let Some(r) = s.strip_prefix('-') {
         neg = true;
@@ -119,9 +119,12 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     } else if let Some(r) = s.strip_prefix('+') {
         s = r.trim_start();
     }
-    if let Some(r) = s.strip_prefix('$') {
-        currency = true;
-        s = r.trim_start();
+    // The won sign as typed on a Korean keyboard is a backslash (Korean fonts draw it as ₩), so
+    // Korean Excel reads `\1,000` as ₩1,000; so does a CSV it wrote in code page 949.
+    let won = s.strip_prefix(['₩', '￦', '\\']);
+    if let Some(r) = s.strip_prefix('$').map(|r| ("$", r)).or(won.map(|r| ("₩", r))) {
+        currency = Some(r.0);
+        s = r.1.trim_start();
         if !neg && let Some(r2) = s.strip_prefix('-') {
             neg = true;
             s = r2;
@@ -132,7 +135,7 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
         s = r.trim_end();
     }
     // Excel reads `$5` and `5%` but not `$5%`.
-    if s.is_empty() || currency && percent {
+    if s.is_empty() || currency.is_some() && percent {
         return None;
     }
     let has_sep = s.contains(',');
@@ -171,8 +174,13 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     if neg {
         n = -n;
     }
-    let fmt = if currency {
-        Some(if digits.contains('.') { "\"$\"#,##0.00" } else { "\"$\"#,##0" })
+    let fmt = if let Some(symbol) = currency {
+        Some(match (symbol, digits.contains('.')) {
+            ("₩", true) => "\"₩\"#,##0.00",
+            ("₩", false) => "\"₩\"#,##0",
+            (_, true) => "\"$\"#,##0.00",
+            (_, false) => "\"$\"#,##0",
+        })
     } else if percent {
         Some(if digits.contains('.') { "0.00%" } else { "0%" })
     } else if sci {
@@ -287,7 +295,7 @@ fn parse_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
         }
         if let (Some(m), Some(d), Some(y)) = (num(a), num(b), num(c)) {
             let y = if c.len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
-            return valid_ymd(sys, y, m, d).map(|s| (s, "m/d/yyyy"));
+            return valid_ymd(sys, y, m, d).map(|s| (s, crate::date::SHORT_DATE));
         }
         // 4-Mar-2026
         if let (Some(d), Some(m), Some(y)) = (num(a), month_from_name(b), num(c)) {
@@ -302,7 +310,7 @@ fn parse_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
         if let (Some(m), Some(d)) = (num(a), num(b)) {
             let y = current_year();
             if (1..=12).contains(&m) && (1..=31).contains(&d) {
-                return valid_ymd(sys, y, m, d).map(|s| (s, "d-mmm"));
+                return valid_ymd(sys, y, m, d).map(|s| (s, crate::date::MONTH_DAY));
             }
             // m/yyyy
             if (1..=12).contains(&m) && b.len() == 4 {
@@ -346,10 +354,10 @@ fn valid_ymd(sys: DateSystem, y: i64, m: i64, d: i64) -> Option<f64> {
     serial_from_ymd(sys, y, m, d)
 }
 
-/// The year used for dates typed without one, from the system clock (browser clock on wasm).
-/// Falls back to 2026 only when no clock is available.
+/// The year used for dates typed without one, from the system clock and time zone (browser clock
+/// on wasm). Falls back to 2026 only when no clock is available.
 pub fn current_year() -> i64 {
-    if let Some(ms) = crate::date::unix_now_ms() {
+    if let Some(ms) = crate::date::unix_now_ms().map(|ms| ms + crate::date::local_offset_ms()) {
         let days = (ms / 86_400_000.0).floor() as i64;
         return crate::date::civil_from_days(days).0 as i64;
     }
@@ -381,7 +389,7 @@ fn parse_datetime(t: &str, sys: DateSystem) -> Option<(f64, Option<&'static str>
             continue;
         }
         if let (Some((d, _)), Some((tf, _, _))) = (t.get(..i).and_then(|a| parse_date(a, sys)), parse_time(b)) {
-            return Some((d + tf, Some("m/d/yyyy h:mm")));
+            return Some((d + tf, Some(crate::date::SHORT_DATE_TIME)));
         }
     }
     None
@@ -596,6 +604,27 @@ mod tests {
         assert_eq!(p("25:00").value, Value::Number(25.0 / 24.0));
         assert_eq!(p("25:00").format, Some("[h]:mm:ss"));
         assert_eq!(p("23:59").format, Some("h:mm"));
+        // Dates take Korean Windows' short date; a month and day alone show as `11월 02일`.
+        for typed in ["10/7/2026", "2026-10-07", "2026/10/7"] {
+            assert_eq!(p(typed).format, Some("yyyy-mm-dd"), "{typed}");
+        }
+        assert_eq!(p("10/7/2026 18:00").format, Some("yyyy-mm-dd h:mm"));
+        for typed in ["11/2", "11-2"] {
+            assert_eq!(p(typed).format, Some("mm\"월\" dd\"일\""), "{typed}");
+        }
+    }
+
+    #[test]
+    fn won_amounts() {
+        // A Korean keyboard types the won sign as a backslash.
+        for typed in ["₩1,000", "\\1,000", "￦1,000", "₩ 1000"] {
+            assert_eq!(p(typed).value, Value::Number(1000.0), "{typed}");
+            assert_eq!(p(typed).format, Some("\"₩\"#,##0"), "{typed}");
+        }
+        assert_eq!(p("-₩1,234.5").value, Value::Number(-1234.5));
+        assert_eq!(p("-₩1,234.5").format, Some("\"₩\"#,##0.00"));
+        assert_eq!(p("\\").value, Value::text("\\"));
+        assert_eq!(p("\\n").value, Value::text("\\n"));
     }
 
     #[test]

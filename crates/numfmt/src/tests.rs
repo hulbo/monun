@@ -409,11 +409,12 @@ fn kinds() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn builtins() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(builtin_format(0), Some("General"));
-    assert_eq!(builtin_format(14), Some("m/d/yyyy"));
+    assert_eq!(builtin_format(14), Some("yyyy-mm-dd"));
     assert_eq!(builtin_format(49), Some("@"));
     assert_eq!(builtin_format(30), None);
     assert_eq!(builtin_format(50), None);
-    assert_eq!(builtin_id("m/d/yyyy"), Some(14));
+    assert_eq!(builtin_id("yyyy-mm-dd"), Some(14));
+    assert_eq!(builtin_id("m/d/yyyy"), None);
     assert_eq!(builtin_id("0.00%"), Some(10));
     assert_eq!(builtin_id("GENERAL"), Some(0));
     assert_eq!(builtin_id("[h]:mm:ss"), Some(46));

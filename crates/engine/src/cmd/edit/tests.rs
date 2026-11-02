@@ -156,7 +156,7 @@ fn set_values_can_store_strings_as_the_text_they_are() {
 
     // The default is unchanged: the dates swap, the thousands separator is a decimal point.
     s.execute("range.setValues", json!({"range": "A1", "values": [row.clone()]})).unwrap();
-    assert_eq!(get(&mut s, "A1")["text"], "5/4/2026", "dd.mm.yyyy read as mm.dd.yyyy");
+    assert_eq!(get(&mut s, "A1")["text"], "2026-05-04", "dd.mm.yyyy read as mm.dd.yyyy");
     assert_eq!(get(&mut s, "C1")["value"], json!(2.5), "\"2.500\" read as a decimal");
     assert_eq!(get(&mut s, "D1")["value"], json!(0.0425), "\"4.25 %\" read as a percentage");
 

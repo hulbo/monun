@@ -1,8 +1,9 @@
 //! Fixed lookup tables: built-in number formats, the legacy indexed colour palette, paper sizes,
 //! functions that need the `_xlfn.` prefix in files, and unit conversions.
 
-/// Built-in number format codes (en-US) by id. Ids not listed (23–36 are East Asian
-/// locale formats) read as General.
+/// Built-in number format codes by id: en-US, but for the short date of 14 and 22, which Excel
+/// shows in the system's form (Korean Windows' `yyyy-mm-dd`). Ids not listed here or in
+/// [`KOREAN_FORMATS`] read as General.
 const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (0, "General"),
     (1, "0"),
@@ -18,7 +19,7 @@ const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (11, "0.00E+00"),
     (12, "# ?/?"),
     (13, "# ??/??"),
-    (14, "m/d/yyyy"),
+    (14, monun_core::date::SHORT_DATE),
     (15, "d-mmm-yy"),
     (16, "d-mmm"),
     (17, "mmm-yy"),
@@ -26,7 +27,7 @@ const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (19, "h:mm:ss AM/PM"),
     (20, "h:mm"),
     (21, "h:mm:ss"),
-    (22, "m/d/yyyy h:mm"),
+    (22, monun_core::date::SHORT_DATE_TIME),
     (37, "#,##0 ;(#,##0)"),
     (38, "#,##0 ;[Red](#,##0)"),
     (39, "#,##0.00;(#,##0.00)"),
@@ -42,8 +43,33 @@ const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (49, "@"),
 ];
 
+/// The East Asian built-ins (ECMA-376 §18.8.30) as Korean Excel reads them: Korean Excel writes
+/// these ids without their codes, so a file from it holds `numFmtId="31"` for `yyyy"년" mm"월"
+/// dd"일"`. Read only: Monun writes such a code as a custom format, which every locale reads alike.
+const KOREAN_FORMATS: [(u32, &str); 19] = [
+    (27, "yyyy\"年\" mm\"月\" dd\"日\""),
+    (28, "mm-dd"),
+    (29, "mm-dd"),
+    (30, "mm-dd-yy"),
+    (31, "yyyy\"년\" mm\"월\" dd\"일\""),
+    (32, "h\"시\" mm\"분\""),
+    (33, "h\"시\" mm\"분\" ss\"초\""),
+    (34, "yyyy-mm-dd"),
+    (35, "yyyy-mm-dd"),
+    (36, "yyyy\"年\" mm\"月\" dd\"日\""),
+    (50, "yyyy\"年\" mm\"月\" dd\"日\""),
+    (51, "mm-dd"),
+    (52, "yyyy-mm-dd"),
+    (53, "yyyy-mm-dd"),
+    (54, "mm-dd"),
+    (55, "yyyy-mm-dd"),
+    (56, "yyyy-mm-dd"),
+    (57, "yyyy\"年\" mm\"月\" dd\"日\""),
+    (58, "mm-dd"),
+];
+
 pub fn builtin_format(id: u32) -> Option<&'static str> {
-    BUILTIN_FORMATS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)
+    BUILTIN_FORMATS.iter().chain(&KOREAN_FORMATS).find(|(i, _)| *i == id).map(|(_, c)| *c)
 }
 
 /// Id to write for a format code when it is a locale-independent built-in. The currency formats
@@ -353,7 +379,11 @@ mod tests {
         assert_eq!(file_function_name("PERCENTOF").as_deref(), Some("_xlfn.PERCENTOF"));
         assert_eq!(file_function_name("TRIMRANGE").as_deref(), Some("_xlfn.TRIMRANGE"));
         assert_eq!(file_function_name("SUM"), None);
-        assert_eq!(builtin_format(14), Some("m/d/yyyy"));
+        // The short date is Korean Windows' and the East Asian built-ins read as Korean Excel shows them.
+        assert_eq!(builtin_format(14), Some("yyyy-mm-dd"));
+        assert_eq!(builtin_format(31), Some("yyyy\"년\" mm\"월\" dd\"일\""));
+        assert_eq!(builtin_id("yyyy-mm-dd"), Some(14));
+        assert_eq!(builtin_id("yyyy\"년\" mm\"월\" dd\"일\""), None);
         assert_eq!(builtin_id("0.00%"), Some(10));
         assert_eq!(builtin_id(builtin_format(5).unwrap()), None);
         assert_eq!(paper_name(9), Some("A4"));

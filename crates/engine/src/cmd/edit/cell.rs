@@ -38,9 +38,9 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut mon
                 || f.starts_with("EOMONTH(")
                 || f.starts_with("WORKDAY(")
             {
-                Some("m/d/yyyy")
+                Some(monun_core::date::SHORT_DATE)
             } else if f.starts_with("NOW(") {
-                Some("m/d/yyyy h:mm")
+                Some(monun_core::date::SHORT_DATE_TIME)
             } else if f.starts_with("TIME(") {
                 Some("h:mm AM/PM")
             } else {

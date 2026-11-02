@@ -136,7 +136,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             number_format
         ),
-        cmd!("home.accounting", "Accounting Number Format", ["Home", "Number"], None, "{range?, symbol?: \"$\"}", has_doc, accounting),
+        cmd!(
+            "home.accounting",
+            "Accounting Number Format",
+            ["Home", "Number"],
+            None,
+            "{range?, symbol?: \"$\"} (₩ without a symbol)",
+            has_doc,
+            accounting
+        ),
         cmd!("home.percent", "Percent Style", ["Home", "Number"], Some("Ctrl+Shift+%"), "{range?}", has_doc, |s, p| set_fmt(s, p, "0%")),
         cmd!("home.comma", "Comma Style", ["Home", "Number"], None, "{range?}", has_doc, |s, p| set_fmt(s, p, COMMA)),
         cmd!("home.increaseDecimal", "Increase Decimal", ["Home", "Number"], None, "{range?}", has_doc, |s, p| decimals(s, p, 1)),
@@ -206,13 +214,17 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-const ACCOUNTING: &str = "_(\"$\"* #,##0.00_);_(\"$\"* \\(#,##0.00\\);_(\"$\"* \"-\"??_);_(@_)";
-const COMMA: &str = "_(* #,##0.00_);_(* \\(#,##0.00\\);_(* \"-\"??_);_(@_)";
+/// Korean Excel's number formats, after Korean Windows' currency (₩ with no decimals, `-₩1`):
+/// Accounting is built-in 42, Comma Style 41 and the Currency of the ribbon's list `"₩"#,##0`.
+const ACCOUNTING: &str = "_-\"₩\"* #,##0_-;\\-\"₩\"* #,##0_-;_-\"₩\"* \"-\"_-;_-@_-";
+const COMMA: &str = "_-* #,##0_-;\\-* #,##0_-;_-* \"-\"_-;_-@_-";
+const CURRENCY: &str = "\"₩\"#,##0";
 
-/// Accounting Number Format with the currency symbol to use (Excel's own button takes the system
-/// currency; `symbol` is how the control channel picks another one, e.g. `"L"` for lempiras).
+/// Accounting Number Format: Korean Excel's button takes the system currency, ₩ ([`ACCOUNTING`]);
+/// `symbol` is how the control channel picks another one, e.g. `"L"` for lempiras, in the en-US
+/// layout with two decimals.
 fn accounting(s: &mut Session, p: &Json) -> Result<Json> {
-    let symbol = str_param(p, "symbol").unwrap_or("$");
+    let Some(symbol) = str_param(p, "symbol") else { return set_fmt(s, p, ACCOUNTING) };
     // The symbol goes into a quoted literal: a quote or a backslash would end it, and a control
     // character would reach the format's text as-is.
     if symbol.contains(['"', '\\']) || symbol.chars().any(char::is_control) {
@@ -701,9 +713,9 @@ pub fn format_code_for(name: &str) -> &str {
     match name {
         "General" => "General",
         "Number" => "0.00",
-        "Currency" => "\"$\"#,##0.00",
+        "Currency" => CURRENCY,
         "Accounting" => ACCOUNTING,
-        "Short Date" => "m/d/yyyy",
+        "Short Date" => monun_core::date::SHORT_DATE,
         "Long Date" => "[$-F800]dddd, mmmm dd, yyyy",
         "Time" => "[$-F400]h:mm:ss AM/PM",
         "Percentage" => "0.00%",
@@ -831,8 +843,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_symbol_reproduces_the_accounting_format() {
-        assert_eq!(accounting_format("$"), ACCOUNTING);
+    fn a_named_symbol_takes_the_en_us_accounting_layout() {
+        assert_eq!(accounting_format("$"), "_(\"$\"* #,##0.00_);_(\"$\"* \\(#,##0.00\\);_(\"$\"* \"-\"??_);_(@_)");
     }
 
     #[test]
