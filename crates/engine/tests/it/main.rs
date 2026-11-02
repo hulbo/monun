@@ -18,6 +18,7 @@ mod format_as_table_restyle;
 mod hidden_sheet_navigation;
 mod ink_roundtrip;
 mod korean_forms;
+mod korean_holidays;
 mod line_count_overflow;
 mod long_operator_chains;
 mod offset_overflow;

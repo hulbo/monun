@@ -949,6 +949,13 @@ const MORE: &[(&str, &str)] = &[
     ("Convert to Range", "범위로 변환"),
     ("Custom Sort", "사용자 지정 정렬"),
     ("Define Name…", "이름 정의…"),
+    ("Korean Holidays", "한국 공휴일"),
+    ("Insert Korean Holidays", "한국 공휴일 넣기"),
+    ("Adds a 공휴일 sheet and name for WORKDAY and NETWORKDAYS", "WORKDAY, NETWORKDAYS에 쓸 공휴일 시트와 이름을 추가합니다"),
+    (
+        "this workbook already has a 공휴일 sheet or name: rename or delete it first",
+        "이 통합 문서에 이미 공휴일 시트나 이름이 있습니다. 이름을 바꾸거나 지운 뒤 다시 실행하세요.",
+    ),
     ("Delete Comment", "메모 삭제"),
     ("Delete Sheet", "시트 삭제"),
     ("Delete chart", "차트 삭제"),

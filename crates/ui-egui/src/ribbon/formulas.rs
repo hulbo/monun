@@ -63,6 +63,18 @@ pub(super) fn formulas(app: &mut SheetApp, ui: &mut Ui) {
                     }
                 }
             });
+            // WORKDAY and NETWORKDAYS take a list of holidays: Korea's, ready to use.
+            if cat == "DateTime" {
+                ui.separator();
+                if ui
+                    .button(app.ui.language.tr("Insert Korean Holidays"))
+                    .on_hover_text(app.ui.language.tr("Adds a 공휴일 sheet and name for WORKDAY and NETWORKDAYS"))
+                    .clicked()
+                {
+                    app.run_or_alert("formulas.koreanHolidays", json!({}));
+                    ui.close();
+                }
+            }
         });
     }
     sep(ui);

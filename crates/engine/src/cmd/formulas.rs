@@ -31,6 +31,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(query "formulas.functions", "List Functions", [], None, "{category?, search?} → [{name, category, signature, description}]", always, list_functions),
         cmd!(
+            "formulas.koreanHolidays",
+            "Korean Holidays",
+            ["Formulas", "Defined Names"],
+            None,
+            "{} → {sheet, name, holidays, years} (adds a 공휴일 sheet listing Korean public holidays 2025–2027 as 우주항공청 and 한국천문연구원 publish them, and the workbook name 공휴일 over its dates, for WORKDAY(start, days, 공휴일) and NETWORKDAYS; refused when the sheet or the name already exists)",
+            has_doc,
+            korean_holidays
+        ),
+        cmd!(
             "formulas.defineName",
             "Define Name…",
             ["Formulas", "Defined Names"],
@@ -335,6 +344,76 @@ pub(crate) fn is_r1c1(n: &str) -> bool {
         rest = c.get(digits(c)..).unwrap_or("");
     }
     rest.is_empty() && !n.is_empty()
+}
+
+/// The sheet and the name `formulas.koreanHolidays` adds.
+const HOLIDAY_SHEET: &str = "공휴일";
+/// The last row the name covers: room for the holidays added later by hand (blank cells don't
+/// count as holidays).
+const HOLIDAY_LAST_ROW: u32 = 300;
+
+/// `formulas.koreanHolidays`: a 공휴일 sheet (date, weekday, name, and where the dates come from)
+/// and the workbook name 공휴일 over its date column, so WORKDAY and NETWORKDAYS skip Korean
+/// public holidays here and in Excel alike. The sheet goes last and becomes the active one.
+fn korean_holidays(s: &mut Session, _: &Json) -> Result<Json> {
+    const CMD: &str = "formulas.koreanHolidays";
+    let wb = &s.doc()?.wb;
+    if wb.protected_structure {
+        return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
+    }
+    if wb.sheet_index(HOLIDAY_SHEET).is_some() || wb.names.iter().any(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(HOLIDAY_SHEET)) {
+        return Err(bad(CMD, format!("this workbook already has a {HOLIDAY_SHEET} sheet or name: rename or delete it first")));
+    }
+    let sys = wb.date_system;
+    let rows: Vec<(f64, &str)> = crate::holidays::KOREAN
+        .iter()
+        .filter_map(|&(y, m, d, name)| monun_core::date::serial_from_ymd(sys, y.into(), m.into(), d.into()).map(|serial| (serial, name)))
+        .collect();
+    let count = rows.len();
+    let d = s.doc_mut()?;
+    let at = crate::cmd::commit(d, |cx| {
+        let date = cx.wb.styles.derive(monun_model::StyleId::DEFAULT, |st| st.num_fmt = monun_model::NumFmt::new(monun_core::date::SHORT_DATE));
+        let bold = cx.wb.styles.derive(monun_model::StyleId::DEFAULT, |st| st.font.bold = true);
+        let mut sheet = monun_model::Sheet::new(HOLIDAY_SHEET);
+        for (c, text) in ["날짜", "요일", "공휴일"].into_iter().enumerate() {
+            sheet.set_cell(CellRef::new(0, c as u32), Cell { value: Value::text(text), formula: None, style: bold });
+        }
+        const WEEKDAYS: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
+        for (i, (serial, name)) in rows.iter().enumerate() {
+            let r = i as u32 + 1;
+            let weekday =
+                monun_core::date::datetime_from_serial(sys, *serial).and_then(|dt| WEEKDAYS.get(dt.weekday as usize).copied()).unwrap_or("");
+            sheet.set_cell(CellRef::new(r, 0), Cell { value: Value::Number(*serial), formula: None, style: date });
+            sheet.set_cell(CellRef::new(r, 1), Cell::value(Value::text(weekday)));
+            sheet.set_cell(CellRef::new(r, 2), Cell::value(Value::text(*name)));
+        }
+        let (first, last) = crate::holidays::YEARS;
+        let note = [
+            format!("{first}~{last}년 관공서 공휴일: 우주항공청 월력요항, 한국천문연구원 자료 (2026년 11월 확인)"),
+            "임시공휴일은 정해지면 아래에 행을 추가하세요. 수식: =WORKDAY(시작일, 일수, 공휴일), =NETWORKDAYS(시작일, 종료일, 공휴일)".into(),
+        ];
+        for (r, text) in note.into_iter().enumerate() {
+            sheet.set_cell(CellRef::new(r as u32, 4), Cell::value(Value::text(text)));
+        }
+        for (c, w) in [(0u32, 96.0f32), (1, 44.0), (2, 190.0), (3, 24.0)] {
+            sheet.cols.insert(c, monun_model::LineInfo { size: Some(w), ..Default::default() });
+        }
+        cx.wb.sheets.push(std::sync::Arc::new(sheet));
+        let at = cx.wb.sheets.len() - 1;
+        cx.wb.names.push(DefinedName {
+            name: HOLIDAY_SHEET.into(),
+            scope: None,
+            formula: format!("{}!$A$2:$A${HOLIDAY_LAST_ROW}", monun_formula::quote_sheet(HOLIDAY_SHEET)),
+            comment: "한국 관공서 공휴일 (WORKDAY, NETWORKDAYS의 holidays 인수)".into(),
+            hidden: false,
+        });
+        cx.wb.set_active_sheet(at);
+        *cx.sel = crate::Selection::default();
+        cx.structural = true;
+        Ok(at)
+    })?;
+    d.sheet_selections.insert(at.min(d.sheet_selections.len()), crate::Selection::default());
+    Ok(json!({"sheet": HOLIDAY_SHEET, "name": HOLIDAY_SHEET, "holidays": count, "years": [crate::holidays::YEARS.0, crate::holidays::YEARS.1]}))
 }
 
 fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
