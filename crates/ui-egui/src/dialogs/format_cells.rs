@@ -1,6 +1,18 @@
 use super::show::ok_cancel;
 use super::{Dialog, SheetApp, json, theme};
 
+/// Korean Excel's Special (기타) formats, and the business registration number Korean forms ask
+/// for: (label, code).
+const KOREAN_SPECIAL: [(&str, &str); 7] = [
+    ("Postal Code", "00000"),
+    ("Phone Number", "[<=99999999]####-####;(0##) ####-####"),
+    ("Resident Registration Number", "000000-0000000"),
+    ("Business Registration Number", "000-00-00000"),
+    ("Number (Hangul)", "[DBNum4][$-412]General"),
+    ("Number (Hanja)", "[DBNum1][$-412]General"),
+    ("Number (Formal Hanja)", "[DBNum2][$-412]General"),
+];
+
 /// Draws the six-tab Format Cells editor (number, alignment, font, border, fill, protection); the Number tab shows a sample preview, and the style draft updates.
 pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
     // `d.tab` stays the English name (it is what `open_dialog` and tests pass); only the drawn
@@ -35,6 +47,13 @@ pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog
                     let c = monun_engine::cmd::format::format_code_for(name).to_string();
                     if cols[0].selectable_label(code == c, lang.tr(name)).clicked() {
                         code = c;
+                    }
+                }
+                cols[0].add_space(6.0);
+                cols[0].label(egui::RichText::new(lang.tr("Special (Korean):")).strong());
+                for (name, c) in KOREAN_SPECIAL {
+                    if cols[0].selectable_label(code == c, lang.tr(name)).clicked() {
+                        code = c.to_string();
                     }
                 }
                 cols[1].label(egui::RichText::new(lang.tr("Sample")).strong());

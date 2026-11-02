@@ -133,6 +133,9 @@ fn load_prefs(app: &mut SheetApp) {
     if (app.session.prefs.default_column_width - monun_engine::model::DEFAULT_COL_WIDTH).abs() < 0.01 {
         app.session.prefs.default_column_width = NEW_WORKBOOK_COLUMN_WIDTH;
     }
+    if app.session.prefs.default_paper == monun_engine::model::PrintSettings::default().paper {
+        app.session.prefs.default_paper = NEW_WORKBOOK_PAPER.into();
+    }
 }
 
 /// The font new workbooks start in (Excel's File › Options › "Use this as the default font").
@@ -142,6 +145,10 @@ const NEW_WORKBOOK_FONT: &str = "굴림체";
 /// The standard column width of new workbooks, in pixels; `defaultColumnWidth` in prefs.json
 /// picks another.
 const NEW_WORKBOOK_COLUMN_WIDTH: f32 = 130.0;
+
+/// The paper new workbooks and sheets print on, as on a Korean printer; `defaultPaper` in
+/// prefs.json picks another.
+const NEW_WORKBOOK_PAPER: &str = "A4";
 
 fn save_prefs(app: &SheetApp) {
     if !prefs_enabled() {
@@ -325,6 +332,7 @@ fn main() -> eframe::Result<()> {
     let mut session = Session::new();
     session.prefs.default_font = NEW_WORKBOOK_FONT.into();
     session.prefs.default_column_width = NEW_WORKBOOK_COLUMN_WIDTH;
+    session.prefs.default_paper = NEW_WORKBOOK_PAPER.into();
     if let Some(s) = &sample
         && let Err(e) = session.execute("file.new", json!({"sample": s}))
     {

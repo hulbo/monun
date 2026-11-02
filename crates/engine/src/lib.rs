@@ -384,6 +384,9 @@ pub struct Prefs {
     pub default_font_size: f32,
     /// The standard column width of a new workbook's sheets, in pixels (8.43 characters is 64).
     pub default_column_width: f32,
+    /// The paper size new workbooks and inserted sheets print on (`A4`, `Letter`…): the printer's
+    /// default paper in Excel. A file keeps the paper it was saved with.
+    pub default_paper: String,
     pub sheets_in_new_workbook: usize,
     pub r1c1: bool,
     /// Words added with Add to Dictionary.
@@ -392,6 +395,16 @@ pub struct Prefs {
     pub formula_bar: bool,
     /// The statistics the status bar shows for a selection (right-click the status bar).
     pub status_bar: StatusBarStats,
+}
+
+impl Prefs {
+    /// [`Prefs::default_paper`] when it is a paper size Monun knows and not the model's own default
+    /// (which new sheets have anyway).
+    pub fn paper(&self) -> Option<String> {
+        let paper = self.default_paper.trim();
+        let known = cmd::print::paper_size(paper) != cmd::print::paper_size("Letter") || paper.eq_ignore_ascii_case("Letter");
+        (known && paper != monun_model::PrintSettings::default().paper).then(|| paper.to_string())
+    }
 }
 
 /// The selection statistics shown on the status bar, set with `view.statusBar`. Excel turns on
@@ -422,6 +435,7 @@ impl Default for Prefs {
             default_font: monun_model::DEFAULT_FONT.into(),
             default_font_size: monun_model::DEFAULT_FONT_SIZE,
             default_column_width: monun_model::DEFAULT_COL_WIDTH,
+            default_paper: monun_model::PrintSettings::default().paper,
             sheets_in_new_workbook: 1,
             r1c1: false,
             user_dictionary: vec![],
@@ -612,6 +626,11 @@ impl Session {
         if width.is_finite() && (8.0..=2048.0).contains(&width) && (width - monun_model::DEFAULT_COL_WIDTH).abs() > 0.01 {
             for sheet in &mut wb.sheets {
                 Arc::make_mut(sheet).default_col_width = width;
+            }
+        }
+        if let Some(paper) = self.prefs.paper() {
+            for sheet in &mut wb.sheets {
+                Arc::make_mut(sheet).print.paper = paper.clone();
             }
         }
         self.add_document(DocState::new(wb, None, format!("Book{n}"), Trust::Local))

@@ -9,6 +9,7 @@ pub(super) fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
         None => s.doc()?.wb.next_sheet_name(),
     };
     s.doc()?.wb.check_sheet_name(&name, None).map_err(EngineError::Other)?;
+    let paper = s.prefs.paper();
     let d = s.doc_mut()?;
     let before = p.get("before").and_then(Json::as_u64).map(|v| v as usize);
     let idx = edit_doc(d, |cx| {
@@ -19,6 +20,10 @@ pub(super) fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
         let mut sheet = Sheet::new(name.clone());
         if let Some(active) = cx.wb.sheets.get(cx.wb.active_sheet()) {
             sheet.default_col_width = active.default_col_width;
+        }
+        // It prints on the default paper, as Excel's new sheet takes the printer's.
+        if let Some(paper) = &paper {
+            sheet.print.paper = paper.clone();
         }
         cx.wb.sheets.insert(at, Arc::new(sheet));
         // Names scoped to later sheets shift.

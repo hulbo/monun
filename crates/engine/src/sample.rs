@@ -8,11 +8,38 @@ use serde_json::json;
 
 use crate::{DocState, Session};
 
-pub const SAMPLES: &[(&str, &str)] = &[("budget", "Household Budget"), ("sales", "Quarterly Sales Dashboard"), ("grades", "Gradebook")];
+mod forms;
+
+/// The samples and Korean business forms: (name, label). Labels are the interface's English keys;
+/// a form's workbook takes its Korean name ([`title`]).
+pub const SAMPLES: &[(&str, &str)] = &[
+    ("quote", "Quote"),
+    ("statement", "Transaction Statement"),
+    ("invoice", "Invoice"),
+    ("budget", "Household Budget"),
+    ("sales", "Quarterly Sales Dashboard"),
+    ("grades", "Gradebook"),
+];
+
+/// The Korean name of a business form, which its workbook and sheet take.
+fn korean_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "quote" => "견적서",
+        "statement" => "거래명세서",
+        "invoice" => "청구서",
+        _ => return None,
+    })
+}
 
 pub fn title(name: &str) -> String {
+    if let Some(k) = korean_name(name) {
+        return k.into();
+    }
     SAMPLES.iter().find(|(n, _)| *n == name).map(|(_, t)| t.to_string()).unwrap_or_else(|| "Sample".into())
 }
+
+/// The typeface of the business forms (Korean Windows' interface font).
+const FORM_FONT: &str = "맑은 고딕";
 
 /// Builds a sample by replaying commands (so samples also exercise the command layer).
 pub fn build(name: &str) -> Option<Workbook> {
@@ -23,15 +50,22 @@ pub fn build(name: &str) -> Option<Workbook> {
             "budget" => "Budget".into(),
             "sales" => "Sales".into(),
             "grades" => "Grades".into(),
-            _ => return None,
+            _ => korean_name(name)?.into(),
         };
+    }
+    if korean_name(name).is_some() {
+        let mut normal = wb.styles.get(monun_model::StyleId::DEFAULT).clone();
+        normal.font.name = FORM_FONT.into();
+        normal.font.size = 10.0;
+        wb.styles = monun_model::StyleTable::with_default(normal);
+        wb.theme.minor_font = FORM_FONT.into();
     }
     s.add_document(DocState::new(wb, None, title(name), crate::Trust::Local));
     let ok = match name {
         "budget" => budget(&mut s),
         "sales" => sales(&mut s),
         "grades" => grades(&mut s),
-        _ => false,
+        _ => forms::build(&mut s, name),
     };
     if !ok {
         return None;

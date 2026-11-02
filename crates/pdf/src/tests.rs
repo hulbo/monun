@@ -332,3 +332,22 @@ fn cjk_text_is_not_replaced_by_question_marks() -> Result<(), Box<dyn Error>> {
     assert_eq!(text_width(Font::Helvetica, 10.0, "签字"), 20.0);
     Ok(())
 }
+
+/// Hangul is in the Korean collection: the Chinese one has no Hangul, and viewers showed blanks.
+#[test]
+fn korean_text_uses_the_korean_cid_font() -> Result<(), Box<dyn Error>> {
+    let mut doc = PdfDoc::new();
+    let p = doc.add_page(595.0, 842.0);
+    p.text(10.0, 20.0, 10.0, Font::Helvetica, [0, 0, 0], "㈜모눈 견적서 No.1 壹萬");
+    let pdf = doc.finish();
+    check_xref(&pdf)?;
+    // F14 is the Korean font, F13 the Chinese one: Hangul and ㈜ go to F14, hanja to F13.
+    assert!(find(&pdf, b"/F14 10 Tf\n<321CBAA8B208> Tj").is_some(), "{}", String::from_utf8_lossy(&pdf));
+    assert!(find(&pdf, b"/F14 10 Tf\n<ACACC801C11C> Tj").is_some());
+    assert!(find(&pdf, b"( No.1 ) Tj").is_some());
+    assert!(find(&pdf, b"/F13 10 Tf\n<58F9842C> Tj").is_some());
+    assert!(find(&pdf, b"/BaseFont /HYGoThic-Medium /Encoding /UniKS-UTF16-H").is_some());
+    assert!(find(&pdf, b"/Ordering (Korea1) /Supplement 2").is_some());
+    assert_eq!(text_width(Font::Helvetica, 10.0, "견적"), 20.0);
+    Ok(())
+}
