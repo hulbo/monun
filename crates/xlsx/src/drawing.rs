@@ -121,84 +121,207 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+/// Groups nested deeper than this are not read.
+const MAX_GROUP_DEPTH: usize = 16;
+
+/// Where the objects being read come from: the drawing part, the anchor's place in it (1-based,
+/// for warnings), the part's relationships and the anchor's mode.
+struct Placed<'a> {
+    part: &'a str,
+    n: usize,
+    rels: &'a [crate::package::Rel],
+    mode: AnchorMode,
+}
+
 pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(), IoError> {
     let Some(x) = cx.optional_xml(part)? else { return Ok(()) };
     let rels = cx.pkg.rels(part)?;
+    let mut grouped = false;
     for (n, a) in x.children.iter().enumerate() {
         let Some(anchor) = read_anchor(a, sheet) else { continue };
-        let n = n + 1;
-        // Objects in markup-compatibility blocks: the first choice (chartex frames), else the
-        // fallback.
-        let objs: Vec<&El> = a
-            .children
-            .iter()
-            .flat_map(|o| match o.name.as_str() {
-                "AlternateContent" => o
-                    .child("Choice")
-                    .filter(|c| c.child("graphicFrame").is_some())
-                    .or_else(|| o.child("Fallback"))
-                    .map(|c| c.children.iter().collect())
-                    .unwrap_or_default(),
-                _ => vec![o],
-            })
-            .collect();
-        for obj in objs {
-            match obj.name.as_str() {
-                "pic" => {
-                    let Some(rid) = obj.path(&["blipFill", "blip"]).and_then(|b| b.attr("embed")) else { continue };
-                    let Some(rel) = rels.iter().find(|r| r.id == rid && !r.external) else {
-                        cx.warn("a linked (not embedded) picture was skipped");
-                        continue;
-                    };
-                    let target = rel.target.clone();
-                    let Some(data) = cx.pkg.read(&target)? else {
-                        cx.warn(format!("missing picture {target}"));
-                        continue;
-                    };
-                    let alt = obj.path(&["nvPicPr", "cNvPr"]).and_then(|c| c.attr("descr")).unwrap_or("").to_string();
-                    let id = cx.next_object_id();
-                    sheet.images.push(Image { id, anchor, data: data.into(), mime: mime_for(&target).to_string(), alt });
-                }
-                "graphicFrame" => {
-                    let Some(gd) = obj.path(&["graphic", "graphicData"]) else { continue };
-                    let uri = gd.attr("uri").unwrap_or("");
-                    if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
-                        let Some(rel) = rels.iter().find(|r| r.id == rid) else {
-                            cx.warn(format!("a chart without its chart part was skipped ({part}, object {n})"));
-                            continue;
-                        };
-                        let target = rel.target.clone();
-                        if let Some(cx_xml) = cx.optional_xml(&target)? {
-                            let chartex = uri.contains("chartex");
-                            match if chartex { crate::chartex::read_chartex(&cx_xml) } else { crate::chart::read_chart(&cx_xml) } {
-                                Some(mut ch) => {
-                                    ch.id = cx.next_object_id();
-                                    ch.anchor = anchor;
-                                    sheet.charts.push(ch);
-                                }
-                                None => cx.warn(format!("chart {target} has no supported plot and was skipped")),
-                            }
-                        } else {
-                            cx.warn(format!("chart {target} is missing from the package and was skipped ({part}, object {n})"));
-                        }
-                    } else if uri.contains("chartex") || uri.contains("chartEx") {
-                        cx.warn(format!("a histogram, waterfall, treemap… chart without its chart part was skipped ({part}, object {n})"));
-                    } else {
-                        cx.warn(format!("an embedded object (SmartArt, OLE…) was skipped ({part}, object {n})"));
-                    }
-                }
-                "sp" | "cxnSp" => {
-                    if let Some(s) = read_shape(obj, anchor) {
-                        let id = cx.next_object_id();
-                        sheet.shapes.push(Shape { id, ..s });
-                    }
-                }
-                "grpSp" => cx.warn(format!("grouped shapes are not supported and were skipped ({part}, object {n})")),
-                _ => {}
+        let at = Placed { part, n: n + 1, rels: &rels, mode: anchor.mode };
+        for obj in objects(a) {
+            if obj.name == "grpSp" {
+                grouped = true;
+                read_group(cx, &at, obj, GroupSpace::of(obj, anchor_rect(sheet, &anchor)), sheet, 0)?;
+            } else {
+                read_object(cx, &at, obj, anchor, sheet)?;
             }
         }
     }
+    if grouped {
+        cx.warn("grouped shapes were read as separate shapes and are saved ungrouped");
+    }
     Ok(())
+}
+
+/// The objects of an anchor or a group. In markup-compatibility blocks: the first choice
+/// (chartex frames), else the fallback.
+fn objects(a: &El) -> Vec<&El> {
+    a.children
+        .iter()
+        .flat_map(|o| match o.name.as_str() {
+            "AlternateContent" => o
+                .child("Choice")
+                .filter(|c| c.child("graphicFrame").is_some())
+                .or_else(|| o.child("Fallback"))
+                .map(|c| c.children.iter().collect())
+                .unwrap_or_default(),
+            _ => vec![o],
+        })
+        .collect()
+}
+
+/// Reads a picture, chart frame or shape placed at `anchor`.
+fn read_object(cx: &mut Ctx<'_>, at: &Placed<'_>, obj: &El, anchor: Anchor, sheet: &mut Sheet) -> Result<(), IoError> {
+    let (part, n) = (at.part, at.n);
+    match obj.name.as_str() {
+        "pic" => {
+            let Some(rid) = obj.path(&["blipFill", "blip"]).and_then(|b| b.attr("embed")) else { return Ok(()) };
+            let Some(rel) = at.rels.iter().find(|r| r.id == rid && !r.external) else {
+                cx.warn("a linked (not embedded) picture was skipped");
+                return Ok(());
+            };
+            let target = rel.target.clone();
+            let Some(data) = cx.pkg.read(&target)? else {
+                cx.warn(format!("missing picture {target}"));
+                return Ok(());
+            };
+            let alt = obj.path(&["nvPicPr", "cNvPr"]).and_then(|c| c.attr("descr")).unwrap_or("").to_string();
+            let id = cx.next_object_id();
+            sheet.images.push(Image { id, anchor, data: data.into(), mime: mime_for(&target).to_string(), alt });
+        }
+        "graphicFrame" => {
+            let Some(gd) = obj.path(&["graphic", "graphicData"]) else { return Ok(()) };
+            let uri = gd.attr("uri").unwrap_or("");
+            if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
+                let Some(rel) = at.rels.iter().find(|r| r.id == rid) else {
+                    cx.warn(format!("a chart without its chart part was skipped ({part}, object {n})"));
+                    return Ok(());
+                };
+                let target = rel.target.clone();
+                if let Some(cx_xml) = cx.optional_xml(&target)? {
+                    let chartex = uri.contains("chartex");
+                    match if chartex { crate::chartex::read_chartex(&cx_xml) } else { crate::chart::read_chart(&cx_xml) } {
+                        Some(mut ch) => {
+                            ch.id = cx.next_object_id();
+                            ch.anchor = anchor;
+                            sheet.charts.push(ch);
+                        }
+                        None => cx.warn(format!("chart {target} has no supported plot and was skipped")),
+                    }
+                } else {
+                    cx.warn(format!("chart {target} is missing from the package and was skipped ({part}, object {n})"));
+                }
+            } else if uri.contains("chartex") || uri.contains("chartEx") {
+                cx.warn(format!("a histogram, waterfall, treemap… chart without its chart part was skipped ({part}, object {n})"));
+            } else {
+                cx.warn(format!("an embedded object (SmartArt, OLE…) was skipped ({part}, object {n})"));
+            }
+        }
+        "sp" | "cxnSp" => {
+            if let Some(s) = read_shape(obj, anchor) {
+                let id = cx.next_object_id();
+                sheet.shapes.push(Shape { id, ..s });
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Reads the shapes, pictures and charts of a group (`xdr:grpSp`) as separate objects, each placed
+/// where the group draws it, and the groups inside it the same way. Monun has no groups: what they
+/// hold is shown and saved, ungrouped.
+fn read_group(cx: &mut Ctx<'_>, at: &Placed<'_>, group: &El, space: GroupSpace, sheet: &mut Sheet, depth: usize) -> Result<(), IoError> {
+    if depth >= MAX_GROUP_DEPTH {
+        return Ok(());
+    }
+    for obj in objects(group) {
+        let Some(rect) = child_xfrm(obj).and_then(|x| space.rect(x)) else { continue };
+        if obj.name == "grpSp" {
+            read_group(cx, at, obj, GroupSpace::of(obj, rect), sheet, depth + 1)?;
+        } else {
+            read_object(cx, at, obj, anchor_at(sheet, rect, at.mode), sheet)?;
+        }
+    }
+    Ok(())
+}
+
+/// The `a:xfrm` that places an object inside a group.
+fn child_xfrm(obj: &El) -> Option<&El> {
+    match obj.name.as_str() {
+        "grpSp" => obj.path(&["grpSpPr", "xfrm"]),
+        "graphicFrame" => obj.child("xfrm"),
+        _ => obj.path(&["spPr", "xfrm"]),
+    }
+}
+
+/// A box on the sheet in pixels: left, top, width, height.
+type Rect = (f64, f64, f64, f64);
+
+/// The box `anchor` covers on `sheet`.
+fn anchor_rect(sheet: &Sheet, anchor: &Anchor) -> Rect {
+    let x = sheet.col_left(anchor.cell.col) + f64::from(anchor.dx);
+    let y = sheet.row_top(anchor.cell.row) + f64::from(anchor.dy);
+    (x, y, f64::from(anchor.width), f64::from(anchor.height))
+}
+
+/// The anchor of a box on `sheet`.
+fn anchor_at(sheet: &Sheet, (x, y, w, h): Rect, mode: AnchorMode) -> Anchor {
+    let (x, y) = (x.max(0.0), y.max(0.0));
+    let (col, row) = (sheet.col_at(x), sheet.row_at(y));
+    Anchor {
+        cell: CellRef::new(row, col),
+        dx: (x - sheet.col_left(col)).max(0.0) as f32,
+        dy: (y - sheet.row_top(row)).max(0.0) as f32,
+        width: w.clamp(0.0, 1e7) as f32,
+        height: h.clamp(0.0, 1e7) as f32,
+        mode,
+    }
+}
+
+/// A group's own coordinates (`a:chOff`, `a:chExt`, EMU), which its objects are placed in, laid
+/// over the group's box on the sheet.
+#[derive(Clone, Copy)]
+struct GroupSpace {
+    /// The box's top-left corner on the sheet, pixels.
+    x: f64,
+    y: f64,
+    /// Sheet pixels per child unit.
+    sx: f64,
+    sy: f64,
+    /// The child coordinates of that corner.
+    ox: f64,
+    oy: f64,
+}
+
+impl GroupSpace {
+    /// The space of `group`, whose box on the sheet is `rect`.
+    fn of(group: &El, (x, y, w, h): Rect) -> GroupSpace {
+        let xfrm = group.path(&["grpSpPr", "xfrm"]);
+        let num = |el: &str, attr: &str| xfrm.and_then(|x| x.child(el)).and_then(|e| e.attr_i64(attr)).map(|v| v as f64);
+        let scale = |size: f64, ext: Option<f64>| match ext {
+            Some(e) if e > 0.0 => size / e,
+            _ => 1.0 / EMU_PER_PX,
+        };
+        GroupSpace {
+            x,
+            y,
+            sx: scale(w, num("chExt", "cx")),
+            sy: scale(h, num("chExt", "cy")),
+            ox: num("chOff", "x").unwrap_or(0.0),
+            oy: num("chOff", "y").unwrap_or(0.0),
+        }
+    }
+
+    /// Where an object whose `a:xfrm` is `xfrm` lands on the sheet.
+    fn rect(&self, xfrm: &El) -> Option<Rect> {
+        let v = |el: &str, attr: &str| xfrm.child(el).and_then(|e| e.attr_i64(attr)).map(|v| v as f64);
+        let (x, y, cx, cy) = (v("off", "x")?, v("off", "y")?, v("ext", "cx")?, v("ext", "cy")?);
+        let r = (self.x + (x - self.ox) * self.sx, self.y + (y - self.oy) * self.sy, (cx * self.sx).max(0.0), (cy * self.sy).max(0.0));
+        [r.0, r.1, r.2, r.3].iter().all(|v| v.is_finite()).then_some(r)
+    }
 }
 
 fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {

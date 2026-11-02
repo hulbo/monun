@@ -181,7 +181,19 @@ pub enum Format {
     Xls,
     /// Another compound (CFB/OLE2) file: a legacy Office binary that isn't an Excel workbook.
     LegacyBinary,
+    /// A file wrapped by corporate document security (DRM) such as Fasoo or SoftCamp: only Office
+    /// on a PC running that vendor's agent can read it.
+    Drm,
     Unknown,
+}
+
+/// Whether the bytes start with a document-security (DRM) container: Fasoo's (" DRMONE … This
+/// Document is encrypted and protected by Fasoo DRM") or SoftCamp's (`SCDSA00n`), common in
+/// files from Korean companies and public offices.
+fn is_drm(bytes: &[u8]) -> bool {
+    let head = bytes.get(..bytes.len().min(512)).unwrap_or(bytes);
+    let has = |needle: &[u8]| head.windows(needle.len()).any(|w| w == needle);
+    bytes.starts_with(b"SCDSA00") || has(b"DRMONE") || has(b"protected by Fasoo DRM")
 }
 
 /// Guesses the format from content: ODS mimetype, XLSB package content types, other ZIP packages as XLSX, text as CSV.
@@ -206,6 +218,9 @@ pub fn sniff(bytes: &[u8]) -> Format {
         } else {
             Format::LegacyBinary
         };
+    }
+    if is_drm(bytes) {
+        return Format::Drm;
     }
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) || bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Format::Csv;

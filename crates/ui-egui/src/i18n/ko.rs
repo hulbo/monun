@@ -566,6 +566,10 @@ const MORE: &[(&str, &str)] = &[
     ("New title (Modify):", "새 제목(수정):"),
     ("Remove the password (Modify)", "암호 제거(수정)"),
     ("'{file}' is protected.", "'{file}'은(는) 보호되어 있습니다."),
+    (
+        "This file is encrypted by document security (DRM): only Excel on a PC running that security program can open it. Ask the sender or your security administrator for a copy without DRM.",
+        "문서 보안(DRM)으로 암호화된 파일입니다. 그 보안 프로그램이 설치된 PC의 엑셀에서만 열 수 있습니다. 보낸 사람이나 보안 담당자에게 DRM이 해제된 파일을 요청하세요.",
+    ),
     ("Unhide sheet:", "숨기기 취소할 시트:"),
     ("Hidden: {sheets}", "숨김: {sheets}"),
     // Paste Special, Series

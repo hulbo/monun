@@ -270,6 +270,11 @@ fn sniffing_formats() {
     assert_eq!(sniff(&[0xD0, 0xCF, 0x11, 0xE0, 0, 0, 1, 2]), Format::Unknown);
     assert_eq!(sniff(b""), Format::Unknown);
     assert_eq!(sniff(&[0xFF, 0xFE, b'a', 0]), Format::Csv);
+    // Corporate document security wraps the workbook: Fasoo's header and SoftCamp's signature.
+    let fasoo = [&[0x9B, b' '][..], b"DRMONE  This Document is encrypted and protected by Fasoo DRM ", &[0; 64]].concat();
+    assert_eq!(sniff(&fasoo), Format::Drm);
+    assert_eq!(sniff(&[&b"SCDSA004"[..], &[0; 64]].concat()), Format::Drm);
+    assert_eq!(sniff(b"DRM,notes\n1,2"), Format::Csv);
 }
 
 #[test]

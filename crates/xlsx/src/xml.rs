@@ -208,6 +208,11 @@ fn named_entity(name: &str) -> Option<char> {
     })
 }
 
+/// Elements below `el` (its children, theirs and so on).
+fn descendants(el: &El) -> usize {
+    el.children.iter().map(|c| 1 + descendants(c)).sum()
+}
+
 /// Parses a whole part into a tree.
 pub fn parse(xml: &[u8]) -> Result<El, IoError> {
     parse_streaming(xml, &[], &mut |_| Ok(()))
@@ -244,6 +249,9 @@ pub fn parse_streaming(xml: &[u8], split: &[&str], cb: &mut dyn FnMut(El) -> Res
         match stack.last_mut() {
             Some(parent) => {
                 if split.contains(&el.name.as_str()) {
+                    // Handed off, its elements leave the tree: a worksheet of a million cells is
+                    // a million rows' worth of small trees, never one big one.
+                    *kept = kept.saturating_sub(descendants(&el));
                     cb(el)?;
                 } else {
                     *kept = kept.saturating_add(1);
@@ -565,6 +573,20 @@ mod tests {
         let xml = format!("<r>{}<y/></r>", "<x/>".repeat(MAX_XML_NODES + 1));
         let err = parse(xml.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("elements"), "{err}");
+    }
+
+    #[test]
+    fn streamed_elements_leave_the_count() {
+        // 600,000 rows of a cell and its value: 1.2 million elements, read row by row (a
+        // worksheet of that size used to stop at the limit and lose its last rows).
+        let xml = format!("<sheetData>{}</sheetData>", "<row><c><v>1</v></c></row>".repeat(600_000));
+        let mut rows = 0;
+        parse_streaming(xml.as_bytes(), &["row"], &mut |_| {
+            rows += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rows, 600_000);
     }
 
     #[test]

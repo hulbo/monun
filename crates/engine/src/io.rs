@@ -43,6 +43,9 @@ impl FileKind {
 pub const PASSWORD_REQUIRED: &str = "is password-protected. Enter its password to open it.";
 /// The error for a wrong password contains this.
 pub const WRONG_PASSWORD: &str = "The password is incorrect.";
+/// The error for a file wrapped by document security (DRM). It names no file, so the interface
+/// can show it in its own language.
+pub const DRM_PROTECTED: &str = "This file is encrypted by document security (DRM): only Excel on a PC running that security program can open it. Ask the sender or your security administrator for a copy without DRM.";
 /// The first open warning of a workbook decrypted with its password.
 pub const DECRYPTED_NOTICE: &str = "This workbook was password-protected. Monun saves it without the password.";
 
@@ -136,6 +139,9 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
         return Err(EngineError::Other(format!(
             "'{name}' is a legacy binary file but not an Excel workbook (no workbook stream). Monun can't open it."
         )));
+    }
+    if sniffed == monun_xlsx::Format::Drm {
+        return Err(EngineError::Other(DRM_PROTECTED.into()));
     }
     // Content wins over the extension: an ODS or XLSB package is imported as what it is,
     // whatever it is called; the extension only decides when the bytes don't say.
