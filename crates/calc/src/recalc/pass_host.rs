@@ -64,7 +64,20 @@ pub(super) struct PassHost<'a> {
     stack_top: usize,
     /// Whether an evaluation ran past the stack budget since the innermost formula started.
     out_of_stack: bool,
+    /// Blocks read as arrays in this pass, handed out again to the formulas that read the same
+    /// block (a lookup table read by every row): see [`Host::range_array`].
+    arrays: HashMap<(usize, RangeRef), Value>,
+    /// Cells held in `arrays`, bounded by [`ARRAY_CACHE_CELLS`].
+    array_cells: u64,
+    /// Reads of a formula still being calculated (circular references) so far: an array built
+    /// while one happened holds a value that isn't final, and is not kept.
+    circular_reads: u64,
 }
+
+/// Blocks smaller than this are read again each time: rebuilding them costs less than keeping them.
+const ARRAY_CACHE_MIN_CELLS: u64 = 64;
+/// Most cells a pass keeps in arrays it hands out again (about 128 MB of values).
+const ARRAY_CACHE_CELLS: u64 = 4_000_000;
 
 impl<'a> PassHost<'a> {
     pub(super) fn new(wb: &'a Workbook, exprs: &'a HashMap<Key, std::sync::Arc<Expr>>, rng: &'a mut u64, now: f64) -> Self {
@@ -96,7 +109,15 @@ impl<'a> PassHost<'a> {
             taint: false,
             stack_top: 0,
             out_of_stack: false,
+            arrays: HashMap::default(),
+            array_cells: 0,
+            circular_reads: 0,
         }
+    }
+
+    fn forget_arrays(&mut self) {
+        self.arrays.clear();
+        self.array_cells = 0;
     }
 }
 
@@ -201,6 +222,7 @@ impl PassHost<'_> {
         }
         if self.in_progress.contains(&k) || self.waiting.contains(&k) {
             self.cycle = true;
+            self.circular_reads += 1;
             if self.iterate {
                 return self.circular_read(k);
             }
@@ -288,6 +310,8 @@ impl PassHost<'_> {
                 // is the 1 x 1 range and `ROWS(C1#)` is 1, as in Excel (#1491). A formula that
                 // returns a scalar never reaches this arm, so it does not become an anchor.
                 self.spills.insert(k, a.clone());
+                // A spill lays values over cells that arrays read so far may cover.
+                self.forget_arrays();
                 a.data.first().cloned().unwrap_or_default()
             }
             Value::Empty => Value::Number(0.0),
@@ -297,6 +321,7 @@ impl PassHost<'_> {
         let v = match self.spills.get(&k) {
             Some(a) if spill_blocked(self, k, a) => {
                 self.spills.remove(&k);
+                self.forget_arrays();
                 Value::Error(CellError::Spill)
             }
             _ => v,
@@ -512,6 +537,31 @@ impl Host for PassHost<'_> {
             }
         }
         out
+    }
+    fn range_array(&mut self, sheet: usize, range: RangeRef) -> Value {
+        let key = (sheet, range);
+        if let Some(v) = self.arrays.get(&key) {
+            return v.clone();
+        }
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        let before = self.circular_reads;
+        let data = self.range_values(sheet, range);
+        let v = Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value));
+        // Kept only when every value in it is final for the pass: none came from a formula still
+        // being calculated (a circular reference, an evaluation suspended for depth) or from a
+        // previous iteration. Formulas calculate once per pass, so a kept array stays true until a
+        // spill lays new values (`forget_arrays`).
+        let cells = (h as u64) * (w as u64);
+        if !self.iterate
+            && self.circular_reads == before
+            && self.suspend.is_none()
+            && cells >= ARRAY_CACHE_MIN_CELLS
+            && self.array_cells + cells <= ARRAY_CACHE_CELLS
+        {
+            self.array_cells += cells;
+            self.arrays.insert(key, v.clone());
+        }
+        v
     }
     fn visit_range(&mut self, sheet: usize, range: RangeRef, f: &mut dyn FnMut(&Value) -> bool) -> bool {
         let wb = self.wb;

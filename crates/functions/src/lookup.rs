@@ -138,6 +138,92 @@ fn cell_result(v: Value) -> Value {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Exact-match indexes
+
+/// The vector of a table an exact search looks in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    FirstColumn,
+    FirstRow,
+}
+
+/// What [`lookup_equal`] compares without wildcards: numbers by value (0 and -0 alike), text by
+/// its lowercased characters (as [`monun_core::compare_text`]), logicals.
+#[derive(Hash, PartialEq, Eq)]
+enum IndexKey {
+    Number(u64),
+    Text(String),
+    Bool(bool),
+}
+
+fn index_key(v: &Value) -> Option<IndexKey> {
+    match v {
+        Value::Number(n) if n.is_nan() => None,
+        Value::Number(n) => Some(IndexKey::Number(if *n == 0.0 { 0 } else { n.to_bits() })),
+        Value::Text(t) => Some(IndexKey::Text(t.chars().flat_map(char::to_lowercase).collect())),
+        Value::Bool(b) => Some(IndexKey::Bool(*b)),
+        _ => None,
+    }
+}
+
+/// A table searched for exact matches, with the first position of each key once it is searched
+/// again. It holds the table, so the array's address is never another table's while it is kept.
+struct Index {
+    table: std::sync::Arc<Array>,
+    axis: Axis,
+    first: Option<std::collections::HashMap<IndexKey, usize>>,
+}
+
+/// Shorter vectors are scanned: an index costs more than it saves there.
+const INDEX_MIN_LEN: usize = 32;
+/// Tables remembered per thread, most recent last.
+const INDEXES: usize = 16;
+
+thread_local! {
+    static EXACT_INDEXES: std::cell::RefCell<Vec<Index>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The first exact match of `x` in the first column or row of `table`, through an index: a
+/// calculation hands every formula that reads the same block the same array, so a table that
+/// thousands of VLOOKUPs search is hashed once instead of scanned by each. `None` when the index
+/// can't answer and the caller scans: a wildcard needle, a short table, or the table's first
+/// search (most tables are searched once).
+fn indexed_exact(x: &Value, table: &Value, axis: Axis) -> Option<Option<usize>> {
+    let Value::Array(table) = table else { return None };
+    let len = if axis == Axis::FirstColumn { table.rows } else { table.cols };
+    if len < INDEX_MIN_LEN || matches!(x, Value::Text(t) if has_wildcards(t)) {
+        return None;
+    }
+    let key = index_key(x)?;
+    EXACT_INDEXES
+        .try_with(|cell| {
+            let mut indexes = cell.try_borrow_mut().ok()?;
+            let at = indexes.iter().position(|i| i.axis == axis && std::sync::Arc::ptr_eq(&i.table, table));
+            let Some(at) = at else {
+                if indexes.len() >= INDEXES {
+                    indexes.remove(0);
+                }
+                indexes.push(Index { table: std::sync::Arc::clone(table), axis, first: None });
+                return None;
+            };
+            let entry = indexes.get_mut(at)?;
+            let first = entry.first.get_or_insert_with(|| {
+                let mut first = std::collections::HashMap::with_capacity(len);
+                for i in 0..len {
+                    let v = if axis == Axis::FirstColumn { table.get(i, 0) } else { table.get(0, i) };
+                    if let Some(k) = v.and_then(index_key) {
+                        first.entry(k).or_insert(i);
+                    }
+                }
+                first
+            });
+            Some(first.get(&key).copied())
+        })
+        .ok()
+        .flatten()
+}
+
+// ---------------------------------------------------------------------------------------------
 // VLOOKUP / HLOOKUP / LOOKUP / MATCH
 
 fn vh_lookup(args: &[Arg], vertical: bool) -> R<Value> {
@@ -153,11 +239,18 @@ fn vh_lookup(args: &[Arg], vertical: bool) -> R<Value> {
     }
     let idx = (idx.trunc() as usize).saturating_sub(1);
     let approx = opt_bool(args, 3, true)?;
-    let (keys, len) = if vertical { (column(&table, 0), table.cols) } else { (row(&table, 0), table.rows) };
-    if idx >= len {
+    if idx >= (if vertical { table.cols } else { table.rows }) {
         return Err(CellError::Ref);
     }
-    let pos = if approx { bsearch_last(&x, &keys, false) } else { find_exact(&x, &keys, true, false) };
+    let axis = if vertical { Axis::FirstColumn } else { Axis::FirstRow };
+    let indexed = if approx { None } else { indexed_exact(&x, &arg(args, 1)?.value, axis) };
+    let pos = match indexed {
+        Some(pos) => pos,
+        None => {
+            let keys = if vertical { column(&table, 0) } else { row(&table, 0) };
+            if approx { bsearch_last(&x, &keys, false) } else { find_exact(&x, &keys, true, false) }
+        }
+    };
     let pos = pos.ok_or(CellError::NA)?;
     let v = if vertical { table.get(pos, idx) } else { table.get(idx, pos) };
     Ok(cell_result(v.cloned().unwrap_or(Value::Empty)))
@@ -214,8 +307,18 @@ fn match_fn(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     if let Value::Error(e) = av {
         return Err(*e);
     }
-    let hay = vector(&as_array(av)).ok_or(CellError::NA)?;
+    // A 2-D range is #N/A before the match type is read.
+    if matches!(av, Value::Array(a) if a.rows != 1 && a.cols != 1) {
+        return Err(CellError::NA);
+    }
     let mt = opt_num(args, 2, 1.0)?;
+    if mt == 0.0
+        && let Value::Array(a) = av
+        && let Some(pos) = indexed_exact(&x, av, if a.cols == 1 { Axis::FirstColumn } else { Axis::FirstRow })
+    {
+        return pos.map(|p| Value::Number((p + 1) as f64)).ok_or(CellError::NA);
+    }
+    let hay = vector(&as_array(av)).ok_or(CellError::NA)?;
     let pos = if mt == 0.0 {
         find_exact(&x, &hay, true, false)
     } else if mt > 0.0 {
@@ -667,6 +770,39 @@ mod tests {
         let mut tall = vec![vec![nv(1.0)], vec![nv(2.0)], vec![nv(3.0)]];
         tall.extend((0..10_000).map(|_| vec![Value::Empty]));
         close(ev("MATCH", vec![n(9.0), rf(arr(tall))]), 3.0);
+    }
+
+    /// The second search of a table goes through its exact-match index; it must answer as the
+    /// scan of the first one does, whatever the keys hold.
+    #[test]
+    fn indexed_exact_lookups_answer_as_the_scan() {
+        // 40 rows: number, text and logical keys, a duplicate, case variants, -0, blanks.
+        let mut rows: Vec<Vec<Value>> = (0..30).map(|i| vec![Value::Number(f64::from(i) + 100.0), Value::Number(f64::from(i))]).collect();
+        rows.push(vec![tv("Apple"), Value::Number(1000.0)]);
+        rows.push(vec![tv("apple"), Value::Number(1001.0)]);
+        rows.push(vec![tv("견적서"), Value::Number(1002.0)]);
+        rows.push(vec![Value::Number(-0.0), Value::Number(1003.0)]);
+        rows.push(vec![Value::Bool(true), Value::Number(1004.0)]);
+        rows.push(vec![tv("105"), Value::Number(1005.0)]);
+        rows.push(vec![Value::Number(105.0), Value::Number(1006.0)]);
+        rows.push(vec![Value::Empty, Value::Number(1007.0)]);
+        rows.push(vec![tv("A*"), Value::Number(1008.0)]);
+        rows.push(vec![Value::Error(CellError::NA), Value::Number(1009.0)]);
+        let table = arr(rows);
+        let keys = arr((0..40).map(|r| vec![crate::util::as_array(&table).get(r, 0).cloned().unwrap_or_default()]).collect());
+        for needle in [n(105.0), n(0.0), t("APPLE"), t("견적서"), t("105"), b(true), t("A*"), t("A~*"), t("missing"), n(999.0), t("")] {
+            let vlookup = || ev("VLOOKUP", vec![needle.clone(), rf(table.clone()), n(2.0), b(false)]);
+            let matched = || ev("MATCH", vec![needle.clone(), rf(keys.clone()), n(0.0)]);
+            let (scan, indexed) = (vlookup(), vlookup());
+            assert_eq!(scan, indexed, "VLOOKUP {:?}", needle.value);
+            let (scan, indexed) = (matched(), matched());
+            assert_eq!(scan, indexed, "MATCH {:?}", needle.value);
+        }
+        // The first of duplicates, case folded; 0 finds -0; text "105" is not the number 105.
+        close(ev("VLOOKUP", vec![t("APPLE"), rf(table.clone()), n(2.0), b(false)]), 1000.0);
+        close(ev("VLOOKUP", vec![n(0.0), rf(table.clone()), n(2.0), b(false)]), 1003.0);
+        close(ev("VLOOKUP", vec![t("105"), rf(table.clone()), n(2.0), b(false)]), 1005.0);
+        close(ev("VLOOKUP", vec![n(105.0), rf(table), n(2.0), b(false)]), 5.0);
     }
 
     #[test]

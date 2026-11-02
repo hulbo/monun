@@ -150,7 +150,17 @@ fn file_faces(data: &[u8]) -> Vec<(u32, String, Vec<String>, String)> {
 /// symlink) is read once, so a link back to a parent ends the walk.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
+    scan_dirs_with(dirs, &mut FontCache::default())
+}
+
+/// [`scan_dirs`], taking each file's faces from `cache` while the file is the size and age the
+/// cache saw, and reading only the others: the font folders hold hundreds of megabytes, which the
+/// scan would otherwise read in full at every start. `cache` ends up describing exactly the files
+/// found.
+#[cfg(not(target_arch = "wasm32"))]
+fn scan_dirs_with(dirs: &[PathBuf], cache: &mut FontCache) -> Vec<Face> {
     let mut out: Vec<Face> = Vec::new();
+    let mut found: HashMap<PathBuf, CachedFile> = HashMap::new();
     let mut stack: Vec<PathBuf> = dirs.to_vec();
     let mut seen_dirs: HashSet<PathBuf> = HashSet::new();
     while let Some(dir) = stack.pop() {
@@ -169,15 +179,40 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
                 .extension()
                 .and_then(std::ffi::OsStr::to_str)
                 .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc" | "otc"));
-            if !is_font || std::fs::metadata(&path).map(|m| m.len() > MAX_FONT_FILE).unwrap_or(true) {
-                continue;
-            }
-            let Ok(data) = std::fs::read(&path) else { continue };
-            for (index, family, names, style) in file_faces(&data) {
-                out.push(Face { family, names, path: path.clone(), index, weight: style_weight(&style), italic: style_italic(&style) });
-            }
+            let Some(meta) = std::fs::metadata(&path).ok().filter(|m| is_font && m.len() <= MAX_FONT_FILE) else { continue };
+            let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            let file = match cache.files.remove(&path) {
+                Some(f) if f.size == meta.len() && f.modified == modified && modified != 0 => f,
+                _ => {
+                    let Ok(data) = std::fs::read(&path) else { continue };
+                    cache.read += 1;
+                    let faces = file_faces(&data)
+                        .into_iter()
+                        .map(|(index, family, names, style)| CachedFace {
+                            family,
+                            names,
+                            index,
+                            weight: style_weight(&style),
+                            italic: style_italic(&style),
+                        })
+                        .collect();
+                    CachedFile { size: meta.len(), modified, faces }
+                }
+            };
+            out.extend(file.faces.iter().map(|f| Face {
+                family: f.family.clone(),
+                names: f.names.clone(),
+                path: path.clone(),
+                index: f.index,
+                weight: f.weight,
+                italic: f.italic,
+            }));
+            found.insert(path, file);
         }
     }
+    // Files gone since are dropped with whatever the walk didn't claim.
+    cache.changed |= cache.read > 0 || !cache.files.is_empty();
+    cache.files = found;
     out
 }
 
@@ -186,11 +221,105 @@ pub fn scan_dirs(_dirs: &[PathBuf]) -> Vec<Face> {
     Vec::new()
 }
 
+/// What the scan learned about each font file, kept between runs (`fonts.json` in the cache
+/// folder) so an unchanged file is never read again.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct FontCache {
+    /// Bumped when a face's fields change meaning: an older cache is then read as empty.
+    #[serde(default)]
+    version: u32,
+    files: HashMap<PathBuf, CachedFile>,
+    /// Files read in this scan (not saved).
+    #[serde(skip)]
+    read: usize,
+    /// Whether the cache differs from the one loaded (not saved).
+    #[serde(skip)]
+    changed: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedFile {
+    size: u64,
+    /// Seconds since the Unix epoch.
+    modified: u64,
+    faces: Vec<CachedFace>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedFace {
+    family: String,
+    names: Vec<String>,
+    index: u32,
+    weight: f32,
+    italic: bool,
+}
+
+const FONT_CACHE_VERSION: u32 = 1;
+
+/// Where the font cache lives: `Monun\fonts.json` in the user's local application data (Windows),
+/// `~/Library/Caches/Monun` (macOS) or `$XDG_CACHE_HOME/monun` (elsewhere). `None` when agents'
+/// runs ask for no preferences (`MONUN_NO_PREFS`) or the folder is unknown.
+#[cfg(not(target_arch = "wasm32"))]
+fn font_cache_path() -> Option<PathBuf> {
+    if std::env::var_os("MONUN_NO_PREFS").is_some() {
+        return None;
+    }
+    let dir = if cfg!(windows) {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Monun")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from(std::env::var_os("HOME")?).join("Library/Caches/Monun")
+    } else {
+        std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?
+            .join("monun")
+    };
+    Some(dir.join("fonts.json"))
+}
+
+/// Scans the system's font folders through the cache, saving it when it changed.
+#[cfg(not(target_arch = "wasm32"))]
+fn scan_system_fonts() -> Vec<Face> {
+    let started = crate::monotonic_ms();
+    let path = font_cache_path();
+    let mut cache: FontCache = path
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .filter(|c: &FontCache| c.version == FONT_CACHE_VERSION)
+        .unwrap_or_default();
+    let faces = scan_dirs_with(&system_font_dirs(), &mut cache);
+    if cache.changed
+        && let Some(p) = &path
+    {
+        cache.version = FONT_CACHE_VERSION;
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(b) = serde_json::to_vec(&cache) {
+            let _ = std::fs::write(p, b);
+        }
+    }
+    log::info!(
+        "font scan: {} faces in {} files, {} read, {} ms",
+        faces.len(),
+        cache.files.len(),
+        cache.read,
+        (crate::monotonic_ms() - started).round()
+    );
+    faces
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scan_system_fonts() -> Vec<Face> {
+    Vec::new()
+}
+
 static CATALOG: OnceLock<Vec<Face>> = OnceLock::new();
 
 /// The catalog of installed faces, scanned on first use. Blocks until the scan finishes.
 pub fn catalog() -> &'static [Face] {
-    CATALOG.get_or_init(|| scan_dirs(&system_font_dirs()))
+    CATALOG.get_or_init(scan_system_fonts)
 }
 
 /// The catalog if the scan has finished, else `None` — never blocks, for use while painting.
@@ -507,6 +636,30 @@ mod tests {
         assert_eq!(families, ["Ubuntu"], "one face, family read from the name table");
         assert_eq!(faces[0].weight, 300.0, "“Light” reads as weight 300");
         assert!(!faces[0].italic);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_cache_spares_reading_unchanged_files_and_follows_changes() {
+        let dir = std::env::temp_dir().join(format!("monun-fonts-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join("Ubuntu-Light.ttf"), epaint_default_fonts::UBUNTU_LIGHT).expect("write");
+        let mut cache = FontCache::default();
+        let first = scan_dirs_with(std::slice::from_ref(&dir), &mut cache);
+        assert_eq!((first.len(), cache.read), (1, 1));
+        // Saved and loaded again, as the next start does: nothing is read.
+        let mut cache: FontCache = serde_json::from_slice(&serde_json::to_vec(&cache).unwrap()).unwrap();
+        let second = scan_dirs_with(std::slice::from_ref(&dir), &mut cache);
+        assert_eq!((second.len(), cache.read, cache.changed), (1, 0, false));
+        assert_eq!((second[0].family.as_str(), second[0].weight, second[0].path.clone()), ("Ubuntu", 300.0, dir.join("Ubuntu-Light.ttf")));
+        // A font installed and one removed are both noticed.
+        std::fs::write(dir.join("Hack-Regular.ttf"), epaint_default_fonts::HACK_REGULAR).expect("write");
+        std::fs::remove_file(dir.join("Ubuntu-Light.ttf")).expect("remove");
+        let third = scan_dirs_with(std::slice::from_ref(&dir), &mut cache);
+        assert_eq!(third.iter().map(|f| f.family.as_str()).collect::<Vec<_>>(), ["Hack"]);
+        assert!(cache.changed && cache.read == 1 && cache.files.len() == 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

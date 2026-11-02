@@ -2268,3 +2268,31 @@ fn loan_schedule_residue_keeps_excels_sign() {
     }
     assert_eq!(t.get("P7"), Value::Text("".into()));
 }
+
+/// A block that many formulas read is built once per pass and handed to each of them; what they
+/// see must be what reading it fresh gives: formulas in the block calculated first, a spill laid
+/// into it later in the pass, and an edit to it.
+#[test]
+fn a_block_read_by_many_formulas_is_the_same_for_each() {
+    let mut t = T::new();
+    // A1:A100 are formulas, read by B1:B100 (each the sum of the whole column).
+    for r in 1..=100 {
+        t.set(&format!("A{r}"), &format!("=ROW()*{}", if r == 50 { "C1" } else { "1" }));
+        t.set(&format!("B{r}"), "=SUM($A$1:$A$100)");
+    }
+    t.set("C1", "1");
+    for r in [1, 50, 100] {
+        assert_eq!(t.num(&format!("B{r}")), 5050.0, "B{r}");
+    }
+    // An edit inside the block reaches every reader.
+    t.set("C1", "3");
+    for r in [1, 50, 100] {
+        assert_eq!(t.num(&format!("B{r}")), 5150.0, "B{r} after the edit");
+    }
+    // A spill laid into a block after a formula above it has read it: everyone ends up with it.
+    t.set("E1", "=SUM($G$2:$G$100)");
+    t.set("G1", "=SEQUENCE(100)");
+    t.set("H1", "=SUM($G$2:$G$100)");
+    assert_eq!(t.num("E1"), 5049.0);
+    assert_eq!(t.num("H1"), 5049.0);
+}
