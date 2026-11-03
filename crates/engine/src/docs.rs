@@ -54,6 +54,30 @@ pub fn markdown_workbook(name: &str, bytes: &[u8]) -> Workbook {
     wb
 }
 
+/// What a document's `{{…}}` field shows: a cell reference (`구매목록!D1`) as the cell displays
+/// it, in its number format; anything else (`=SUM(구매목록!B:B)`) worked out as a formula and shown
+/// in General format. An error comes back as its code (`#REF!`).
+pub fn field_value(wb: &Workbook, expr: &str) -> Result<String, String> {
+    let e = expr.trim();
+    let body = e.strip_prefix('=').unwrap_or(e);
+    if !e.starts_with('=') {
+        let (sheet, a1) = monun_core::split_sheet(body);
+        let index = match &sheet {
+            Some(name) => wb.sheet_index(name),
+            None => Some(wb.active_sheet()),
+        };
+        if let Some(sh) = index.and_then(|i| wb.sheet(i))
+            && let Some(c) = CellRef::parse(&a1.replace('$', ""))
+        {
+            return Ok(crate::display::cell_text(wb, sh, c));
+        }
+    }
+    match monun_calc::recalc::evaluate(wb, wb.active_sheet(), CellRef::default(), body) {
+        Value::Error(e) => Err(e.to_string()),
+        v => Ok(crate::display::format(&v, "General", wb).text),
+    }
+}
+
 /// Whether a document tab's grid is as it must be: empty.
 pub fn grid_is_empty(sh: &Sheet) -> bool {
     sh.cells.is_empty()

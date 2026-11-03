@@ -86,6 +86,31 @@ pub(super) fn apply(app: &mut SheetApp, ctx: &egui::Context, f: Format) {
     app.doc_view.focus_editor = true;
 }
 
+/// Puts `text` at the editor's caret, in place of the selection, and gives the editor focus.
+pub(super) fn insert_at_caret(app: &mut SheetApp, ctx: &egui::Context, text: &str) {
+    let Some(dr) = app.doc_view.draft.as_mut() else { return };
+    let id = editor_id();
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    let count = dr.text.chars().count();
+    let (a, b) = state.cursor.char_range().map_or((count, count), |r| {
+        let (x, y): (usize, usize) = (r.secondary.index.into(), r.primary.index.into());
+        (x.min(y).min(count), x.max(y).min(count))
+    });
+    replace_chars(&mut dr.text, a, b, text);
+    dr.changed_at = Some(now_ms());
+    let caret = a + text.chars().count();
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(caret))));
+    state.store(ctx, id);
+    app.doc_view.focus_editor = true;
+}
+
+/// The line of the editor's caret.
+pub(super) fn caret_line(app: &SheetApp, ctx: &egui::Context) -> usize {
+    let Some(dr) = app.doc_view.draft.as_ref() else { return 0 };
+    let caret = egui::TextEdit::load_state(ctx, editor_id()).and_then(|s| s.cursor.char_range()).map_or(0, |r| r.primary.index.into());
+    monun_markdown::line_of(&dr.text, byte_index(&dr.text, caret))
+}
+
 /// The editor, filling `ui`. Returns the first line in view.
 pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Option<usize> {
     let goto = app.doc_view.goto_line.take();

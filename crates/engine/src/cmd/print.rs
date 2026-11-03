@@ -21,6 +21,7 @@ use serde_json::{Value as Json, json};
 
 use super::{CommandSpec, Result, Session, bad, bool_param, cmd, edit, f64_param, has_doc, split_sheet, str_param, target_sheet, u32_param};
 
+mod document;
 mod draw;
 mod header_footer;
 mod layout;
@@ -95,7 +96,10 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
     let mut doc = PdfDoc::new();
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
-    let total: usize = layouts.iter().map(|l| l.pages.len()).sum();
+    // Document tabs print as text pages of their own, laid out first so the page count is known.
+    let documents: Vec<Option<Vec<Vec<document::Op>>>> =
+        layouts.iter().map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay))).collect();
+    let total: usize = layouts.iter().zip(&documents).map(|(l, d)| d.as_ref().map_or(l.pages.len(), Vec::len)).sum();
     let (date, time) = hf_date_time(wb);
     let mut page_no = 0usize;
     let mut pending_links = Vec::new();
@@ -103,8 +107,26 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
     // Decoded pictures are reused across the pages their anchor covers: a floating picture
     // spanning 40 pages was decoded (and pushed into the PDF) 40 times (#2389).
     let mut pics = PicCache::new();
-    for lay in layouts {
+    for (lay, pages) in layouts.iter().zip(documents) {
         let Some(sh) = wb.sheet(lay.sheet) else { continue };
+        if let Some(pages) = pages {
+            for (pi, ops) in pages.iter().enumerate() {
+                page_no += 1;
+                let pg = doc.add_page(lay.page_w, lay.page_h);
+                document::draw(pg, ops);
+                let cx = HfContext {
+                    page: page_no,
+                    pages: total,
+                    sheet: sh.name.clone(),
+                    file: file.to_string(),
+                    path: path.to_string(),
+                    date: date.clone(),
+                    time: time.clone(),
+                };
+                draw_header_footer(pg, lay, lay.settings.hf_page(pi == 0, page_no), &cx);
+            }
+            continue;
+        }
         let mut cf = if sh.cond_formats.is_empty() { None } else { Some(crate::cf::CfCache::new()) };
         let k = lay.k();
         let (aw, ah) = lay.avail();

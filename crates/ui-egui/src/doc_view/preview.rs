@@ -28,6 +28,9 @@ pub struct Look<'a> {
     pub lang: Lang,
     pub fields: &'a super::Fields,
     pub query: &'a str,
+    /// The workbook's uid and the document tab's pictures, which `![…](image:N)` shows.
+    pub doc: u64,
+    pub pictures: &'a [monun_engine::model::Image],
 }
 
 /// Found text's tint.
@@ -87,6 +90,7 @@ fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Out, tight: bool) {
                 ui.add_space(6.0 * cx.z);
             }
         }
+        Block::Paragraph { text, line } if is_pictures(text) => pictures(ui, text, cx, *line, out),
         Block::Paragraph { text, line } => rich(ui, text, cx, FontSpec { size: cx.body(), bold: false }, t.text, *line, out),
         Block::List { start, items, .. } => {
             for (i, item) in items.iter().enumerate() {
@@ -117,6 +121,45 @@ fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Out, tight: bool) {
         }
     }
     ui.add_space(if tight { 3.0 * cx.z } else { cx.gap() });
+}
+
+/// Whether a paragraph holds nothing but pictures (and the breaks between them).
+fn is_pictures(spans: &[Span]) -> bool {
+    spans.iter().any(|s| s.style.image) && spans.iter().all(|s| s.style.image || s.text.trim().is_empty())
+}
+
+/// The picture `image:N` names in the document tab's pictures.
+fn picture<'a>(cx: &'a Look, link: Option<&str>) -> Option<&'a monun_engine::model::Image> {
+    let id: u32 = link?.strip_prefix("image:")?.trim().parse().ok()?;
+    cx.pictures.iter().find(|p| p.id == id)
+}
+
+/// A paragraph of pictures, each on its own line at its size (narrowed to fit), or its
+/// description when the picture isn't there.
+fn pictures(ui: &mut Ui, spans: &[Span], cx: &Look, line: usize, out: &mut Out) {
+    for s in spans.iter().filter(|s| s.style.image) {
+        let Some(image) = picture(cx, s.link.as_deref()) else {
+            ui.label(egui::RichText::new(format!("[{}]", s.text)).font(theme::ui_font(cx.body())).color(cx.t.text_dim));
+            continue;
+        };
+        let size = vec2(image.anchor.width.max(1.0), image.anchor.height.max(1.0)) * cx.z;
+        let size = size * (ui.available_width() / size.x).min(1.0);
+        let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+        match crate::floating_pictures::texture(ui.ctx(), cx.doc, image, rect) {
+            Some(texture) => {
+                ui.painter().image(texture.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            }
+            None => {
+                ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, cx.t.separator), egui::StrokeKind::Inside);
+            }
+        }
+        let alt = if s.text.is_empty() { image.alt.clone() } else { s.text.clone() };
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &alt));
+        if resp.double_clicked() {
+            out.action = Some(Action::Goto(line));
+        }
+        ui.add_space(4.0 * cx.z);
+    }
 }
 
 fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut Out) {

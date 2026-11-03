@@ -8,6 +8,10 @@ description = "Monun engine: sessions, commands, history, clipboard, fill, sort,
 [lints]
 workspace = true
 
+[features]
+# Mermaid diagrams of document tabs drawn in printouts and PDFs (native builds).
+diagrams = ["monun-markdown/diagrams"]
+
 [dependencies]
 monun-core = { workspace = true }
 monun-numfmt = { workspace = true }
@@ -23,6 +27,7 @@ log = { workspace = true }
 monun-xlsx = { workspace = true }
 monun-chart = { workspace = true }
 monun-pdf = { workspace = true }
+monun-markdown = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]

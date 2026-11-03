@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 # Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
-diagrams = ["monun-markdown/diagrams"]
+diagrams = ["monun-markdown/diagrams", "monun-engine/diagrams"]
 
 [dependencies]
 # The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every

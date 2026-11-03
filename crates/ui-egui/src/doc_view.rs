@@ -168,33 +168,10 @@ fn field_values(app: &mut SheetApp, blocks: &Arc<Vec<Block>>) -> Arc<Fields> {
     {
         return values.clone();
     }
-    let values: Arc<Fields> = Arc::new(monun_markdown::fields(blocks).into_iter().map(|e| (e.clone(), field_value(&d.wb, &e))).collect());
+    let values: Arc<Fields> =
+        Arc::new(monun_markdown::fields(blocks).into_iter().map(|e| (e.clone(), monun_engine::docs::field_value(&d.wb, &e))).collect());
     app.doc_view.fields = Some((key, values.clone()));
     values
-}
-
-/// What a field shows: a cell reference (`구매목록!D1`) as the cell displays it, in its number
-/// format; anything else (`=SUM(구매목록!B:B)`) worked out as a formula, in General format.
-pub fn field_value(wb: &monun_engine::model::Workbook, expr: &str) -> Result<String, String> {
-    use monun_engine::core::{CellRef, Value};
-    let e = expr.trim();
-    let body = e.strip_prefix('=').unwrap_or(e);
-    if !e.starts_with('=') {
-        let (sheet, a1) = monun_engine::core::split_sheet(body);
-        let index = match &sheet {
-            Some(name) => wb.sheet_index(name),
-            None => Some(wb.active_sheet()),
-        };
-        if let Some(sh) = index.and_then(|i| wb.sheet(i))
-            && let Some(c) = CellRef::parse(&a1.replace('$', ""))
-        {
-            return Ok(monun_engine::display::cell_text(wb, sh, c));
-        }
-    }
-    match monun_engine::calc::recalc::evaluate(wb, wb.active_sheet(), CellRef::default(), body) {
-        Value::Error(e) => Err(e.to_string()),
-        v => Ok(monun_engine::display::format(&v, "General", wb).text),
-    }
 }
 
 /// The document editor's widget id.
@@ -272,6 +249,24 @@ impl SheetApp {
             None => json!({"path": path}),
         };
         self.run_or_alert("doc.import", params);
+    }
+
+    /// Asks for a picture, puts it on the document tab beside the caret's line (where Excel shows
+    /// it, right of the text in column A) and writes `![name](image:N)` at the caret.
+    pub fn insert_document_picture(&mut self, ctx: &egui::Context) {
+        let Some(pick) = &self.services.pick_picture else { return };
+        let Some(path) = pick() else { return };
+        let line = editor::caret_line(self, ctx);
+        match self.session.run("insert.picture", json!({"path": path, "at": format!("C{}", line + 1)})) {
+            Ok(r) => {
+                self.after_engine();
+                let id = r.get("image").and_then(serde_json::Value::as_u64).unwrap_or_default();
+                let stem = std::path::Path::new(&path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("picture");
+                let name: String = stem.chars().filter(|c| !matches!(c, '[' | ']')).collect();
+                editor::insert_at_caret(self, ctx, &format!("![{name}](image:{id})"));
+            }
+            Err(e) => self.alert(e),
+        }
     }
 
     /// Asks where to save document tab `sheet` as Markdown, and writes it there.
@@ -686,6 +681,16 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
                 }
             }
         });
+        if app.services.pick_picture.is_some() {
+            let picture = ui.add(
+                egui::Button::new(egui::RichText::new(lang.tr("Picture")).font(theme::ui_font(13.0)))
+                    .frame_when_inactive(false)
+                    .min_size(vec2(28.0, 26.0)),
+            );
+            if picture.on_hover_text(lang.tr("Insert a picture into the document")).clicked() {
+                app.insert_document_picture(&ui.ctx().clone());
+            }
+        }
     }
     mode
 }
@@ -697,7 +702,10 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let lang = app.ui.language;
     let fields = field_values(app, &blocks);
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query };
+    let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
+    let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
+    let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures };
     let lead = 24.0 * z;
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]);
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
@@ -756,7 +764,10 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let lang = app.ui.language;
     let fields = field_values(app, &blocks);
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query };
+    let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
+    let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
+    let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures };
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);

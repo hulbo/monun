@@ -161,3 +161,32 @@ fn the_contents_panel_goes_to_a_heading() {
     h.run_steps(3);
     assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, "# First\n\ntext\n\nZ## Second\n\nmore\n", "the caret went to the heading's line");
 }
+
+#[test]
+fn pictures_go_into_the_document_and_show_in_it() {
+    // A 40 × 20 PNG to pick.
+    let dir = std::env::temp_dir().join(format!("monun-doc-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("chart.png");
+    image::RgbaImage::from_pixel(40, 20, image::Rgba([30, 120, 200, 255])).save(&path).unwrap();
+    let picked = path.to_str().unwrap().to_owned();
+    let services = monun_ui_egui::Services { pick_picture: Some(Box::new(move || Some(picked.clone()))), ..Default::default() };
+    let mut s = blank_session();
+    s.run("doc.insert", json!({"name": "Notes", "text": "# Plan\n"})).unwrap();
+    let mut app = monun_ui_egui::SheetApp::new(s, services);
+    app = crate::common::prepare(app);
+    let mut h = crate::support::app_harness(app, 4);
+    h.get_by_label("Edit").click();
+    h.run_steps(3);
+    press(&mut h, Key::End, Modifiers::COMMAND);
+    h.get_by_label("Picture").click();
+    h.run_steps(4);
+    let text = h.state().doc_view.draft.as_ref().unwrap().text.clone();
+    let d = h.state().session.active().unwrap();
+    let image = d.wb.sheet(1).unwrap().images.first().expect("the picture is on the document tab").clone();
+    assert_eq!(text, format!("# Plan\n![chart](image:{})", image.id));
+    assert_eq!(image.anchor.cell.a1(), "C2", "beside the caret's line, right of the text");
+    // The rendered document shows the picture.
+    assert!(h.query_by_label("chart").is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}

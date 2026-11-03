@@ -182,3 +182,52 @@ fn documents_import_and_export_markdown_files() {
     assert!(s.execute("doc.export", json!({"sheet": "Sheet1", "path": out.to_str().unwrap()})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_documents_pictures_survive_xlsx() {
+    // The smallest PNG: one transparent pixel.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let mut s = session();
+    s.execute("doc.insert", json!({"name": "메모", "text": "![점](image:1)"})).unwrap();
+    let r = s.execute("insert.picture", json!({"base64": PNG, "at": "C1", "alt": "점"})).unwrap();
+    let id = r["image"].as_u64().unwrap();
+    let wb = s.active().unwrap().wb.clone();
+    let back = reopen(&wb);
+    let doc = back.sheet(1).unwrap();
+    assert!(doc.is_document());
+    assert_eq!(doc.images.len(), 1, "the picture stays on the document tab");
+    assert_eq!(doc.images[0].anchor.cell.a1(), "C1");
+    assert!(id > 0);
+}
+
+fn pdf_of(s: &mut Session, params: Value) -> (Vec<u8>, u64) {
+    let r = s.execute("file.exportPdf", params).unwrap();
+    let bytes = io::base64_decode(r["base64"].as_str().unwrap()).unwrap();
+    (bytes, r["pages"].as_u64().unwrap())
+}
+
+fn contains(haystack: &[u8], needle: &str) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle.as_bytes())
+}
+
+#[test]
+fn a_document_prints_as_text_pages() {
+    let mut s = session();
+    s.execute("cell.set", json!({"cell": "A1", "input": "30000"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A1", "code": "#,##0"})).unwrap();
+    let mut text = String::from(
+        "# Plan\n\nTotal {{Sheet1!A1}} won.\n\n- [x] done\n- open\n\n| Item | Amount |\n|---|--:|\n| AAA | 10,000 |\n\n```\ncode line\n```\n\n",
+    );
+    for i in 0..120 {
+        text.push_str(&format!("Paragraph number {i} with enough words to fill a line or two on the page.\n\n"));
+    }
+    s.execute("doc.insert", json!({"name": "Notes", "text": text})).unwrap();
+    let (pdf, pages) = pdf_of(&mut s, json!({}));
+    assert!(pages >= 3, "a long document runs over pages: {pages}");
+    for needle in ["(Plan)", "(30,000)", "(Item)", "(10,000)", "(code line)", "(Paragraph number 119 "] {
+        assert!(contains(&pdf, needle), "{needle} is printed");
+    }
+    // Printing every sheet takes the document's pages too.
+    let (_, all) = pdf_of(&mut s, json!({"sheets": "all"}));
+    assert!(all >= pages, "{all} pages for all sheets, {pages} for the document");
+}

@@ -338,7 +338,7 @@ pub fn layouts(wb: &Workbook, opts: &PrintOptions) -> Vec<SheetLayout> {
             break;
         }
         let ovr = if si == wb.active_sheet() { opts.range } else { None };
-        if opts.all_sheets && ovr.is_none() && wb.sheet(si).is_some_and(|s| print_range(s).is_none()) {
+        if opts.all_sheets && ovr.is_none() && wb.sheet(si).is_some_and(|s| print_range(s).is_none() && !s.is_document()) {
             continue;
         }
         if let Some(mut l) = layout_sheet(wb, si, opts, ovr) {

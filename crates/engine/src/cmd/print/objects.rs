@@ -34,7 +34,7 @@ fn anchor_rect(sh: &Sheet, a: &Anchor) -> (f64, f64, f64, f64) {
 }
 
 /// Decodes an embedded picture to RGBA, downscaled to at most `max_w`×`max_h` pixels.
-fn decode_image(data: &[u8], max_w: u32, max_h: u32) -> Option<(Vec<u8>, u32, u32)> {
+pub(super) fn decode_image(data: &[u8], max_w: u32, max_h: u32) -> Option<(Vec<u8>, u32, u32)> {
     let (w, h) = crate::io::image_size(data)?;
     if w == 0 || h == 0 || w as u64 * h as u64 > 60_000_000 {
         return None;
