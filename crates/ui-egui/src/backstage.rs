@@ -221,6 +221,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.ribbon)).show(ui, |ui| {
+        // Home and New are mostly blank: a click there returns to the sheet, as Esc does. It is
+        // laid under the page, so the tiles and recent files drawn on it take their own clicks.
+        let blank =
+            matches!(bs.page, Page::Home | Page::New).then(|| ui.interact(ui.max_rect(), ui.scope_id().with("backstage_blank"), Sense::click()));
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 32, top: 26, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(CONTENT_W);
@@ -239,6 +243,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 }
             });
         });
+        if blank.is_some_and(|b| b.clicked()) && out.page.is_none() {
+            out.close = true;
+        }
     });
     if !typing
         && app.dialog.is_none()
@@ -349,7 +356,7 @@ fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
     resp
 }
 
-/// Blank workbook and the built-in samples.
+/// Blank workbook and the templates (`sample::TEMPLATES`).
 fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     let lang = app.ui.language;
     ui.horizontal_wrapped(|ui| {
@@ -358,7 +365,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
             app.run_or_alert("file.new", json!({}));
             out.close = true;
         }
-        for (i, (name, title)) in monun_engine::sample::SAMPLES.iter().enumerate() {
+        for (i, (name, title)) in monun_engine::sample::TEMPLATES.iter().enumerate() {
             if tile(ui, lang.tr(title), Some(i)).clicked() {
                 app.run_or_alert("file.new", json!({"sample": name}));
                 out.close = true;

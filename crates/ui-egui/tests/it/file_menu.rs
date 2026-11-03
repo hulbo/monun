@@ -29,6 +29,44 @@ fn page(h: &egui_kittest::Harness<'static, SheetApp>) -> Option<&'static str> {
     h.state().backstage.as_ref().map(|b| b.page.id())
 }
 
+/// A click at `pos` (window coordinates).
+fn click_at(h: &mut egui_kittest::Harness<'static, SheetApp>, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+        ]);
+        h.step();
+    }
+    h.run_steps(3);
+}
+
+/// Home and New are mostly blank: a click there returns to the sheet, as Esc does. File › New
+/// offers a blank workbook and the purchase list, and its tiles still take their clicks.
+#[test]
+fn a_click_on_the_blank_of_home_or_new_returns_to_the_sheet() {
+    let mut h = harness(Services::default());
+    for page in ["Home", "New"] {
+        h.get_by_label("File").click();
+        h.run_steps(3);
+        if page == "New" {
+            click(&mut h, "New");
+        }
+        assert!(h.state().backstage.is_some(), "{page}");
+        click_at(&mut h, egui::pos2(1100.0, 720.0));
+        assert!(h.state().backstage.is_none(), "a blank click on {page} closes the File view");
+    }
+    choose(&mut h, "New");
+    assert!(h.query_by_label("Purchase List").is_some());
+    assert!(h.query_by_label("Household Budget").is_none(), "the demo samples are not offered");
+    click(&mut h, "Blank workbook");
+    assert_eq!(h.state().session.documents().len(), 2, "a tile still opens its workbook");
+    // Other pages keep their blank space: Info is a form, not a gallery.
+    choose(&mut h, "Info");
+    click_at(&mut h, egui::pos2(1100.0, 720.0));
+    assert!(h.state().backstage.is_some());
+}
+
 #[test]
 fn new_and_open_from_the_file_tab_keep_the_ribbon_as_it_was() {
     let opened = Arc::new(Mutex::new(0));

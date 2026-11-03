@@ -329,7 +329,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                             app.run_or_alert("file.new", json!({}));
                             open = false;
                         }
-                        for (n, t) in monun_engine::sample::SAMPLES {
+                        for (n, t) in monun_engine::sample::TEMPLATES {
                             if ui.button(lang.tr(t)).clicked() {
                                 app.run_or_alert("file.new", json!({"sample": n}));
                                 open = false;

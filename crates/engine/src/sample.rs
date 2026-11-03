@@ -1,71 +1,62 @@
-//! Sample workbooks built in code (original content), for the start screen, demos, README
-//! screenshots and tests.
+//! Workbooks built in code (original content): the template File › New offers, and samples for
+//! demos, README screenshots and tests.
 
 use std::sync::Arc;
 
 use monun_model::{Sheet, Workbook};
 use serde_json::json;
 
-use crate::{DocState, Session};
+use crate::{DocState, Prefs, Session};
 
-mod forms;
+/// What File › New offers besides a blank workbook: (name, label). Labels are the interface's
+/// English keys.
+pub const TEMPLATES: &[(&str, &str)] = &[("purchases", "Purchase List")];
 
-/// The samples and Korean business forms: (name, label). Labels are the interface's English keys;
-/// a form's workbook takes its Korean name ([`title`]).
-pub const SAMPLES: &[(&str, &str)] = &[
-    ("quote", "Quote"),
-    ("statement", "Transaction Statement"),
-    ("invoice", "Invoice"),
-    ("budget", "Household Budget"),
-    ("sales", "Quarterly Sales Dashboard"),
-    ("grades", "Gradebook"),
-];
+/// Everything `file.new {sample}` builds: the template and the demo samples.
+pub const SAMPLES: &[(&str, &str)] =
+    &[("purchases", "Purchase List"), ("budget", "Household Budget"), ("sales", "Quarterly Sales Dashboard"), ("grades", "Gradebook")];
 
-/// The Korean name of a business form, which its workbook and sheet take.
-fn korean_name(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "quote" => "견적서",
-        "statement" => "거래명세서",
-        "invoice" => "청구서",
-        _ => return None,
-    })
-}
+/// The purchase list's Korean name, which its workbook and sheet take.
+const PURCHASES: &str = "구매목록";
 
 pub fn title(name: &str) -> String {
-    if let Some(k) = korean_name(name) {
-        return k.into();
+    if name == "purchases" {
+        return PURCHASES.into();
     }
     SAMPLES.iter().find(|(n, _)| *n == name).map(|(_, t)| t.to_string()).unwrap_or_else(|| "Sample".into())
 }
 
-/// The typeface of the business forms (Korean Windows' interface font).
-const FORM_FONT: &str = "맑은 고딕";
-
-/// Builds a sample by replaying commands (so samples also exercise the command layer).
+/// [`build_with`] the default preferences.
 pub fn build(name: &str) -> Option<Workbook> {
+    build_with(name, &Prefs::default())
+}
+
+/// Builds a sample by replaying commands (so samples also exercise the command layer). The
+/// template starts from a new workbook as `prefs` make one (font, column width, paper), as a
+/// blank workbook does.
+pub fn build_with(name: &str, prefs: &Prefs) -> Option<Workbook> {
     let mut s = Session::new();
-    let mut wb = Workbook::new();
-    if let Some(sh) = wb.sheet_mut(0) {
-        sh.name = match name {
-            "budget" => "Budget".into(),
-            "sales" => "Sales".into(),
-            "grades" => "Grades".into(),
-            _ => korean_name(name)?.into(),
-        };
+    s.prefs = prefs.clone();
+    if name == "purchases" {
+        s.new_workbook();
+    } else {
+        let mut wb = Workbook::new();
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.name = match name {
+                "budget" => "Budget".into(),
+                "sales" => "Sales".into(),
+                "grades" => "Grades".into(),
+                _ => return None,
+            };
+        }
+        s.add_document(DocState::new(wb, None, title(name), crate::Trust::Local));
     }
-    if korean_name(name).is_some() {
-        let mut normal = wb.styles.get(monun_model::StyleId::DEFAULT).clone();
-        normal.font.name = FORM_FONT.into();
-        normal.font.size = 10.0;
-        wb.styles = monun_model::StyleTable::with_default(normal);
-        wb.theme.minor_font = FORM_FONT.into();
-    }
-    s.add_document(DocState::new(wb, None, title(name), crate::Trust::Local));
     let ok = match name {
+        "purchases" => purchases(&mut s),
         "budget" => budget(&mut s),
         "sales" => sales(&mut s),
         "grades" => grades(&mut s),
-        _ => forms::build(&mut s, name),
+        _ => false,
     };
     if !ok {
         return None;
@@ -86,6 +77,24 @@ fn run(s: &mut Session, id: &str, p: serde_json::Value) -> bool {
             false
         }
     }
+}
+
+/// 구매목록: what was bought (대상) and for how much (금액), one line each, with the total on the
+/// header row (총합계), to copy into a household budget, such as each stock bought.
+fn purchases(s: &mut Session) -> bool {
+    let mut ok = run(s, "sheet.rename", json!({"name": PURCHASES}));
+    ok &= run(s, "range.setValues", json!({"range": "A1", "values": [["대상", "금액", "총합계:"]]}));
+    ok &= run(s, "cell.set", json!({"cell": "D1", "input": "=SUM(B:B)"}));
+    ok &= run(s, "home.bold", json!({"range": "A1:D1", "on": true}));
+    ok &= run(s, "home.fillColor", json!({"range": "A1:B1", "color": "#E2EFDA"}));
+    ok &= run(s, "home.borders", json!({"range": "A1:B1", "preset": "bottom"}));
+    ok &= run(s, "home.alignCenter", json!({"range": "A1:B1"}));
+    ok &= run(s, "home.alignRight", json!({"range": "C1"}));
+    ok &= run(s, "home.numberFormat", json!({"range": "B:B", "code": "#,##0"}));
+    ok &= run(s, "home.numberFormat", json!({"range": "D1", "code": "#,##0"}));
+    // The header and the total stay in view however long the list grows.
+    ok &= run(s, "view.freezeTopRow", json!({}));
+    ok
 }
 
 fn sales(s: &mut Session) -> bool {
