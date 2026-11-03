@@ -8,6 +8,10 @@ description = "Monun egui frontend (Excel-style UI); swappable — nothing below
 [lints]
 workspace = true
 
+[features]
+# Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
+diagrams = ["monun-markdown/diagrams"]
+
 [dependencies]
 # The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every
 # craft-libs dependency uses (see the root Cargo.toml).

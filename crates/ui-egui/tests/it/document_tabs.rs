@@ -84,3 +84,30 @@ fn edit_mode_shows_the_text_beside_the_document() {
     h.run_steps(3);
     assert_eq!(doc_text(&h, 1), "# Plan\n\n- one\n- ");
 }
+
+/// Steps the app until `label` shows, giving the worker thread that draws diagrams time.
+#[cfg(feature = "diagrams")]
+fn wait_for(h: &mut Harness, label: &str) -> bool {
+    for _ in 0..100 {
+        h.run_steps(1);
+        if h.query_by_label(label).is_some() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    false
+}
+
+#[cfg(feature = "diagrams")]
+#[test]
+fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
+    let mut h = with_document("```mermaid\nflowchart TD\n  A[start] --> B[end]\n```\n");
+    assert!(wait_for(&mut h, "Diagram"), "the flowchart is drawn");
+    // A click shows it enlarged.
+    h.get_by_label("Diagram").click();
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Diagram").count() >= 2, "the enlarged diagram's window opened");
+
+    let mut h = with_document("```mermaid\nnot a diagram\n```\n");
+    assert!(wait_for(&mut h, "This diagram has an error:"));
+}

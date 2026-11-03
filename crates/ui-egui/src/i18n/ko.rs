@@ -1839,4 +1839,8 @@ const MORE: &[(&str, &str)] = &[
     ("Mind map", "마인드맵"),
     ("Pie chart", "원형 차트"),
     ("Timeline", "타임라인"),
+    ("Diagram", "흐름도"),
+    ("Click to enlarge", "눌러서 크게 보기"),
+    ("Drawing the diagram…", "흐름도를 그리는 중…"),
+    ("This diagram has an error:", "흐름도에 오류가 있습니다:"),
 ];

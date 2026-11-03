@@ -8,5 +8,11 @@ description = "Monun document tabs: Markdown parsed into blocks for the preview,
 [lints]
 workspace = true
 
+[features]
+# Mermaid diagrams drawn to pixels (`diagram`); native builds only.
+diagrams = ["dep:mermaid-rs-renderer", "dep:resvg"]
+
 [dependencies]
 pulldown-cmark = { workspace = true }
+mermaid-rs-renderer = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }

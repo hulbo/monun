@@ -5,6 +5,7 @@
 //! workbook (`doc.setText`) when typing pauses, when the editor loses focus, and before anything
 //! else reads the workbook (undo, a sheet switch, a save), so a burst of typing is one undo step.
 
+mod diagram;
 mod editor;
 mod preview;
 
@@ -52,6 +53,8 @@ pub struct State {
     focus_editor: bool,
     /// The last text parsed and its blocks.
     parsed: Option<(String, Arc<Vec<Block>>)>,
+    /// Mermaid blocks drawn so far.
+    diagrams: diagram::Cache,
 }
 
 /// Text typed into a document tab.
@@ -207,6 +210,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         Mode::View => view(app, ui, z, &t),
         Mode::Edit => edit(app, ui, z, &t),
     }
+    diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
     idle_commit(app, ui.ctx());
 }
 
@@ -360,6 +364,7 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
 fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let Some(text) = app.doc_view.draft.as_ref().map(|d| d.text.clone()) else { return };
     let blocks = app.doc_view.blocks(&text);
+    let lang = app.ui.language;
     let mut action = None;
     egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]).show(ui, |ui| {
         let width = (PAGE_WIDTH * z).min(ui.available_width() - 48.0).max(120.0);
@@ -369,7 +374,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
             ui.vertical(|ui| {
                 ui.set_width(width);
                 ui.add_space(24.0 * z);
-                action = preview::show(ui, &blocks, z, t, app.ui.language);
+                action = preview::show(ui, &blocks, z, t, lang, &mut app.doc_view.diagrams);
                 ui.add_space(48.0 * z);
             });
         });
@@ -404,11 +409,12 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
 
     let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
     let blocks = app.doc_view.blocks(&text);
+    let lang = app.ui.language;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut action = None;
     egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]).show(&mut right_ui, |ui| {
         ui.add_space(16.0 * z);
-        action = preview::show(ui, &blocks, z, t, app.ui.language);
+        action = preview::show(ui, &blocks, z, t, lang, &mut app.doc_view.diagrams);
         ui.add_space(48.0 * z);
     });
     ui.allocate_rect(area, Sense::hover());

@@ -5,6 +5,7 @@ use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, Color32, FontFamily, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
 use monun_markdown::{Align, Block, Item, Span};
 
+use super::diagram;
 use crate::i18n::Language as Lang;
 use crate::theme::{self, Tokens};
 
@@ -34,20 +35,26 @@ impl Cx<'_> {
     }
 }
 
+/// What drawing the blocks produced: a click's action, and the diagram drawings to use.
+struct Out<'a> {
+    action: Option<Action>,
+    diagrams: &'a mut diagram::Cache,
+}
+
 /// Draws `blocks` into `ui`'s width.
-pub fn show(ui: &mut Ui, blocks: &[Block], z: f32, t: &Tokens, lang: Lang) -> Option<Action> {
+pub fn show(ui: &mut Ui, blocks: &[Block], z: f32, t: &Tokens, lang: Lang, diagrams: &mut diagram::Cache) -> Option<Action> {
     let cx = Cx { z, t, lang };
-    let mut out = None;
+    let mut out = Out { action: None, diagrams };
     if blocks.is_empty() {
         ui.label(egui::RichText::new(lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(t.text_dim));
     }
     for b in blocks {
         block(ui, b, &cx, &mut out, false);
     }
-    out
+    out.action
 }
 
-fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Option<Action>, tight: bool) {
+fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Out, tight: bool) {
     let t = cx.t;
     match b {
         Block::Heading { level, text, line } => {
@@ -98,7 +105,7 @@ fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Option<Action>, tight: bool)
     ui.add_space(if tight { 3.0 * cx.z } else { cx.gap() });
 }
 
-fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut Option<Action>) {
+fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut Out) {
     let t = cx.t;
     let gutter = 26.0 * cx.z;
     ui.horizontal_top(|ui| {
@@ -126,7 +133,7 @@ fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut O
                 let resp = resp.on_hover_text(cx.lang.tr(if task.done { "Mark as not done" } else { "Mark as done" }));
                 resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, task.done, "task"));
                 if resp.clicked() {
-                    *out = Some(Action::ToggleTask(task.at));
+                    out.action = Some(Action::ToggleTask(task.at));
                 }
             }
             (None, Some(n)) => {
@@ -151,7 +158,15 @@ fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut O
     });
 }
 
-fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Option<Action>) {
+fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out) {
+    if lang == "mermaid"
+        && let Some(resp) = diagram::show(ui, out.diagrams, text, cx.z, cx.t, cx.lang)
+    {
+        if resp.double_clicked() {
+            out.action = Some(Action::Goto(line));
+        }
+        return;
+    }
     let t = cx.t;
     let font = FontId::new(13.5 * cx.z, FontFamily::Name(theme::MONO.into()));
     let fill = if t.dark { Color32::from_white_alpha(14) } else { Color32::from_black_alpha(10) };
@@ -171,11 +186,11 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Opt
         .response
         .interact(Sense::click());
     if resp.double_clicked() {
-        *out = Some(Action::Goto(line));
+        out.action = Some(Action::Goto(line));
     }
 }
 
-fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], line: usize, cx: &Cx, out: &mut Option<Action>) {
+fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], line: usize, cx: &Cx, out: &mut Out) {
     let t = cx.t;
     egui::ScrollArea::horizontal().id_salt(("monun.doc_table", line)).auto_shrink([false, true]).show(ui, |ui| {
         let resp = egui::Grid::new(("monun.doc_table_grid", line))
@@ -200,7 +215,7 @@ fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>
     });
 }
 
-fn cell_ui(ui: &mut Ui, spans: &[Span], align: Align, cx: &Cx, head: bool, line: usize, out: &mut Option<Action>) {
+fn cell_ui(ui: &mut Ui, spans: &[Span], align: Align, cx: &Cx, head: bool, line: usize, out: &mut Out) {
     let layout = match align {
         Align::Right => egui::Layout::right_to_left(egui::Align::Center),
         Align::Center => egui::Layout::top_down(egui::Align::Center),
@@ -218,14 +233,14 @@ struct FontSpec {
 }
 
 /// A paragraph or heading, wrapped to the width.
-fn rich(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Option<Action>) {
+fn rich(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Out) {
     let width = ui.available_width();
     rich_line(ui, spans, cx, font, color, line, out, width);
 }
 
 /// Lays out styled spans, draws them, and reports a click on a link (or a double-click).
 #[allow(clippy::too_many_arguments)]
-fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Option<Action>, width: f32) {
+fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Out, width: f32) {
     let t = cx.t;
     let mut job = LayoutJob::default();
     let mut links: Vec<(usize, usize, &str)> = Vec::new();
@@ -268,11 +283,11 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
     if let Some(l) = link {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         if resp.clicked() {
-            *out = Some(Action::Link(l.to_owned()));
+            out.action = Some(Action::Link(l.to_owned()));
         }
         resp.clone().on_hover_text(l);
     }
     if resp.double_clicked() {
-        *out = Some(Action::Goto(line));
+        out.action = Some(Action::Goto(line));
     }
 }

@@ -38,6 +38,10 @@ regex = { version = "1", default-features = false, features = ["std", "unicode",
 quick-xml = "0.41"
 # Markdown of document tabs: the parser only, no HTML output.
 pulldown-cmark = { version = "0.13", default-features = false }
+# Mermaid diagrams of document tabs (desktop only): layout into SVG, then pixels with the system
+# fonts. The renderer is young, so it is pinned exactly: review its diff before bumping.
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
+resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 zip = { version = "3", default-features = false, features = ["deflate"] }
 sha2 = { version = "0.11", default-features = false }
 # Decrypting password-protected workbooks ([MS-OFFCRYPTO]): AES and SHA-1, pure Rust (wasm-safe).

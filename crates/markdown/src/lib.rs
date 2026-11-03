@@ -12,6 +12,9 @@
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+#[cfg(feature = "diagrams")]
+pub mod diagram;
+
 /// A block of a document, with the zero-based source line it starts on.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
