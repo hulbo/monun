@@ -258,3 +258,18 @@ fn a_picture_pasted_in_view_mode_goes_at_the_end() {
     let id = d.wb.sheet(1).unwrap().images.first().expect("the picture is on the document tab").id;
     assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, format!("# Plan\n\ntext\n\n![Picture {id}](image:{id})"));
 }
+
+#[test]
+fn a_new_document_stays_in_edit_mode_once_its_text_is_in() {
+    let mut h = blank_harness(4);
+    h.get_by_label("New document (Markdown)").click();
+    h.run_steps(4);
+    h.input_mut().events.push(Event::Paste("# Notes\n\n- one".into()));
+    h.run_steps(3);
+    // The draft reaches the workbook after a pause in typing; the document then has text, and
+    // still shows the editor it was opened with.
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    h.run_steps(3);
+    assert_eq!(doc_text(&h, 1), "# Notes\n\n- one");
+    assert!(h.query_by_label("Document text").is_some(), "still in Edit mode");
+}

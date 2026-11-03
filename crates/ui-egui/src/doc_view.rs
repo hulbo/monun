@@ -135,10 +135,11 @@ impl Draft {
 }
 
 impl State {
-    /// The mode `(uid, sheet)` shows in: as last chosen, else Edit for an empty document and View
-    /// for one with text.
-    pub fn mode(&self, uid: u64, sheet: usize, text: &str) -> Mode {
-        self.modes.get(&(uid, sheet)).copied().unwrap_or(if text.trim().is_empty() { Mode::Edit } else { Mode::View })
+    /// The mode `(uid, sheet)` shows in: as last chosen, else the one it first showed in, Edit for
+    /// an empty document and View for one with text. It is kept, so a new document being typed or
+    /// pasted into stays in Edit once its text reaches the workbook.
+    pub fn mode(&mut self, uid: u64, sheet: usize, text: &str) -> Mode {
+        *self.modes.entry((uid, sheet)).or_insert(if text.trim().is_empty() { Mode::Edit } else { Mode::View })
     }
     pub fn set_mode(&mut self, uid: u64, sheet: usize, mode: Mode) {
         self.modes.insert((uid, sheet), mode);
