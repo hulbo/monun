@@ -86,49 +86,53 @@ pub(super) fn apply(app: &mut SheetApp, ctx: &egui::Context, f: Format) {
     app.doc_view.focus_editor = true;
 }
 
-/// The editor, filling `ui`.
-pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
+/// The editor, filling `ui`. Returns the first line in view.
+pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Option<usize> {
     let goto = app.doc_view.goto_line.take();
+    let select = app.doc_view.select.take();
+    let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let ctx = ui.ctx().clone();
     if app.doc_view.focus_editor && !ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) {
         app.doc_view.focus_editor = false;
         ctx.memory_mut(|m| m.request_focus(editor_id()));
     }
-    let Some(dr) = app.doc_view.draft.as_mut() else { return };
+    let dr = app.doc_view.draft.as_mut()?;
     let font = FontId::new(14.0 * z, FontFamily::Name(theme::MONO.into()));
-    let goto = goto.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line)));
-    if let Some(at) = goto {
+    // A line to go to (the outline, a double-click) or a found match to select.
+    let goto = goto.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line))).map(|at| (at, at)).or(select);
+    if let Some((a, b)) = goto {
         let mut state = egui::TextEdit::load_state(&ctx, editor_id()).unwrap_or_default();
-        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+        state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(a), CCursor::new(b))));
         state.store(&ctx, editor_id());
     }
     let colors = Colors::of(t);
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-        let job = markdown_job(buf.as_str(), &font, &colors, wrap);
+        let mut job = markdown_job(buf.as_str(), &font, &colors, wrap);
+        tint(&mut job, &super::find_all(buf.as_str(), &query), super::preview::FOUND);
         ui.fonts_mut(|f| f.layout_job(job))
     };
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
-    let out = egui::ScrollArea::vertical()
-        .id_salt("monun.doc_editor_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            let out = egui::TextEdit::multiline(&mut dr.text)
-                .id(editor_id())
-                .font(font.clone())
-                .frame(egui::Frame::NONE.inner_margin(14))
-                .margin(egui::Margin::same(14))
-                .desired_width(f32::INFINITY)
-                .desired_rows(rows)
-                .lock_focus(true)
-                .layouter(&mut layouter)
-                .show(ui);
-            if let Some(at) = goto {
-                let r = out.galley.pos_from_cursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
-                ui.scroll_to_rect(r.expand(40.0), Some(egui::Align::Center));
-            }
-            out
-        })
-        .inner;
+    let scroll = egui::ScrollArea::vertical().id_salt("monun.doc_editor_scroll").auto_shrink([false, false]).show(ui, |ui| {
+        let out = egui::TextEdit::multiline(&mut dr.text)
+            .id(editor_id())
+            .font(font.clone())
+            .frame(egui::Frame::NONE.inner_margin(14))
+            .margin(egui::Margin::same(14))
+            .desired_width(f32::INFINITY)
+            .desired_rows(rows)
+            .lock_focus(true)
+            .layouter(&mut layouter)
+            .show(ui);
+        if let Some((at, _)) = goto {
+            let r = out.galley.pos_from_cursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
+            ui.scroll_to_rect(r.expand(40.0), Some(egui::Align::Center));
+        }
+        out
+    });
+    let viewport_top = scroll.inner_rect.top();
+    let out = scroll.inner;
+    let top_char: usize = out.galley.cursor_from_pos(egui::vec2(0.0, (viewport_top - out.galley_pos.y).max(0.0))).index.into();
+    let top = monun_markdown::line_of(&dr.text, byte_index(&dr.text, top_char));
     out.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Document text"));
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none());
     if out.response.changed() {
@@ -147,6 +151,35 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     {
         app.alert(e);
     }
+    Some(top)
+}
+
+/// Gives the byte ranges `ranges` of a laid-out text the background `color`, splitting sections
+/// where they start and end.
+pub fn tint(job: &mut LayoutJob, ranges: &[std::ops::Range<usize>], color: Color32) {
+    if ranges.is_empty() {
+        return;
+    }
+    use egui::text::{ByteIndex, LayoutSection};
+    let mut out = Vec::with_capacity(job.sections.len() + ranges.len() * 2);
+    for s in job.sections.drain(..) {
+        let (start, end) = (s.byte_range.start.0, s.byte_range.end.0);
+        let lead = |at: usize| if at == start { s.leading_space } else { 0.0 };
+        let mut at = start;
+        for r in ranges.iter().filter(|r| r.start < end && r.end > start) {
+            let (a, b) = (r.start.max(start), r.end.min(end));
+            if a > at {
+                out.push(LayoutSection { byte_range: ByteIndex(at)..ByteIndex(a), leading_space: lead(at), format: s.format.clone() });
+            }
+            let format = TextFormat { background: color, ..s.format.clone() };
+            out.push(LayoutSection { byte_range: ByteIndex(a)..ByteIndex(b), leading_space: lead(a), format });
+            at = b;
+        }
+        if at < end {
+            out.push(LayoutSection { byte_range: ByteIndex(at)..ByteIndex(end), leading_space: lead(at), format: s.format.clone() });
+        }
+    }
+    job.sections = out;
 }
 
 /// The colours of the editor's Markdown marks.

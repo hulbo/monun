@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::Blob;
-use super::font_fallback::load_fallback;
+use super::font_fallback::{cjk_hangul_bold, load_fallback};
 use super::{Arc, Color32, FontData, FontDefinitions, FontFamily, FontId};
 
 /// A font from the optional craft-fonts build input (`CRAFT_FONTS_DIR` at build time; see
@@ -510,6 +510,9 @@ pub(super) fn font_definitions_impl(language: crate::i18n::Language, used: &[Str
     // script faces: whatever a cell can draw, the formula bar can draw too, even where no script
     // fallback face was found (#349: macOS UI font without Hebrew, cells in Arial with it).
     bind_cell_fallback(&mut fonts, &fallback);
+    if system {
+        bind_hangul_bold(&mut fonts, &fallback);
+    }
     // Default proportional text in widgets uses the UI font.
     if let Some(ui) = fonts.families.get(&FontFamily::Name(UI.into())).cloned() {
         fonts.families.insert(FontFamily::Proportional, ui);
@@ -571,6 +574,22 @@ fn build_role_chain(
     chain.extend(fallback.iter().cloned());
     chain.retain(|k| fonts.font_data.contains_key(k));
     chain
+}
+
+/// Puts the bold Hangul face in the bold interface family, ahead of the cell face and the script
+/// fallbacks that would draw its Hangul regular.
+fn bind_hangul_bold(fonts: &mut FontDefinitions, fallback: &[String]) {
+    let paths = cjk_hangul_bold();
+    let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
+    let Some(mut fd) = try_load(&refs) else { return };
+    fd.tweak.set_baseline_fallback(true);
+    let key = "sys-cjk-hangul-bold".to_string();
+    fonts.font_data.insert(key.clone(), Arc::new(fd));
+    let cell_key = format!("sys-{CELL}");
+    if let Some(chain) = fonts.families.get_mut(&FontFamily::Name(UI_BOLD.into())) {
+        let at = chain.iter().position(|k| *k == cell_key || fallback.contains(k)).unwrap_or(chain.len());
+        chain.insert(at, key);
+    }
 }
 
 /// Inserts the loaded cell face before the script fallbacks of the interface families, so the

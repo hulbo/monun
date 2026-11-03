@@ -20,14 +20,22 @@ pub enum Action {
     Goto(usize),
 }
 
-struct Cx<'a> {
-    z: f32,
-    t: &'a Tokens,
-    lang: Lang,
-    fields: &'a super::Fields,
+/// How to draw: the zoom, the theme, the language, the fields' values and the text being looked
+/// for (empty for none).
+pub struct Look<'a> {
+    pub z: f32,
+    pub t: &'a Tokens,
+    pub lang: Lang,
+    pub fields: &'a super::Fields,
+    pub query: &'a str,
 }
 
-impl Cx<'_> {
+/// Found text's tint.
+pub const FOUND: Color32 = Color32::from_rgba_premultiplied(110, 88, 0, 110);
+
+type Cx<'a> = Look<'a>;
+
+impl Look<'_> {
     fn body(&self) -> f32 {
         15.0 * self.z
     }
@@ -42,17 +50,22 @@ struct Out<'a> {
     diagrams: &'a mut diagram::Cache,
 }
 
-/// Draws `blocks` into `ui`'s width.
-pub fn show(ui: &mut Ui, blocks: &[Block], z: f32, t: &Tokens, lang: Lang, fields: &super::Fields, diagrams: &mut diagram::Cache) -> Option<Action> {
-    let cx = Cx { z, t, lang, fields };
+/// Draws `blocks` into `ui`'s width. Returns what a click asked for, and where each top-level
+/// block starts: its first line and its offset from the top of what was drawn.
+pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Cache) -> (Option<Action>, Vec<(usize, f32)>) {
     let mut out = Out { action: None, diagrams };
     if blocks.is_empty() {
-        ui.label(egui::RichText::new(lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(t.text_dim));
+        ui.label(
+            egui::RichText::new(cx.lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(cx.t.text_dim),
+        );
     }
+    let top = ui.cursor().top();
+    let mut positions = Vec::with_capacity(blocks.len());
     for b in blocks {
-        block(ui, b, &cx, &mut out, false);
+        positions.push((b.line(), ui.cursor().top() - top));
+        block(ui, b, cx, &mut out, false);
     }
-    out.action
+    (out.action, positions)
 }
 
 fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Out, tight: bool) {
@@ -284,7 +297,20 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
             let start = job.text.chars().count();
             links.push((start, start + text.chars().count(), link.as_str()));
         }
-        job.append(&text, 0.0, f);
+        // Text being looked for is tinted (not inside a field's value).
+        if cx.query.is_empty() || s.style.field {
+            job.append(&text, 0.0, f);
+        } else {
+            let mut from = 0;
+            for found in super::find_all(&text, cx.query) {
+                if let (Some(before), Some(hit)) = (text.get(from..found.start), text.get(found.clone())) {
+                    job.append(before, 0.0, f.clone());
+                    job.append(hit, 0.0, TextFormat { background: FOUND, ..f.clone() });
+                    from = found.end;
+                }
+            }
+            job.append(text.get(from..).unwrap_or(""), 0.0, f);
+        }
     }
     if job.sections.is_empty() {
         job.append(" ", 0.0, TextFormat::simple(FontId::new(font.size, FontFamily::Name(theme::UI.into())), color));

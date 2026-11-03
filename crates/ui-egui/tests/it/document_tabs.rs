@@ -125,3 +125,39 @@ fn fields_show_cell_values_and_follow_them() {
     h.run_steps(3);
     assert!(h.query_by_label("Total 10 and 20, #REF!").is_some(), "the fields follow the sheet");
 }
+
+#[test]
+fn find_counts_matches_and_replace_all_is_one_step() {
+    let mut h = with_document("# Plan\n\nbuy AAA, then AAA again\n");
+    press(&mut h, Key::F, Modifiers::COMMAND);
+    h.input_mut().events.push(Event::Text("aaa".into()));
+    h.run_steps(3);
+    assert!(h.query_by_label("1/2").is_some(), "two matches, the first current");
+    press(&mut h, Key::Enter, Modifiers::NONE);
+    assert!(h.query_by_label("2/2").is_some(), "Enter goes to the next");
+    // Ctrl+H adds the replacement.
+    press(&mut h, Key::H, Modifiers::COMMAND);
+    h.get_by_label("Replace All").click();
+    h.run_steps(3);
+    // An empty replacement removes them.
+    assert_eq!(doc_text(&h, 1), "# Plan\n\nbuy , then  again\n");
+    h.get_by_label("Close (Esc)").click();
+    h.run_steps(3);
+    press(&mut h, Key::Z, Modifiers::COMMAND);
+    assert_eq!(doc_text(&h, 1), "# Plan\n\nbuy AAA, then AAA again\n", "one undo takes back every replacement");
+}
+
+#[test]
+fn the_contents_panel_goes_to_a_heading() {
+    let mut h = with_document("# First\n\ntext\n\n## Second\n\nmore\n");
+    h.get_by_label("Edit").click();
+    h.run_steps(3);
+    h.get_by_label("Contents").click();
+    h.run_steps(3);
+    // The panel lists the headings; the first "Second" is the panel's, drawn before the document.
+    h.get_all_by_label("Second").next().expect("the panel lists the heading").click();
+    h.run_steps(4);
+    h.input_mut().events.push(Event::Text("Z".into()));
+    h.run_steps(3);
+    assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, "# First\n\ntext\n\nZ## Second\n\nmore\n", "the caret went to the heading's line");
+}

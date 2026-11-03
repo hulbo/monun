@@ -163,6 +163,18 @@ pub(super) fn cjk_han_simplified() -> Vec<(String, u32)> {
     v
 }
 
+/// The bold Hangul face (Malgun Gothic Bold on Windows) for bold interface text: the fallback
+/// face above is regular, so a bold heading's Hangul came out regular beside bold Latin.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn cjk_hangul_bold() -> Vec<(String, u32)> {
+    vec![(format!("{}\\malgunbd.ttf", windows_fonts()), 0)]
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(super) fn cjk_hangul_bold() -> Vec<(String, u32)> {
+    Vec::new()
+}
+
 /// Hangul faces (Korean). The Han faces above that come from the region-merged Noto Sans CJK file
 /// already carry Hangul; [`load_fallback`] then skips this list rather than load the file twice.
 #[cfg(not(target_arch = "wasm32"))]

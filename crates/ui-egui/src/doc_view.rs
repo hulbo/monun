@@ -57,6 +57,60 @@ pub struct State {
     diagrams: diagram::Cache,
     /// The `{{…}}` fields' values, for a workbook version (uid, revision) and a parse.
     fields: Option<((u64, u64, usize), Arc<Fields>)>,
+    /// The outline (the headings) shows beside the document.
+    outline: bool,
+    /// Where the rendered document's top-level blocks start (first line, offset from the top of
+    /// the scrolled page), as drawn last frame.
+    positions: Vec<(usize, f32)>,
+    /// A line the rendered document scrolls to next frame.
+    scroll_to: Option<usize>,
+    /// The editor's first visible line last frame; the rendered document follows it.
+    editor_top: Option<usize>,
+    /// Text the editor selects and shows next frame (char indices), for a found match.
+    select: Option<(usize, usize)>,
+    /// The find bar, when open.
+    find: Option<Find>,
+}
+
+/// The find bar: what is looked for, what replaces it, and which match is current.
+#[derive(Default)]
+pub struct Find {
+    pub query: String,
+    pub replace: String,
+    /// The replace field and buttons show.
+    pub replacing: bool,
+    current: usize,
+    /// The query field takes the keyboard next frame.
+    focus: bool,
+}
+
+/// The byte ranges of `query` in `text`, without overlaps; letters A–Z match either case.
+pub fn find_all(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    if query.is_empty() {
+        return out;
+    }
+    let mut at = 0;
+    while at < text.len() {
+        let hit = text.get(at..at + query.len()).is_some_and(|s| s.eq_ignore_ascii_case(query));
+        if hit {
+            out.push(at..at + query.len());
+            at += query.len();
+        } else {
+            at += text.get(at..).and_then(|s| s.chars().next()).map_or(1, char::len_utf8);
+        }
+    }
+    out
+}
+
+/// The offset of `line` in the rendered document, between the starts of the blocks around it.
+fn offset_of_line(positions: &[(usize, f32)], line: usize) -> Option<f32> {
+    let i = positions.partition_point(|(l, _)| *l <= line);
+    let (l0, y0) = *positions.get(i.checked_sub(1)?)?;
+    Some(match positions.get(i) {
+        Some(&(l1, y1)) if l1 > l0 => y0 + (y1 - y0) * (line - l0) as f32 / (l1 - l0) as f32,
+        _ => y0,
+    })
 }
 
 /// Text typed into a document tab.
@@ -281,12 +335,187 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
     keyboard(app, ui, mode);
     let mode = toolbar(app, ui, (uid, sheet), mode, &t);
-    match mode {
-        Mode::View => view(app, ui, z, &t),
-        Mode::Edit => edit(app, ui, z, &t),
+    if app.doc_view.find.is_some() {
+        find_bar(app, ui, mode, &t);
     }
+    let area = ui.available_rect_before_wrap();
+    let body = if app.doc_view.outline {
+        let side = Rect::from_min_max(area.min, pos2(area.left() + (area.width() * 0.25).clamp(140.0, 260.0), area.bottom()));
+        outline(app, ui, side, mode, &t);
+        Rect::from_min_max(pos2(side.right(), area.top()), area.max)
+    } else {
+        area
+    };
+    let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+    match mode {
+        Mode::View => view(app, &mut body_ui, z, &t),
+        Mode::Edit => edit(app, &mut body_ui, z, &t),
+    }
+    ui.allocate_rect(area, Sense::hover());
     diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
     idle_commit(app, ui.ctx());
+}
+
+/// The headings of the document, indented by level; a click goes to one.
+fn outline(app: &mut SheetApp, ui: &mut Ui, rect: Rect, mode: Mode, t: &Tokens) {
+    let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
+    let headings = headings(&app.doc_view.blocks(&text));
+    ui.painter().rect_filled(rect, 0.0, t.ribbon);
+    ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, t.ribbon_border));
+    let mut side = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 8.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+    side.label(egui::RichText::new(app.ui.language.tr("Contents")).font(theme::ui_bold(13.0)).color(t.text_dim));
+    side.add_space(4.0);
+    if headings.is_empty() {
+        side.label(egui::RichText::new(app.ui.language.tr("Headings (# Title) show here.")).font(theme::ui_font(12.5)).color(t.text_dim));
+    }
+    let mut chosen = None;
+    egui::ScrollArea::vertical().id_salt("monun.doc_outline").auto_shrink([false, false]).show(&mut side, |ui| {
+        for (level, title, line) in &headings {
+            ui.horizontal(|ui| {
+                ui.add_space(f32::from(level.saturating_sub(1)) * 12.0);
+                let font = if *level == 1 { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
+                let resp = ui.add(egui::Label::new(egui::RichText::new(title).font(font).color(t.text)).sense(Sense::click()).truncate());
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    chosen = Some(*line);
+                }
+            });
+        }
+    });
+    if let Some(line) = chosen {
+        app.doc_view.scroll_to = Some(line);
+        if mode == Mode::Edit {
+            app.doc_view.goto_line = Some(line);
+            app.doc_view.focus_editor = true;
+        }
+    }
+}
+
+/// Every heading of `blocks` (in lists and quotes too): level, text, line.
+fn headings(blocks: &[Block]) -> Vec<(u8, String, usize)> {
+    fn walk(out: &mut Vec<(u8, String, usize)>, blocks: &[Block]) {
+        for b in blocks {
+            match b {
+                Block::Heading { level, text, line } => out.push((*level, text.iter().map(|s| s.text.as_str()).collect(), *line)),
+                Block::List { items, .. } => items.iter().for_each(|i| walk(out, &i.blocks)),
+                Block::Quote { blocks, .. } => walk(out, blocks),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&mut out, blocks);
+    out
+}
+
+/// The find bar under the tool bar: what to look for, the count, previous and next, and with
+/// Replace the replacement and its buttons.
+fn find_bar(app: &mut SheetApp, ui: &mut Ui, mode: Mode, t: &Tokens) {
+    let lang = app.ui.language;
+    let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().rect_filled(bar, 0.0, t.ribbon);
+    ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.ribbon_border));
+    let mut child =
+        ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let ui = &mut child;
+    let Some(find) = app.doc_view.find.as_mut() else { return };
+    let query_id = egui::Id::unique("monun.doc_find");
+    ui.label(egui::RichText::new(lang.tr("Find:")).font(theme::ui_font(13.0)));
+    let q = ui.add(egui::TextEdit::singleline(&mut find.query).id(query_id).desired_width(200.0).hint_text(lang.tr("Text to find")));
+    if std::mem::take(&mut find.focus) {
+        q.request_focus();
+    }
+    let hits = find_all(&text, &find.query);
+    if q.changed() {
+        find.current = 0;
+    }
+    let enter = q.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+    let back = ui.input(|i| i.modifiers.shift);
+    let count = if find.query.is_empty() {
+        String::new()
+    } else if hits.is_empty() {
+        lang.tr("No matches").to_owned()
+    } else {
+        format!("{}/{}", find.current.min(hits.len() - 1) + 1, hits.len())
+    };
+    ui.label(egui::RichText::new(count).font(theme::ui_font(12.5)).color(t.text_dim));
+    let mut step: i64 = 0;
+    let icon = |ui: &mut Ui, icon: Icon, tip: &str| {
+        let resp = crate::widgets::icon_button(ui, icon, t.text_dim, lang.tr(tip), vec2(24.0, 24.0));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr(tip)));
+        resp.clicked()
+    };
+    if icon(ui, Icon::ChevronUp, "Previous (Shift+Enter)") {
+        step = -1;
+    }
+    if icon(ui, Icon::Chevron, "Next (Enter)") {
+        step = 1;
+    }
+    if enter {
+        step = if back { -1 } else { 1 };
+        find.focus = true;
+    }
+    let mut replace_one = false;
+    let mut replace_all = false;
+    ui.add_space(8.0);
+    if find.replacing {
+        ui.label(egui::RichText::new(lang.tr("Replace with:")).font(theme::ui_font(13.0)));
+        ui.add(egui::TextEdit::singleline(&mut find.replace).desired_width(160.0));
+        replace_one = ui.button(lang.tr("Replace")).clicked();
+        replace_all = ui.button(lang.tr("Replace All")).clicked();
+    } else if ui.add(egui::Button::new(lang.tr("Replace…")).frame_when_inactive(false)).clicked() {
+        find.replacing = true;
+    }
+    let close = icon(ui, Icon::Close, "Close (Esc)") || (q.has_focus() || q.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape));
+    if close {
+        app.doc_view.find = None;
+        return;
+    }
+    if hits.is_empty() {
+        return;
+    }
+    let n = hits.len();
+    if step != 0 {
+        let cur = find.current.min(n - 1) as i64;
+        find.current = (cur + step).rem_euclid(n as i64) as usize;
+        reveal(app, &text, &hits, mode);
+    }
+    if replace_one || replace_all {
+        replace(app, &text, &hits, replace_all);
+    }
+}
+
+/// Shows the current match: selected in the editor (Edit mode), scrolled to in the document.
+fn reveal(app: &mut SheetApp, text: &str, hits: &[std::ops::Range<usize>], mode: Mode) {
+    let Some(find) = &app.doc_view.find else { return };
+    let Some(hit) = hits.get(find.current.min(hits.len().saturating_sub(1))) else { return };
+    app.doc_view.scroll_to = Some(monun_markdown::line_of(text, hit.start));
+    if mode == Mode::Edit {
+        let chars = |b: usize| text.get(..b).map_or(0, |s| s.chars().count());
+        app.doc_view.select = Some((chars(hit.start), chars(hit.end)));
+    }
+}
+
+/// Replaces the current match, or every match, in the draft; Replace All is one undo step.
+fn replace(app: &mut SheetApp, text: &str, hits: &[std::ops::Range<usize>], all: bool) {
+    let Some(find) = &app.doc_view.find else { return };
+    let with = find.replace.clone();
+    let current = find.current.min(hits.len().saturating_sub(1));
+    let mut out = text.to_owned();
+    let chosen: Vec<&std::ops::Range<usize>> = if all { hits.iter().collect() } else { hits.get(current).into_iter().collect() };
+    for hit in chosen.into_iter().rev() {
+        if out.is_char_boundary(hit.start) && out.is_char_boundary(hit.end) && hit.end <= out.len() {
+            out.replace_range(hit.clone(), &with);
+        }
+    }
+    let Some(dr) = app.doc_view.draft.as_mut() else { return };
+    dr.text = out;
+    if let Err(e) = app.commit_doc_draft() {
+        app.alert(e);
+    }
 }
 
 /// Writes the draft once typing has paused, and wakes up for it before then.
@@ -334,6 +563,20 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
             run = Some("edit.undo");
         }
     });
+    let find = ctx.input_mut(|i| {
+        if i.consume_key(cmd, Key::F) {
+            Some(false)
+        } else if i.consume_key(cmd, Key::H) {
+            Some(true)
+        } else {
+            None
+        }
+    });
+    if let Some(replacing) = find {
+        let f = app.doc_view.find.get_or_insert_with(Find::default);
+        f.replacing |= replacing;
+        f.focus = true;
+    }
     if let Some(id) = run {
         app.run_or_alert(id, json!({}));
         return;
@@ -395,6 +638,18 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
             }
         }
     }
+    let on = app.doc_view.outline;
+    let outline =
+        ui.add(egui::Button::selectable(on, egui::RichText::new(lang.tr("Contents")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
+    if outline.on_hover_text(lang.tr("Show the headings beside the document")).clicked() {
+        app.doc_view.outline = !on;
+    }
+    let find = ui.add(
+        egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),
+    );
+    if find.on_hover_text(lang.tr("Find and replace in the document (Ctrl+F, Ctrl+H)")).clicked() {
+        app.doc_view.find.get_or_insert_with(Find::default).focus = true;
+    }
     if mode == Mode::Edit {
         ui.add_space(8.0);
         let (sep, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
@@ -441,20 +696,28 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let blocks = app.doc_view.blocks(&text);
     let lang = app.ui.language;
     let fields = field_values(app, &blocks);
-    let mut action = None;
-    egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]).show(ui, |ui| {
+    let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query };
+    let lead = 24.0 * z;
+    let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]);
+    if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
+        scroll = scroll.vertical_scroll_offset((y + lead - 8.0 * z).max(0.0));
+    }
+    let (mut action, mut positions) = (None, Vec::new());
+    scroll.show(ui, |ui| {
         let width = (PAGE_WIDTH * z).min(ui.available_width() - 48.0).max(120.0);
         let margin = ((ui.available_width() - width) / 2.0).max(0.0);
         ui.horizontal_top(|ui| {
             ui.add_space(margin);
             ui.vertical(|ui| {
                 ui.set_width(width);
-                ui.add_space(24.0 * z);
-                action = preview::show(ui, &blocks, z, t, lang, &fields, &mut app.doc_view.diagrams);
+                ui.add_space(lead);
+                (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams);
                 ui.add_space(48.0 * z);
             });
         });
     });
+    app.doc_view.positions = positions;
     act(app, ui.ctx(), action, Mode::View);
 }
 
@@ -481,19 +744,32 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         .line_segment([pos2(mid, area.top()), pos2(mid, area.bottom())], Stroke::new(1.0, if handle.hovered() { t.accent } else { t.ribbon_border }));
 
     let mut left_ui = ui.new_child(egui::UiBuilder::new().max_rect(left));
-    editor::show(app, &mut left_ui, z, t);
+    let top = editor::show(app, &mut left_ui, z, t);
+    // The rendered document follows the editor: scrolling the text brings its blocks into view.
+    if top.is_some() && top != app.doc_view.editor_top {
+        app.doc_view.scroll_to = app.doc_view.scroll_to.or(top);
+    }
+    app.doc_view.editor_top = top;
 
     let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
     let blocks = app.doc_view.blocks(&text);
     let lang = app.ui.language;
     let fields = field_values(app, &blocks);
+    let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query };
+    let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
-    let mut action = None;
-    egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]).show(&mut right_ui, |ui| {
-        ui.add_space(16.0 * z);
-        action = preview::show(ui, &blocks, z, t, lang, &fields, &mut app.doc_view.diagrams);
+    let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);
+    if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
+        scroll = scroll.vertical_scroll_offset(if y > 0.0 { y + lead - 8.0 * z } else { 0.0 });
+    }
+    let (mut action, mut positions) = (None, Vec::new());
+    scroll.show(&mut right_ui, |ui| {
+        ui.add_space(lead);
+        (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams);
         ui.add_space(48.0 * z);
     });
+    app.doc_view.positions = positions;
     ui.allocate_rect(area, Sense::hover());
     act(app, ui.ctx(), action, Mode::Edit);
 }
@@ -546,5 +822,30 @@ pub fn follow_link(app: &mut SheetApp, ctx: &egui::Context, target: &str) {
     app.run_or_alert("sheet.activate", json!({"sheet": i}));
     if let Some(cell) = cell {
         app.run_or_alert("selection.set", json!({"range": cell}));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_all_matches_without_overlap_and_ascii_case() {
+        assert_eq!(find_all("Total total TOTAL", "total"), [0..5, 6..11, 12..17]);
+        assert_eq!(find_all("가계부 가계", "가계"), [0..6, 10..16]);
+        assert_eq!(find_all("aaaa", "aa"), [0..2, 2..4]);
+        assert!(find_all("abc", "").is_empty());
+        assert!(find_all("", "x").is_empty());
+    }
+
+    #[test]
+    fn lines_map_between_block_starts() {
+        let positions = [(0, 0.0), (4, 100.0), (8, 300.0)];
+        assert_eq!(offset_of_line(&positions, 0), Some(0.0));
+        assert_eq!(offset_of_line(&positions, 2), Some(50.0));
+        assert_eq!(offset_of_line(&positions, 6), Some(200.0));
+        assert_eq!(offset_of_line(&positions, 20), Some(300.0));
+        assert_eq!(offset_of_line(&[], 3), None);
+        assert_eq!(offset_of_line(&[(5, 40.0)], 1), None);
     }
 }
