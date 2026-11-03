@@ -184,8 +184,8 @@ fn pictures_go_into_the_document_and_show_in_it() {
     let text = h.state().doc_view.draft.as_ref().unwrap().text.clone();
     let d = h.state().session.active().unwrap();
     let image = d.wb.sheet(1).unwrap().images.first().expect("the picture is on the document tab").clone();
-    assert_eq!(text, format!("# Plan\n![chart](image:{})", image.id));
-    assert_eq!(image.anchor.cell.a1(), "C2", "beside the caret's line, right of the text");
+    assert_eq!(text, format!("# Plan\n\n![chart](image:{})", image.id), "a paragraph of its own");
+    assert_eq!(image.anchor.cell.a1(), "C3", "beside the picture's line, right of the text");
     // The rendered document shows the picture.
     assert!(h.query_by_label("chart").is_some());
     let _ = std::fs::remove_dir_all(&dir);
@@ -220,4 +220,41 @@ fn tables_centre_their_header_and_wrap_to_the_width() {
     assert!((head.center().x - wrapped.center().x).abs() < 30.0, "{head:?} over {wrapped:?}");
     assert!(head.left() > short.left() + 100.0, "{head:?} vs {short:?}");
     assert!((short.left() - wrapped.left()).abs() < 1.0);
+}
+
+fn paste_picture(h: &mut Harness) {
+    let image = egui::ColorImage::filled([40, 20], egui::Color32::from_rgb(30, 120, 200));
+    h.input_mut().events.push(Event::PasteImage(std::sync::Arc::new(image)));
+    h.run_steps(4);
+}
+
+#[test]
+fn a_pasted_picture_goes_in_at_the_caret() {
+    let mut h = with_document("# Plan\n\nfirst line\nsecond line\n");
+    h.get_by_label("Edit").click();
+    h.run_steps(4);
+    // The caret starts at the end; put it after "first line".
+    for _ in 0..2 {
+        press(&mut h, Key::ArrowUp, Modifiers::NONE);
+    }
+    press(&mut h, Key::End, Modifiers::NONE);
+    paste_picture(&mut h);
+    let d = h.state().session.active().unwrap();
+    let image = d.wb.sheet(1).unwrap().images.first().expect("the picture is on the document tab").clone();
+    assert_eq!(image.anchor.width.round(), 40.0);
+    assert!(image.data.starts_with(&[0x89, b'P', b'N', b'G']), "kept as PNG");
+    let text = h.state().doc_view.draft.as_ref().unwrap().text.clone();
+    assert_eq!(text, format!("# Plan\n\nfirst line\n\n![Picture {0}](image:{0})\n\nsecond line\n", image.id));
+    assert_eq!(image.anchor.cell.a1(), "C5", "beside the picture's line");
+    // The rendered document shows it.
+    assert!(h.query_by_label(&format!("Picture {}", image.id)).is_some());
+}
+
+#[test]
+fn a_picture_pasted_in_view_mode_goes_at_the_end() {
+    let mut h = with_document("# Plan\n\ntext");
+    paste_picture(&mut h);
+    let d = h.state().session.active().unwrap();
+    let id = d.wb.sheet(1).unwrap().images.first().expect("the picture is on the document tab").id;
+    assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, format!("# Plan\n\ntext\n\n![Picture {id}](image:{id})"));
 }

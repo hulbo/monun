@@ -88,14 +88,10 @@ pub(super) fn apply(app: &mut SheetApp, ctx: &egui::Context, f: Format) {
 
 /// Puts `text` at the editor's caret, in place of the selection, and gives the editor focus.
 pub(super) fn insert_at_caret(app: &mut SheetApp, ctx: &egui::Context, text: &str) {
+    let (a, b) = selection(app, ctx);
     let Some(dr) = app.doc_view.draft.as_mut() else { return };
     let id = editor_id();
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
-    let count = dr.text.chars().count();
-    let (a, b) = state.cursor.char_range().map_or((count, count), |r| {
-        let (x, y): (usize, usize) = (r.secondary.index.into(), r.primary.index.into());
-        (x.min(y).min(count), x.max(y).min(count))
-    });
     replace_chars(&mut dr.text, a, b, text);
     dr.changed_at = Some(now_ms());
     let caret = a + text.chars().count();
@@ -104,11 +100,23 @@ pub(super) fn insert_at_caret(app: &mut SheetApp, ctx: &egui::Context, text: &st
     app.doc_view.focus_editor = true;
 }
 
-/// The line of the editor's caret.
-pub(super) fn caret_line(app: &SheetApp, ctx: &egui::Context) -> usize {
-    let Some(dr) = app.doc_view.draft.as_ref() else { return 0 };
-    let caret = egui::TextEdit::load_state(ctx, editor_id()).and_then(|s| s.cursor.char_range()).map_or(0, |r| r.primary.index.into());
-    monun_markdown::line_of(&dr.text, byte_index(&dr.text, caret))
+/// The editor's selection in chars, start first: the end of the text when it has none.
+pub(super) fn selection(app: &SheetApp, ctx: &egui::Context) -> (usize, usize) {
+    let Some(dr) = app.doc_view.draft.as_ref() else { return (0, 0) };
+    let count = dr.text.chars().count();
+    egui::TextEdit::load_state(ctx, editor_id()).and_then(|s| s.cursor.char_range()).map_or((count, count), |r| {
+        let (x, y): (usize, usize) = (r.secondary.index.into(), r.primary.index.into());
+        (x.min(y).min(count), x.max(y).min(count))
+    })
+}
+
+/// Puts the editor's caret at the end of the text.
+pub(super) fn caret_to_end(app: &SheetApp, ctx: &egui::Context) {
+    let Some(dr) = app.doc_view.draft.as_ref() else { return };
+    let id = editor_id();
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(dr.text.chars().count()))));
+    state.store(ctx, id);
 }
 
 /// The editor, filling `ui`. Returns the first line in view.
@@ -489,7 +497,7 @@ fn replace_chars(text: &mut String, a: usize, b: usize, with: &str) {
     }
 }
 
-fn byte_index(text: &str, chars: usize) -> usize {
+pub(super) fn byte_index(text: &str, chars: usize) -> usize {
     text.char_indices().nth(chars).map_or(text.len(), |(b, _)| b)
 }
 

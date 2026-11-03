@@ -256,14 +256,35 @@ impl SheetApp {
     pub fn insert_document_picture(&mut self, ctx: &egui::Context) {
         let Some(pick) = &self.services.pick_picture else { return };
         let Some(path) = pick() else { return };
-        let line = editor::caret_line(self, ctx);
-        match self.session.run("insert.picture", json!({"path": path, "at": format!("C{}", line + 1)})) {
+        let stem = std::path::Path::new(&path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("picture");
+        let name: String = stem.chars().filter(|c| !matches!(c, '[' | ']')).collect();
+        self.place_picture(ctx, ("path", path), Some(name));
+    }
+
+    /// A picture pasted with Ctrl+V (a screenshot, a copied image), as PNG.
+    fn paste_document_picture(&mut self, ctx: &egui::Context, image: &egui::ColorImage) {
+        match png(image) {
+            Some(bytes) => self.place_picture(ctx, ("base64", monun_engine::io::base64_encode(&bytes)), None),
+            None => self.alert(self.ui.language.tr("The picture on the clipboard can't be read.").to_string()),
+        }
+    }
+
+    /// Puts a picture on the document tab, beside the caret's line, and its `![name](image:N)` at
+    /// the caret on a line of its own. `source` is `insert.picture`'s path or base64; without a
+    /// name it is called "Picture N".
+    fn place_picture(&mut self, ctx: &egui::Context, source: (&str, String), name: Option<String>) {
+        let Some(dr) = self.doc_view.draft.as_ref() else { return };
+        let (a, b) = editor::selection(self, ctx);
+        let (at, to) = (editor::byte_index(&dr.text, a), editor::byte_index(&dr.text, b));
+        let (lead, trail) = picture_breaks(&dr.text, at, to);
+        let line = monun_markdown::line_of(&dr.text, at) + lead.len();
+        let (key, value) = source;
+        match self.session.run("insert.picture", json!({key: value, "at": format!("C{}", line + 1)})) {
             Ok(r) => {
                 self.after_engine();
                 let id = r.get("image").and_then(serde_json::Value::as_u64).unwrap_or_default();
-                let stem = std::path::Path::new(&path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("picture");
-                let name: String = stem.chars().filter(|c| !matches!(c, '[' | ']')).collect();
-                editor::insert_at_caret(self, ctx, &format!("![{name}](image:{id})"));
+                let name = name.unwrap_or_else(|| format!("{} {id}", self.ui.language.tr("Picture")));
+                editor::insert_at_caret(self, ctx, &format!("{lead}![{name}](image:{id}){trail}"));
             }
             Err(e) => self.alert(e),
         }
@@ -285,6 +306,40 @@ impl SheetApp {
             Err(e) => self.alert(e),
         }
     }
+}
+
+/// The line breaks to put before and after a picture that replaces bytes `at..to` of `text`, so it
+/// stands as its own paragraph: a picture inside a line of text shows only its name.
+fn picture_breaks(text: &str, at: usize, to: usize) -> (&'static str, &'static str) {
+    let before = text.get(..at).unwrap_or("");
+    let after = text.get(to..).unwrap_or("");
+    let lead = if before.is_empty() || before.ends_with("\n\n") {
+        ""
+    } else if before.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    let trail = if after.is_empty() || after.starts_with("\n\n") {
+        ""
+    } else if after.starts_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    (lead, trail)
+}
+
+/// An image as PNG bytes.
+fn png(image: &egui::ColorImage) -> Option<Vec<u8>> {
+    use image::ImageEncoder;
+    let [w, h] = image.size;
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+    let mut bytes = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut bytes)
+        .write_image(&rgba, u32::try_from(w).ok()?, u32::try_from(h).ok()?, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some(bytes)
 }
 
 /// Starts, reloads or replaces the draft for the document shown. Returns whether it started one.
@@ -576,6 +631,29 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
         app.run_or_alert(id, json!({}));
         return;
     }
+    // Ctrl+V with a picture and no text on the clipboard (a screenshot, a copied image) puts the
+    // picture in the document: at the caret in Edit mode, at the end in View mode. Not while
+    // another field (Find) has the focus.
+    let mut pasted = None;
+    let elsewhere = ctx.text_edit_focused() && ctx.memory(|m| m.focused()) != Some(editor_id());
+    ctx.input_mut(|i| {
+        if elsewhere {
+            return;
+        }
+        i.events.retain(|e| match e {
+            egui::Event::PasteImage(image) if pasted.is_none() => {
+                pasted = Some(image.clone());
+                false
+            }
+            _ => true,
+        })
+    });
+    if let Some(image) = pasted {
+        if mode == Mode::View {
+            editor::caret_to_end(app, &ctx);
+        }
+        app.paste_document_picture(&ctx, &image);
+    }
     if editing {
         let f = ctx.input_mut(|i| {
             if i.consume_key(cmd, Key::B) {
@@ -858,5 +936,28 @@ mod tests {
         assert_eq!(offset_of_line(&positions, 20), Some(300.0));
         assert_eq!(offset_of_line(&[], 3), None);
         assert_eq!(offset_of_line(&[(5, 40.0)], 1), None);
+    }
+
+    #[test]
+    fn a_picture_gets_a_paragraph_of_its_own() {
+        // Mid-line: blank lines both sides; at a line's start or end only what is missing.
+        assert_eq!(picture_breaks("one two", 3, 3), ("\n\n", "\n\n"));
+        assert_eq!(picture_breaks("one\ntwo", 4, 4), ("\n", "\n\n"));
+        assert_eq!(picture_breaks("one\ntwo", 3, 3), ("\n\n", "\n"));
+        assert_eq!(picture_breaks("one\n\ntwo", 5, 5), ("", "\n\n"));
+        assert_eq!(picture_breaks("# Plan\n", 7, 7), ("\n", ""));
+        assert_eq!(picture_breaks("", 0, 0), ("", ""));
+        // A selection is replaced: what is around it counts.
+        assert_eq!(picture_breaks("a\n\nxyz\n\nb", 3, 6), ("", ""));
+        assert_eq!(picture_breaks("abc", 9, 9), ("", ""));
+    }
+
+    #[test]
+    fn pasted_pictures_become_png() {
+        let image = egui::ColorImage::new([3, 2], vec![egui::Color32::from_rgb(30, 120, 200); 6]);
+        let bytes = png(&image).expect("encodes");
+        let back = image::load_from_memory(&bytes).expect("a PNG").to_rgba8();
+        assert_eq!(back.dimensions(), (3, 2));
+        assert_eq!(back.get_pixel(1, 1).0, [30, 120, 200, 255]);
     }
 }

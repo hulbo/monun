@@ -1853,6 +1853,7 @@ const MORE: &[(&str, &str)] = &[
         "Markdown(.md)으로는 문서 탭만 저장할 수 있습니다. 먼저 문서로 옮기세요.",
     ),
     ("Insert a picture into the document", "문서에 그림 넣기"),
+    ("The picture on the clipboard can't be read.", "클립보드의 그림을 읽을 수 없습니다."),
     ("Contents", "목차"),
     ("Headings (# Title) show here.", "제목(# 제목)이 여기에 나옵니다."),
     ("Show the headings beside the document", "문서 옆에 제목 목록을 보여 줍니다"),
