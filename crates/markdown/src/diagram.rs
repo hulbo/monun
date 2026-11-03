@@ -11,11 +11,13 @@ use resvg::{tiny_skia, usvg};
 /// The largest side of a drawn diagram, in pixels.
 const MAX_SIDE: f32 = 4096.0;
 
-/// A drawn diagram: `width` × `height` pixels of premultiplied RGBA.
+/// A drawn diagram: `width` × `height` pixels of premultiplied RGBA, and the diagram's own size
+/// in SVG units (CSS pixels), whatever the scale it was drawn at.
 pub struct Image {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    pub size: (f32, f32),
 }
 
 /// How to draw a diagram.
@@ -56,6 +58,12 @@ pub fn svg(source: &str, dark: bool) -> Result<String, String> {
     let mut options = RenderOptions::default();
     if dark {
         options.theme = Theme::dark();
+    } else {
+        // The default theme's slate-400 boxes and slate-500 lines read faint beside the document's
+        // black text: a shade darker, as on paper.
+        options.theme.primary_border_color = "#475569".to_owned();
+        options.theme.line_color = "#334155".to_owned();
+        options.theme.cluster_border = "#94A3B8".to_owned();
     }
     options.theme.font_family = font_family().to_owned();
     match std::panic::catch_unwind(AssertUnwindSafe(|| mermaid_rs_renderer::render_strict(source, options))) {
@@ -85,7 +93,7 @@ fn paint(svg: &str, scale: f32) -> Result<Image, String> {
     let (pw, ph) = ((w * scale).ceil().max(1.0) as u32, (h * scale).ceil().max(1.0) as u32);
     let mut pixmap = tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| "The diagram is too large.".to_owned())?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
-    Ok(Image { width: pw, height: ph, rgba: pixmap.take() })
+    Ok(Image { width: pw, height: ph, rgba: pixmap.take(), size: (w, h) })
 }
 
 #[cfg(test)]
@@ -121,6 +129,8 @@ mod tests {
         let one = draws("flowchart LR\n  A --> B");
         let two = render("flowchart LR\n  A --> B", Options { dark: false, scale: 2.0 }).unwrap_or_else(|e| panic!("{e}"));
         assert!(two.width >= one.width * 2 - 2 && two.width <= one.width * 2 + 2);
+        // The diagram's own size is the same at any scale.
+        assert!(one.size.0 > 0.0 && one.size == two.size);
         let huge = render("flowchart LR\n  A --> B", Options { dark: false, scale: 1e9 }).unwrap_or_else(|e| panic!("{e}"));
         assert!(huge.width <= MAX_SIDE as u32 && huge.height <= MAX_SIDE as u32);
     }

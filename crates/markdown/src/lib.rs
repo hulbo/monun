@@ -531,6 +531,17 @@ pub fn fit_columns(natural: &[f32], room: f32, floor: f32) -> Vec<f32> {
     natural.iter().zip(&kept).map(|(w, k)| if *k || wide <= 0.0 { *w } else { (w * left.max(0.0) / wide).max(floor) }).collect()
 }
 
+/// [`fit_columns`] widened to fill `room` when the columns are narrower, each by its share of the
+/// width, so the table is as wide as the page.
+pub fn fill_columns(natural: &[f32], room: f32, floor: f32) -> Vec<f32> {
+    let widths = fit_columns(natural, room, floor);
+    let total: f32 = widths.iter().sum();
+    if total <= 0.0 || total >= room || !room.is_finite() {
+        return widths;
+    }
+    widths.iter().map(|w| w * room / total).collect()
+}
+
 /// Splits the `{{…}}` fields out of a leaf's runs. Code keeps its braces, and so does an empty
 /// or unclosed pair.
 fn split_fields(spans: Vec<Span>) -> Vec<Span> {

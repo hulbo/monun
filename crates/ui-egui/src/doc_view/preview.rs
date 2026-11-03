@@ -31,6 +31,8 @@ pub struct Look<'a> {
     /// The workbook's uid and the document tab's pictures, which `![…](image:N)` shows.
     pub doc: u64,
     pub pictures: &'a [monun_engine::model::Image],
+    /// Fit Width: tables and diagrams as wide as the page.
+    pub full: bool,
 }
 
 /// Found text's tint.
@@ -217,7 +219,7 @@ fn list_item(ui: &mut Ui, item: &Item, number: Option<u64>, cx: &Cx, out: &mut O
 
 fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out) {
     if lang == "mermaid"
-        && let Some(resp) = diagram::show(ui, out.diagrams, text, cx.z, cx.t, cx.lang)
+        && let Some(resp) = diagram::show(ui, out.diagrams, text, cx.z, cx.t, cx.lang, cx.full)
     {
         if resp.double_clicked() {
             out.action = Some(Action::Goto(line));
@@ -248,7 +250,8 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out
 }
 
 /// A table with its lines drawn: the header row shaded, bold and centred, the other rows aligned
-/// as their columns say. Columns are as wide as their cells, narrowed to fit (their text wraps).
+/// as their columns say. Columns are as wide as their cells, narrowed to fit (their text wraps),
+/// or with Fit Width widened to the page.
 fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], line: usize, cx: &Cx, out: &mut Out) {
     let t = cx.t;
     let cols = rows.iter().map(Vec::len).chain(std::iter::once(head.len())).max().unwrap_or(0);
@@ -267,7 +270,7 @@ fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>
         }
     }
     let room = ui.available_width();
-    let widths = monun_markdown::fit_columns(&natural, room, 48.0 * cx.z);
+    let widths = if cx.full { monun_markdown::fill_columns } else { monun_markdown::fit_columns }(&natural, room, 48.0 * cx.z);
     let line_h = cx.body() * 1.4;
     let heights: Vec<f32> = all
         .iter()

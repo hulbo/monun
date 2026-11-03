@@ -1854,6 +1854,8 @@ const MORE: &[(&str, &str)] = &[
     ),
     ("Insert a picture into the document", "문서에 그림 넣기"),
     ("The picture on the clipboard can't be read.", "클립보드의 그림을 읽을 수 없습니다."),
+    ("Fit Width", "너비 맞춤"),
+    ("Show tables and diagrams as wide as the page", "표와 흐름도를 문서 폭에 맞춰 넓게 보기"),
     ("Contents", "목차"),
     ("Headings (# Title) show here.", "제목(# 제목)이 여기에 나옵니다."),
     ("Show the headings beside the document", "문서 옆에 제목 목록을 보여 줍니다"),

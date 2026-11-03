@@ -273,3 +273,18 @@ fn a_new_document_stays_in_edit_mode_once_its_text_is_in() {
     assert_eq!(doc_text(&h, 1), "# Notes\n\n- one");
     assert!(h.query_by_label("Document text").is_some(), "still in Edit mode");
 }
+
+#[test]
+fn fit_width_widens_tables_to_the_page() {
+    let mut h = with_document("| A | B |\n|---|---|\n| 1 | 2 |\n");
+    let before = h.get_by_label("B").rect();
+    h.get_by_label("Fit Width").click();
+    h.run_steps(3);
+    assert!(h.state().ui.doc_fit_width, "kept with the other interface settings");
+    let after = h.get_by_label("B").rect();
+    assert!(after.center().x > before.center().x + 200.0, "the last column reaches the page's edge: {before:?} → {after:?}");
+    // Off again, the table is as wide as its cells.
+    h.get_by_label("Fit Width").click();
+    h.run_steps(3);
+    assert!((h.get_by_label("B").rect().center().x - before.center().x).abs() < 1.0);
+}

@@ -718,6 +718,12 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
     if outline.on_hover_text(lang.tr("Show the headings beside the document")).clicked() {
         app.doc_view.outline = !on;
     }
+    let fit = app.ui.doc_fit_width;
+    let fit_width =
+        ui.add(egui::Button::selectable(fit, egui::RichText::new(lang.tr("Fit Width")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
+    if fit_width.on_hover_text(lang.tr("Show tables and diagrams as wide as the page")).clicked() {
+        app.ui.doc_fit_width = !fit;
+    }
     let find = ui.add(
         egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),
     );
@@ -784,7 +790,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures };
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: app.ui.doc_fit_width };
     let lead = 24.0 * z;
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]);
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
@@ -846,7 +852,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures };
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: app.ui.doc_fit_width };
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);

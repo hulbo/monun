@@ -106,3 +106,14 @@ fn table_columns_fit_the_room() {
     assert!(fit_columns(&[], 100.0, 10.0).is_empty());
     assert_eq!(fit_columns(&[f32::NAN, 10.0], 100.0, 5.0), vec![0.0, 10.0]);
 }
+
+#[test]
+fn filled_columns_reach_the_room() {
+    // Narrower than the room: each column grows by its share, to the room's width.
+    let w = fill_columns(&[50.0, 150.0], 400.0, 10.0);
+    assert!((w[0] - 100.0).abs() < 0.01 && (w[1] - 300.0).abs() < 0.01, "{w:?}");
+    // Wider: the same as fitting.
+    assert_eq!(fill_columns(&[60.0, 200.0, 400.0, 400.0], 700.0, 10.0), fit_columns(&[60.0, 200.0, 400.0, 400.0], 700.0, 10.0));
+    assert!(fill_columns(&[], 100.0, 10.0).is_empty());
+    assert_eq!(fill_columns(&[0.0, 0.0], 100.0, 10.0), vec![0.0, 0.0]);
+}
