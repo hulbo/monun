@@ -388,3 +388,17 @@ fn fedora_package_folders_are_searched_after_the_other_linux_layouts() {
     let noto = mono.iter().position(|p| p == "/usr/share/fonts/google-noto-vf/NotoSansMono[wght].ttf");
     assert!(noto.is_some() && noto.unwrap_or(0) + 1 == mono.len(), "Fedora's default Noto Sans Mono must be the last resort: {mono:?}");
 }
+
+#[test]
+fn document_code_is_the_mono_faces_drawn_lower() {
+    // Inline code in documents meets the text's baseline: the mono faces, sharing their bytes,
+    // each drawn lower.
+    let fonts = font_definitions_for_language(Language::Ko);
+    let chain = |name: &str| fonts.families.get(&FontFamily::Name(name.into())).cloned().unwrap_or_default();
+    let (mono, code) = (chain(MONO), chain(DOC_CODE));
+    assert!(!code.is_empty());
+    assert_eq!(code.len(), mono.len());
+    let (Some(m), Some(c)) = (fonts.font_data.get(&mono[0]), fonts.font_data.get(&code[0])) else { panic!("{mono:?} {code:?}") };
+    assert!(c.tweak.y_offset_factor > m.tweak.y_offset_factor);
+    assert!(Arc::ptr_eq(&m.font, &c.font), "the face's bytes are shared");
+}

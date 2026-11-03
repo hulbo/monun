@@ -41,6 +41,14 @@ pub const SERIF: &str = "serif";
 
 pub const MONO: &str = "mono";
 
+/// Inline code in documents: [`MONO`]'s faces, drawn lower by [`CODE_DROP`].
+pub const DOC_CODE: &str = "doc-code";
+
+/// How far below its own baseline inline code is drawn, as a share of its size. Consolas keeps
+/// more room under its baseline than the interface font, so code set at nine tenths of the text's
+/// size sat about 0.15 of its size high on the line, and high in its shaded box.
+const CODE_DROP: f32 = 0.15;
+
 pub fn ui_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(UI.into()))
 }
@@ -513,6 +521,7 @@ pub(super) fn font_definitions_impl(language: crate::i18n::Language, used: &[Str
     if system {
         bind_hangul_bold(&mut fonts, &fallback);
     }
+    bind_doc_code(&mut fonts);
     // Default proportional text in widgets uses the UI font.
     if let Some(ui) = fonts.families.get(&FontFamily::Name(UI.into())).cloned() {
         fonts.families.insert(FontFamily::Proportional, ui);
@@ -590,6 +599,23 @@ fn bind_hangul_bold(fonts: &mut FontDefinitions, fallback: &[String]) {
         let at = chain.iter().position(|k| *k == cell_key || fallback.contains(k)).unwrap_or(chain.len());
         chain.insert(at, key);
     }
+}
+
+/// Binds [`DOC_CODE`]: a copy of each [`MONO`] face (the font bytes are shared) drawn
+/// [`CODE_DROP`] lower, so code's baseline meets the text around it. The fallback faces move with
+/// it, as Hangul in code shares the code's baseline.
+fn bind_doc_code(fonts: &mut FontDefinitions) {
+    let chain = fonts.families.get(&FontFamily::Name(MONO.into())).cloned().unwrap_or_default();
+    let mut keys = Vec::with_capacity(chain.len());
+    for key in chain {
+        let Some(data) = fonts.font_data.get(&key) else { continue };
+        let mut fd = (**data).clone();
+        fd.tweak.y_offset_factor += CODE_DROP;
+        let code_key = format!("{key}+{DOC_CODE}");
+        fonts.font_data.insert(code_key.clone(), Arc::new(fd));
+        keys.push(code_key);
+    }
+    fonts.families.insert(FontFamily::Name(DOC_CODE.into()), keys);
 }
 
 /// Inserts the loaded cell face before the script fallbacks of the interface families, so the

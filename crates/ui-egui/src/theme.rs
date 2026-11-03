@@ -28,8 +28,8 @@ pub use font_fallback::symbol_face_installed;
 use font_fallback::{cjk_han_japanese, cjk_han_simplified, cjk_hangul, fallback_faces, hebrew, lao, symbols_more, thai};
 use font_setup::pick;
 pub use font_setup::{
-    CELL, CELL_BOLD, CELL_BOLD_ITALIC, CELL_ITALIC, CraftFont, HanOrder, MONO, SERIF, UI, UI_BOLD, available_text, cell_family, cell_text_width,
-    chinese_font_loaded, craft_font_scripts, craft_fonts_cover, craft_fonts_loaded, craft_fonts_required, font_definitions,
+    CELL, CELL_BOLD, CELL_BOLD_ITALIC, CELL_ITALIC, CraftFont, DOC_CODE, HanOrder, MONO, SERIF, UI, UI_BOLD, available_text, cell_family,
+    cell_text_width, chinese_font_loaded, craft_font_scripts, craft_fonts_cover, craft_fonts_loaded, craft_fonts_required, font_definitions,
     font_definitions_for_language, font_definitions_with, han_included, note_text, pinned_font_definitions, symbol_fallback, ui_bold, ui_font,
 };
 #[cfg(test)]
@@ -325,6 +325,9 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
         s.spacing.interact_size.y = 22.0;
+        // 0.37 fades scroll areas' edges into the panel colour, which washed out the first and
+        // last lines (and showed as pale bands over the dark theme's documents); Excel has none.
+        s.spacing.scroll.fade.strength = 0.0;
         s.text_styles.insert(egui::TextStyle::Body, ui_font(13.0));
         s.text_styles.insert(egui::TextStyle::Button, ui_font(13.0));
         s.text_styles.insert(egui::TextStyle::Small, ui_font(11.0));

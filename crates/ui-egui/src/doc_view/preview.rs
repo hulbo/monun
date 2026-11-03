@@ -360,7 +360,7 @@ fn styled<'a>(spans: &'a [Span], cx: &Cx, font: FontSpec, color: Color32, width:
         let family = if font.bold || s.style.bold { theme::UI_BOLD } else { theme::UI };
         let mut f = TextFormat::simple(FontId::new(font.size, FontFamily::Name(family.into())), color);
         if s.style.code {
-            f.font_id = FontId::new(font.size * 0.9, FontFamily::Name(theme::MONO.into()));
+            f.font_id = FontId::new(font.size * 0.9, FontFamily::Name(theme::DOC_CODE.into()));
             f.background = if t.dark { Color32::from_white_alpha(20) } else { Color32::from_black_alpha(14) };
         }
         f.italics = s.style.italic;
