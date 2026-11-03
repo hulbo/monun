@@ -786,7 +786,7 @@ fn sheets_choice(app: &SheetApp, ui: &mut Ui, bs: &mut Backstage) -> bool {
 /// Exports the active workbook as `pdf`, `csv` (CSV UTF-8), `csv-cp949` (plain CSV) or `html`:
 /// through the save picker on the desktop, as a browser download on the web. A PDF or web page
 /// takes every visible sheet when `all` (one after another, or behind a menu of their names),
-/// else the active one, and document tabs' tables and diagrams follow their Fit Width. Returns
+/// else the active one, and each document tab's tables and diagrams follow its own Fit Width. Returns
 /// whether a file was written or handed over.
 pub fn export_as(app: &mut SheetApp, fmt: &str, all: bool) -> bool {
     if !app.commit_edit(0, 0, false, false) {
@@ -797,7 +797,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str, all: bool) -> bool {
         app.message = Some(("Monun".into(), crate::clean_error(&e)));
         return false;
     }
-    let scope = json!({"sheets": if all { "all" } else { "active" }, "fitWidth": app.ui.doc_fit_width});
+    let scope = json!({"sheets": if all { "all" } else { "active" }});
     let (id, encoding) = match fmt {
         "pdf" => ("file.exportPdf", None),
         "csv" => ("file.exportCsv", Some("utf-8")),

@@ -141,6 +141,42 @@ pub struct Sheet {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub text: String,
+    /// How the tab shows, as last chosen; `None` until one is (an empty document then opens to
+    /// type in, one with text to read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<DocMode>,
+    /// Fit Width: tables and diagrams as wide as the page, on screen and on paper.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fit_width: bool,
+}
+
+/// How a document tab shows: its text, its text beside the document, or the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DocMode {
+    Edit,
+    Split,
+    View,
+}
+
+impl DocMode {
+    /// The mode's name in commands and files: `edit`, `split` or `view`.
+    pub fn name(self) -> &'static str {
+        match self {
+            DocMode::Edit => "edit",
+            DocMode::Split => "split",
+            DocMode::View => "view",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DocMode> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "edit" => Some(DocMode::Edit),
+            "split" => Some(DocMode::Split),
+            "view" => Some(DocMode::View),
+            _ => None,
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -208,7 +244,7 @@ impl Sheet {
 
     /// A document tab named `name` holding `text`.
     pub fn new_document(name: impl Into<String>, text: impl Into<String>) -> Sheet {
-        Sheet { document: Some(Document { text: text.into() }), ..Sheet::new(name) }
+        Sheet { document: Some(Document { text: text.into(), ..Document::default() }), ..Sheet::new(name) }
     }
 
     /// Whether this is a document tab rather than a worksheet.

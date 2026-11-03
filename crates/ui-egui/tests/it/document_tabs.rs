@@ -68,9 +68,9 @@ fn a_link_to_a_cell_goes_there() {
 }
 
 #[test]
-fn edit_mode_shows_the_text_beside_the_document() {
+fn side_by_side_shows_the_text_beside_the_document() {
     let mut h = with_document("# Plan\n");
-    h.get_by_label("Edit").click();
+    h.get_by_label("Side by Side").click();
     h.run_steps(4);
     // The editor took focus: typing goes in at the caret, and the preview follows.
     press(&mut h, Key::End, Modifiers::COMMAND);
@@ -176,7 +176,7 @@ fn pictures_go_into_the_document_and_show_in_it() {
     let mut app = monun_ui_egui::SheetApp::new(s, services);
     app = crate::common::prepare(app);
     let mut h = crate::support::app_harness(app, 4);
-    h.get_by_label("Edit").click();
+    h.get_by_label("Side by Side").click();
     h.run_steps(3);
     press(&mut h, Key::End, Modifiers::COMMAND);
     h.get_by_label("Picture").click();
@@ -231,7 +231,7 @@ fn paste_picture(h: &mut Harness) {
 #[test]
 fn a_pasted_picture_goes_in_at_the_caret() {
     let mut h = with_document("# Plan\n\nfirst line\nsecond line\n");
-    h.get_by_label("Edit").click();
+    h.get_by_label("Side by Side").click();
     h.run_steps(4);
     // The caret starts at the end; put it after "first line".
     for _ in 0..2 {
@@ -280,11 +280,50 @@ fn fit_width_widens_tables_to_the_page() {
     let before = h.get_by_label("B").rect();
     h.get_by_label("Fit Width").click();
     h.run_steps(3);
-    assert!(h.state().ui.doc_fit_width, "kept with the other interface settings");
+    let d = h.state().session.active().unwrap();
+    assert!(d.wb.sheet(1).unwrap().document.as_ref().unwrap().fit_width, "the document keeps it");
     let after = h.get_by_label("B").rect();
     assert!(after.center().x > before.center().x + 200.0, "the last column reaches the page's edge: {before:?} → {after:?}");
     // Off again, the table is as wide as its cells.
     h.get_by_label("Fit Width").click();
     h.run_steps(3);
     assert!((h.get_by_label("B").rect().center().x - before.center().x).abs() < 1.0);
+}
+
+#[test]
+fn each_document_keeps_its_own_mode_and_fit_width_in_its_file() {
+    use monun_engine::model::DocMode;
+    let mut s: Session = blank_session();
+    s.run("doc.insert", json!({"name": "One", "text": "# One\n"})).unwrap();
+    s.run("doc.insert", json!({"name": "Two", "text": "# Two\n"})).unwrap();
+    let mut h = harness(s, 4);
+    let undo = h.state().session.active().unwrap().undo.len();
+    let sheet = |h: &Harness| h.state().session.active().unwrap().wb.active().unwrap().name.clone();
+    assert_eq!(sheet(&h), "Two");
+    // Two: side by side, with Fit Width.
+    h.get_by_label("Side by Side").click();
+    h.run_steps(3);
+    h.get_by_label("Fit Width").click();
+    h.run_steps(3);
+    // One: its text alone.
+    press(&mut h, Key::PageUp, Modifiers::COMMAND);
+    assert_eq!(sheet(&h), "One");
+    assert!(h.query_by_label("One").is_some(), "a document with text opens to read");
+    h.get_by_label("Edit").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Document text").is_some() && h.query_by_label("One").is_none(), "only the text shows");
+    // Each tab comes back as it was left.
+    press(&mut h, Key::PageDown, Modifiers::COMMAND);
+    assert!(h.query_by_label("Document text").is_some() && h.query_by_label("Two").is_some(), "Two is side by side again");
+    press(&mut h, Key::PageUp, Modifiers::COMMAND);
+    assert!(h.query_by_label("One").is_none());
+    // The choices are the workbook's: it has changed, with nothing to undo, and its file keeps them.
+    let d = h.state().session.active().unwrap();
+    assert!(d.is_dirty());
+    assert_eq!(d.undo.len(), undo, "switching modes leaves Undo for the text");
+    let bytes = monun_engine::io::save_bytes(&d.wb, "book.xlsx").unwrap();
+    let (wb, _) = monun_engine::io::open_bytes("book.xlsx", &bytes).unwrap();
+    let doc = |n: &str| wb.sheets.iter().find(|s| s.name == n).and_then(|s| s.document.clone()).unwrap();
+    assert_eq!((doc("One").mode, doc("One").fit_width), (Some(DocMode::Edit), false));
+    assert_eq!((doc("Two").mode, doc("Two").fit_width), (Some(DocMode::Split), true));
 }

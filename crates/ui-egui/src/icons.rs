@@ -158,6 +158,9 @@ pub enum Icon {
     Document,
     /// New document: the document page with a plus at its corner.
     NewDocument,
+    /// A document's text and the document side by side: a page split down the middle, lines of
+    /// text on the left and a heading over lines on the right.
+    SideBySide,
 }
 
 struct G<'a> {
@@ -749,6 +752,17 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
         }
         Icon::NewFile => {
             g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
+        }
+        Icon::SideBySide => {
+            g.line(&[(1.5, 2.5), (14.5, 2.5), (14.5, 13.5), (1.5, 13.5), (1.5, 2.5)], c, 1.1);
+            g.line(&[(8.0, 2.5), (8.0, 13.5)], c, 1.1);
+            for y in [5.5, 8.0, 10.5] {
+                g.stroke(&[(3.5, y), (6.5, y)], c);
+            }
+            g.rect(9.5, 4.5, 3.5, 1.8, Some(blue), None);
+            for y in [8.5, 10.5] {
+                g.stroke(&[(9.5, y), (13.0, y)], c);
+            }
         }
         Icon::OpenFolder => {
             g.line(&[(13.0, 6.5), (13.0, 4.5), (7.5, 4.5), (6.0, 3.0), (1.5, 3.0), (1.5, 13.0)], c, 1.1);

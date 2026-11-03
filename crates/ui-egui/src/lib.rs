@@ -101,8 +101,6 @@ pub struct UiState {
     /// [`INTERFACE_SCALE_MIN`]..=[`INTERFACE_SCALE_MAX`]; a malformed saved value reads as 100.
     #[serde(deserialize_with = "lenient_interface_scale")]
     pub interface_scale: u16,
-    /// Document tabs' Fit Width: tables and diagrams as wide as the page.
-    pub doc_fit_width: bool,
 }
 
 pub const INTERFACE_SCALE_MIN: u16 = 75;
@@ -135,7 +133,6 @@ impl Default for UiState {
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
-            doc_fit_width: false,
         }
     }
 }

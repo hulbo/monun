@@ -45,6 +45,7 @@ pub(crate) const CSS: &str = concat!(
 /// What a document page needs besides its text: the workbook (fields and pictures), which other
 /// sheets are on the page (their anchors, by lowercased name, for links between sheets), and
 /// whether tables and diagrams fill the page's width (the document tab's Fit Width).
+#[derive(Clone, Copy)]
 pub(crate) struct Context<'a> {
     pub wb: &'a Workbook,
     pub sheet: &'a Sheet,
@@ -52,9 +53,11 @@ pub(crate) struct Context<'a> {
     pub fit: bool,
 }
 
-/// The document of `cx.sheet` as an `<article>`.
+/// The document of `cx.sheet` as an `<article>`, its tables and diagrams as wide as the page with
+/// its own Fit Width or the page's.
 pub(crate) fn article(cx: &Context) -> String {
     let text = cx.sheet.document.as_ref().map_or("", |d| d.text.as_str());
+    let cx = &Context { fit: cx.fit || cx.sheet.document.as_ref().is_some_and(|d| d.fit_width), ..*cx };
     let mut out = String::with_capacity(text.len() * 2 + 64);
     out.push_str(if cx.fit { "<article class=\"doc fit\">" } else { "<article class=\"doc\">" });
     blocks(&mut out, &monun_markdown::parse(text), cx);

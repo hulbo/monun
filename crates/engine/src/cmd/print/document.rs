@@ -35,8 +35,8 @@ const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
 /// A table's header row.
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
-/// The pages of document tab `sh`, as drawings; with `fit` its tables and diagrams are as wide as
-/// the page, as with the tab's Fit Width.
+/// The pages of document tab `sh`, as drawings; with `fit` (or the document's own Fit Width) its
+/// tables and diagrams are as wide as the page.
 pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, fit: bool) -> Vec<Vec<Op>> {
     let Some(doc) = &sh.document else { return Vec::new() };
     let [l, r, t, b, ..] = lay.margins;
@@ -49,7 +49,7 @@ pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, fit: bool) -> 
         width: (lay.page_w - l - r).max(72.0),
         top: t,
         bottom: (lay.page_h - b).max(t + 72.0),
-        fit,
+        fit: fit || doc.fit_width,
     };
     let blocks = monun_markdown::parse(&doc.text);
     for block in &blocks {

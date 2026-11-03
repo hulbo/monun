@@ -28,23 +28,18 @@ const IDLE_MS: f64 = 1500.0;
 /// The widest the rendered document gets at 100% (px), so lines stay readable.
 const PAGE_WIDTH: f32 = 860.0;
 
-/// How a document tab shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    /// The rendered document.
-    View,
-    /// The text on the left, the rendered document on the right.
-    Edit,
-}
+/// How a document tab shows: Edit (its text), Split (the text on the left, the rendered document
+/// on the right) or View (the rendered document). Each document keeps its own, in its file.
+pub use monun_engine::model::DocMode as Mode;
 
 /// Document tabs' UI state.
 #[derive(Default)]
 pub struct State {
     /// Text being typed into a document, not yet in its workbook.
     pub draft: Option<Draft>,
-    /// The mode of each document shown so far, by (workbook, sheet).
+    /// The mode each document without one of its own first showed in, by (workbook, sheet).
     modes: HashMap<(u64, usize), Mode>,
-    /// The editor's share of the width in Edit mode.
+    /// The editor's share of the width side by side.
     split: Option<f32>,
     /// A line the editor's caret goes to next frame (a double-click in the preview).
     goto_line: Option<usize>,
@@ -135,14 +130,12 @@ impl Draft {
 }
 
 impl State {
-    /// The mode `(uid, sheet)` shows in: as last chosen, else the one it first showed in, Edit for
-    /// an empty document and View for one with text. It is kept, so a new document being typed or
-    /// pasted into stays in Edit once its text reaches the workbook.
-    pub fn mode(&mut self, uid: u64, sheet: usize, text: &str) -> Mode {
-        *self.modes.entry((uid, sheet)).or_insert(if text.trim().is_empty() { Mode::Edit } else { Mode::View })
-    }
-    pub fn set_mode(&mut self, uid: u64, sheet: usize, mode: Mode) {
-        self.modes.insert((uid, sheet), mode);
+    /// The mode `(uid, sheet)` shows in: the document's own (`chosen`, kept in its file), else
+    /// the one it first showed in, side by side for an empty document and View for one with text.
+    /// That one is kept, so a new document being typed or pasted into stays as it was once its
+    /// text reaches the workbook.
+    pub fn mode(&mut self, uid: u64, sheet: usize, chosen: Option<Mode>, text: &str) -> Mode {
+        chosen.unwrap_or_else(|| *self.modes.entry((uid, sheet)).or_insert(if text.trim().is_empty() { Mode::Split } else { Mode::View }))
     }
     fn blocks(&mut self, text: &str) -> Arc<Vec<Block>> {
         match &self.parsed {
@@ -186,6 +179,11 @@ pub fn active_document(app: &SheetApp) -> Option<(u64, usize, String)> {
     let i = d.wb.active_sheet();
     let doc = d.wb.sheet(i)?.document.as_ref()?;
     Some((d.uid, i, doc.text.clone()))
+}
+
+/// How the active document tab is set to show: its own mode, when one was chosen, and its Fit Width.
+fn chosen_view(app: &SheetApp) -> (Option<Mode>, bool) {
+    app.session.active().and_then(|d| d.wb.active()).and_then(|sh| sh.document.as_ref()).map_or((None, false), |doc| (doc.mode, doc.fit_width))
 }
 
 /// Whether the active sheet is a document tab.
@@ -379,9 +377,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // The page follows the theme (the grid's stays white): the document's ink is the theme's.
     ui.painter().rect_filled(ui.max_rect(), 0.0, if t.dark { t.window } else { t.grid_bg });
-    let mode = app.doc_view.mode(uid, sheet, &text);
+    let (chosen, _) = chosen_view(app);
+    let mode = app.doc_view.mode(uid, sheet, chosen, &text);
     // An empty document opens ready to type.
-    if started && mode == Mode::Edit && text.is_empty() {
+    if started && mode != Mode::View && text.is_empty() {
         app.doc_view.focus_editor = true;
     }
     keyboard(app, ui, mode);
@@ -400,7 +399,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
     match mode {
         Mode::View => view(app, &mut body_ui, z, &t),
-        Mode::Edit => edit(app, &mut body_ui, z, &t),
+        Mode::Split => edit(app, &mut body_ui, z, &t),
+        Mode::Edit => text_only(app, &mut body_ui, z, &t),
     }
     ui.allocate_rect(area, Sense::hover());
     diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
@@ -437,7 +437,7 @@ fn outline(app: &mut SheetApp, ui: &mut Ui, rect: Rect, mode: Mode, t: &Tokens) 
     });
     if let Some(line) = chosen {
         app.doc_view.scroll_to = Some(line);
-        if mode == Mode::Edit {
+        if mode != Mode::View {
             app.doc_view.goto_line = Some(line);
             app.doc_view.focus_editor = true;
         }
@@ -539,12 +539,12 @@ fn find_bar(app: &mut SheetApp, ui: &mut Ui, mode: Mode, t: &Tokens) {
     }
 }
 
-/// Shows the current match: selected in the editor (Edit mode), scrolled to in the document.
+/// Shows the current match: selected in the editor (when it shows), scrolled to in the document.
 fn reveal(app: &mut SheetApp, text: &str, hits: &[std::ops::Range<usize>], mode: Mode) {
     let Some(find) = &app.doc_view.find else { return };
     let Some(hit) = hits.get(find.current.min(hits.len().saturating_sub(1))) else { return };
     app.doc_view.scroll_to = Some(monun_markdown::line_of(text, hit.start));
-    if mode == Mode::Edit {
+    if mode != Mode::View {
         let chars = |b: usize| text.get(..b).map_or(0, |s| s.chars().count());
         app.doc_view.select = Some((chars(hit.start), chars(hit.end)));
     }
@@ -589,7 +589,7 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
     if app.dialog.is_some() || app.message.is_some() || app.grid.tab_menu.is_some() || app.grid.renaming_tab.is_some() {
         return;
     }
-    let editing = mode == Mode::Edit && ctx.memory(|m| m.focused()) == Some(editor_id());
+    let editing = mode != Mode::View && ctx.memory(|m| m.focused()) == Some(editor_id());
     let cmd = Modifiers::COMMAND;
     let shift_cmd = Modifiers::COMMAND | Modifiers::SHIFT;
     let mut run: Option<&str> = None;
@@ -671,21 +671,54 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
     }
 }
 
-/// The strip above the document: View and Edit, and in Edit mode the formatting buttons.
-/// Returns the mode to draw this frame.
-fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode: Mode, t: &Tokens) -> Mode {
-    let lang = app.ui.language;
+/// The strip above the document: Edit, Side by Side and View, then Contents, Fit Width and
+/// Find, and while the text shows the formatting buttons. In a window too narrow for them all it
+/// scrolls sideways, with the wheel as the sheet tabs do. Returns the mode to draw this frame.
+fn toolbar(app: &mut SheetApp, ui: &mut Ui, ids: (u64, usize), mode: Mode, t: &Tokens) -> Mode {
     let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     ui.painter().rect_filled(bar, 0.0, t.ribbon);
     ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.ribbon_border));
-    let mut child =
-        ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let ui = &mut child;
-    ui.spacing_mut().item_spacing.x = 4.0;
-    for (m, icon, label) in [(Mode::View, Icon::Document, "View"), (Mode::Edit, Icon::Pen, "Edit")] {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 2.0))));
+    let wheel = if child.rect_contains_pointer(child.max_rect()) {
+        child.input(|i| {
+            let d = i.smooth_scroll_delta;
+            if d.x.abs() > d.y.abs() { d.x } else { d.y }
+        })
+    } else {
+        0.0
+    };
+    egui::ScrollArea::horizontal()
+        .id_salt("monun.doc_toolbar")
+        .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .show(&mut child, |ui| {
+            if wheel.abs() > 0.0 {
+                ui.scroll_with_delta(vec2(wheel, 0.0));
+            }
+            ui.horizontal_centered(|ui| toolbar_items(app, ui, ids, mode, t)).inner
+        })
+        .inner
+}
+
+fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode: Mode, t: &Tokens) -> Mode {
+    let lang = app.ui.language;
+    ui.spacing_mut().item_spacing.x = 2.0;
+    let separator = |ui: &mut Ui| {
+        ui.add_space(6.0);
+        let (sep, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
+        ui.painter().rect_filled(sep, 0.0, t.separator);
+        ui.add_space(6.0);
+    };
+    let modes = [
+        (Mode::Edit, Icon::Pen, "Edit", "Edit the text"),
+        (Mode::Split, Icon::SideBySide, "Side by Side", "Edit the text beside the document"),
+        (Mode::View, Icon::Document, "View", "Read the document"),
+    ];
+    for (m, icon, label, tip) in modes {
         let on = mode == m;
         let text = egui::RichText::new(lang.tr(label)).font(theme::ui_font(13.0)).color(if on { t.accent } else { t.text });
-        let (r, resp) = ui.allocate_exact_size(vec2(72.0, 28.0), Sense::click());
+        let w = ui.painter().layout_no_wrap(text.text().to_owned(), theme::ui_font(13.0), t.text).size().x;
+        let (r, resp) = ui.allocate_exact_size(vec2((w + 36.0).max(60.0), 28.0), Sense::click());
         if on {
             ui.painter().rect_filled(r, 4.0, t.pressed);
         } else if resp.hovered() {
@@ -699,30 +732,34 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
         );
         let galley = ui.painter().layout_no_wrap(text.text().to_owned(), theme::ui_font(13.0), if on { t.accent } else { t.text });
         ui.painter().galley(pos2(r.left() + 28.0, r.center().y - galley.size().y / 2.0), galley, t.text);
-        let resp = resp.on_hover_text(lang.tr(if m == Mode::View { "Read the document" } else { "Edit the text beside the document" }));
+        let resp = resp.on_hover_text(lang.tr(tip));
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, lang.tr(label)));
         if resp.clicked() && !on {
             if let Err(e) = app.commit_doc_draft() {
                 app.alert(e);
             }
-            app.doc_view.set_mode(uid, sheet, m);
+            // The document keeps its mode, in its file: each tab opens as it was left.
+            app.doc_view.modes.insert((uid, sheet), m);
+            app.run_or_alert("doc.view", json!({"sheet": sheet, "mode": m.name()}));
             mode = m;
-            if m == Mode::Edit {
+            if m != Mode::View {
                 app.doc_view.focus_editor = true;
             }
         }
     }
+    separator(ui);
     let on = app.doc_view.outline;
     let outline =
         ui.add(egui::Button::selectable(on, egui::RichText::new(lang.tr("Contents")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
     if outline.on_hover_text(lang.tr("Show the headings beside the document")).clicked() {
         app.doc_view.outline = !on;
     }
-    let fit = app.ui.doc_fit_width;
+    // Each document's own, kept in its file like its mode.
+    let (_, fit) = chosen_view(app);
     let fit_width =
         ui.add(egui::Button::selectable(fit, egui::RichText::new(lang.tr("Fit Width")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
     if fit_width.on_hover_text(lang.tr("Show tables and diagrams as wide as the page")).clicked() {
-        app.ui.doc_fit_width = !fit;
+        app.run_or_alert("doc.view", json!({"sheet": sheet, "fitWidth": !fit}));
     }
     let find = ui.add(
         egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),
@@ -730,11 +767,8 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode
     if find.on_hover_text(lang.tr("Find and replace in the document (Ctrl+F, Ctrl+H)")).clicked() {
         app.doc_view.find.get_or_insert_with(Find::default).focus = true;
     }
-    if mode == Mode::Edit {
-        ui.add_space(8.0);
-        let (sep, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
-        ui.painter().rect_filled(sep, 0.0, t.separator);
-        ui.add_space(8.0);
+    if mode != Mode::View {
+        separator(ui);
         for (i, (f, label, tip)) in editor::BUTTONS.iter().enumerate() {
             // Groups: headings, character styles, lists and quotes, blocks.
             if editor::GROUP_STARTS.contains(&i) {
@@ -790,7 +824,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: app.ui.doc_fit_width };
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1 };
     let lead = 24.0 * z;
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]);
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
@@ -814,7 +848,16 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     act(app, ui.ctx(), action, Mode::View);
 }
 
-/// Edit mode: the editor on the left, the divider, the rendered document on the right.
+/// Edit mode: the editor across the whole tab.
+fn text_only(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
+    let area = ui.available_rect_before_wrap();
+    ui.painter().rect_filled(area, 0.0, t.input_bg);
+    let mut editor_ui = ui.new_child(egui::UiBuilder::new().max_rect(area));
+    app.doc_view.editor_top = editor::show(app, &mut editor_ui, z, t);
+    ui.allocate_rect(area, Sense::hover());
+}
+
+/// Side by Side: the editor on the left, the divider, the rendered document on the right.
 fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let area = ui.available_rect_before_wrap();
     let split = app.doc_view.split.unwrap_or(0.5).clamp(0.2, 0.8);
@@ -852,7 +895,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: app.ui.doc_fit_width };
+    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1 };
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);
@@ -867,7 +910,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     });
     app.doc_view.positions = positions;
     ui.allocate_rect(area, Sense::hover());
-    act(app, ui.ctx(), action, Mode::Edit);
+    act(app, ui.ctx(), action, Mode::Split);
 }
 
 /// Carries out what a click in the rendered document asked for.
@@ -883,7 +926,7 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, action: Option<preview::Action>,
             }
         }
         Some(preview::Action::Link(target)) => follow_link(app, ctx, &target),
-        Some(preview::Action::Goto(line)) if mode == Mode::Edit => {
+        Some(preview::Action::Goto(line)) if mode != Mode::View => {
             app.doc_view.goto_line = Some(line);
             app.doc_view.focus_editor = true;
         }

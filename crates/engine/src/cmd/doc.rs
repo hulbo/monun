@@ -16,7 +16,16 @@ pub fn specs() -> Vec<CommandSpec> {
             insert
         ),
         cmd!("doc.setText", "Edit Document", [], None, "{sheet?, text}: replaces a document tab's Markdown text", has_doc, set_text),
-        cmd!(query "doc.get", "Get Document", [], None, "{sheet?} → {name, text}", has_doc, get),
+        cmd!(query "doc.get", "Get Document", [], None, "{sheet?} → {name, text, mode, fitWidth} (mode: edit|split|view, null until one is chosen)", has_doc, get),
+        cmd!(
+            noundo "doc.view",
+            "Document View",
+            [],
+            None,
+            "{sheet?, mode?: edit|split|view, fitWidth?: bool} → {mode, fitWidth}: how a document tab shows (its text, both side by side, or the document) and its Fit Width. Kept in the file, so the workbook changes; no undo step",
+            has_doc,
+            view
+        ),
         cmd!(
             "doc.import",
             "Import Markdown",
@@ -89,5 +98,30 @@ fn get(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let sh = s.doc()?.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
     let doc = sh.document.as_ref().ok_or_else(|| bad("sheet", format!("`{}` is not a document", sh.name)))?;
-    Ok(json!({"name": sh.name, "text": doc.text}))
+    Ok(json!({"name": sh.name, "text": doc.text, "mode": doc.mode.map(monun_model::DocMode::name), "fitWidth": doc.fit_width}))
+}
+
+/// Sets how a document tab shows. Like the text, the choice is the workbook's, kept in its file
+/// (an XLSX file in the tab's mark), but it is no edit to take back: switching modes leaves Undo
+/// for the text.
+fn view(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let mode = match str_param(p, "mode") {
+        Some(m) => Some(monun_model::DocMode::parse(m).ok_or_else(|| bad("doc.view", format!("`mode` must be edit, split or view, not `{m}`")))?),
+        None => None,
+    };
+    let fit = super::bool_param(p, "fitWidth");
+    let d = s.doc_mut()?;
+    let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+    let doc = sh.document.as_ref().ok_or_else(|| bad("sheet", format!("`{}` is not a document", sh.name)))?;
+    let (mode, fit) = (mode.or(doc.mode), fit.unwrap_or(doc.fit_width));
+    if (mode, fit) != (doc.mode, doc.fit_width) {
+        let wb = std::sync::Arc::make_mut(&mut d.wb);
+        if let Some(doc) = wb.sheet_mut(sheet).and_then(|sh| sh.document.as_mut()) {
+            doc.mode = mode;
+            doc.fit_width = fit;
+        }
+        d.revision += 1;
+    }
+    Ok(json!({"mode": mode.map(monun_model::DocMode::name), "fitWidth": fit}))
 }

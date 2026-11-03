@@ -112,7 +112,7 @@ pub fn with_cells(wb: &Workbook) -> Option<Workbook> {
         out.names.push(DefinedName {
             name: MARK.into(),
             scope: Some(i),
-            formula: format!("\"{TAG} {}\"", lines.len()),
+            formula: format!("\"{}\"", mark_text(lines.len(), &doc)),
             comment: String::new(),
             hidden: true,
         });
@@ -123,11 +123,12 @@ pub fn with_cells(wb: &Workbook) -> Option<Workbook> {
 /// Turns the marked worksheets of a file just read back into document tabs, and takes the marks
 /// out of the names. A document that arrived with cells (a hand-made JSON file) loses them.
 pub fn load(wb: &mut Workbook) {
-    let marks: Vec<(usize, usize)> = wb.names.iter().filter(|n| is_mark(n)).filter_map(|n| Some((n.scope?, line_count(&n.formula)))).collect();
+    let marks: Vec<(usize, usize, Document)> =
+        wb.names.iter().filter(|n| is_mark(n)).filter_map(|n| Some((n.scope?, line_count(&n.formula), view_of(&n.formula)))).collect();
     if !marks.is_empty() {
         wb.names.retain(|n| !is_mark(n));
     }
-    for (i, count) in marks {
+    for (i, count, view) in marks {
         let Some(sh) = wb.sheet(i) else { continue };
         if sh.is_document() {
             continue;
@@ -135,7 +136,7 @@ pub fn load(wb: &mut Workbook) {
         let text = text_of(wb, sh, count);
         if let Some(sh) = wb.sheet_mut(i) {
             clear_grid(sh);
-            sh.document = Some(Document { text });
+            sh.document = Some(Document { text, ..view });
         }
     }
     for i in 0..wb.sheets.len() {
@@ -149,6 +150,27 @@ pub fn load(wb: &mut Workbook) {
 
 fn is_mark(n: &DefinedName) -> bool {
     n.scope.is_some() && n.name.eq_ignore_ascii_case(MARK)
+}
+
+/// A mark's text: the format, the line count, then how the tab shows when that was chosen (its
+/// mode, and `fit` for Fit Width), as in `md1 12 split fit`.
+fn mark_text(lines: usize, doc: &Document) -> String {
+    let mut text = format!("{TAG} {lines}");
+    if let Some(mode) = doc.mode {
+        text.push(' ');
+        text.push_str(mode.name());
+    }
+    if doc.fit_width {
+        text.push_str(" fit");
+    }
+    text
+}
+
+/// How a mark's text says the tab shows (an older mark says nothing: the defaults).
+fn view_of(formula: &str) -> Document {
+    let text = formula.trim().trim_matches('"');
+    let words = || text.split_whitespace().skip(2);
+    Document { text: String::new(), mode: words().find_map(monun_model::DocMode::parse), fit_width: words().any(|w| w.eq_ignore_ascii_case("fit")) }
 }
 
 /// The line count a mark's text (`"md1 12"`) records; 0 when it records none.

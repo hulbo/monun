@@ -328,3 +328,31 @@ fn fit_width_widens_a_document_table_on_paper() {
     let (wide, _) = pdf_of(&mut s, json!({"fitWidth": true}));
     assert_ne!(plain, wide, "the table's lines reach the page's width");
 }
+
+#[test]
+fn a_document_keeps_its_mode_and_fit_width_in_its_files() {
+    let mut s = session();
+    s.execute("doc.insert", json!({"name": "Notes", "text": "# Plan\n"})).unwrap();
+    let r = s.execute("doc.get", json!({})).unwrap();
+    assert_eq!((r["mode"].clone(), r["fitWidth"].clone()), (Value::Null, json!(false)), "none chosen yet");
+    let saved = s.active().unwrap().wb.clone();
+    s.active_mut().unwrap().saved = saved;
+    let undo = s.active().unwrap().undo.len();
+    let r = s.execute("doc.view", json!({"mode": "edit", "fitWidth": true})).unwrap();
+    assert_eq!(r, json!({"mode": "edit", "fitWidth": true}));
+    let d = s.active().unwrap();
+    assert!(d.is_dirty(), "the file is to be saved");
+    assert_eq!(d.undo.len(), undo, "no undo step");
+    // XLSX keeps them in the tab's mark, JSON in the document.
+    let back = reopen(&d.wb);
+    let doc = back.sheet(1).unwrap().document.clone().unwrap();
+    assert_eq!((doc.mode, doc.fit_width, doc.text.as_str()), (Some(monun_engine::model::DocMode::Edit), true, "# Plan\n"));
+    let json = io::save_bytes(&d.wb, "book.json").unwrap();
+    let (back, _) = io::open_bytes("book.json", &json).unwrap();
+    assert_eq!(back.sheet(1).unwrap().document.as_ref().unwrap().mode, Some(monun_engine::model::DocMode::Edit));
+    // One setting at a time leaves the other.
+    s.execute("doc.view", json!({"mode": "split"})).unwrap();
+    assert_eq!(s.execute("doc.get", json!({})).unwrap()["fitWidth"], json!(true));
+    assert!(s.execute("doc.view", json!({"mode": "wide"})).is_err());
+    assert!(s.execute("doc.view", json!({"sheet": "Sheet1", "mode": "view"})).is_err(), "only a document has a mode");
+}
