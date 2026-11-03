@@ -89,3 +89,20 @@ fn fields_become_their_own_runs() {
     assert_eq!(plain(text), "{{코드}} {{}} {{열림");
     assert_eq!(fields(&blocks), ["구매목록!D1", "=SUM(B:B)", "Sheet1!A1"]);
 }
+
+#[test]
+fn table_columns_fit_the_room() {
+    // Everything fits: each column keeps its width.
+    assert_eq!(fit_columns(&[50.0, 80.0], 200.0, 10.0), vec![50.0, 80.0]);
+    // Too wide: the narrow columns keep theirs and the wide ones share the rest by width.
+    let w = fit_columns(&[60.0, 200.0, 400.0, 400.0], 700.0, 10.0);
+    assert_eq!(w[0], 60.0);
+    assert_eq!(w[1], 200.0);
+    assert!((w[2] - 220.0).abs() < 0.01 && (w[3] - 220.0).abs() < 0.01, "{w:?}");
+    assert!((w.iter().sum::<f32>() - 700.0).abs() < 0.01);
+    // No column goes below the floor, even if the table then overflows.
+    let w = fit_columns(&[100.0; 10], 50.0, 20.0);
+    assert!(w.iter().all(|w| *w == 20.0), "{w:?}");
+    assert!(fit_columns(&[], 100.0, 10.0).is_empty());
+    assert_eq!(fit_columns(&[f32::NAN, 10.0], 100.0, 5.0), vec![0.0, 10.0]);
+}

@@ -247,40 +247,87 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out
     }
 }
 
+/// A table with its lines drawn: the header row shaded, bold and centred, the other rows aligned
+/// as their columns say. Columns are as wide as their cells, narrowed to fit (their text wraps).
 fn table(ui: &mut Ui, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], line: usize, cx: &Cx, out: &mut Out) {
     let t = cx.t;
-    egui::ScrollArea::horizontal().id_salt(("monun.doc_table", line)).auto_shrink([false, true]).show(ui, |ui| {
-        let resp = egui::Grid::new(("monun.doc_table_grid", line))
-            .striped(true)
-            .spacing(vec2(18.0 * cx.z, 6.0 * cx.z))
-            .show(ui, |ui| {
-                for (i, cell) in head.iter().enumerate() {
-                    cell_ui(ui, cell, align.get(i).copied().unwrap_or_default(), cx, true, line, out);
+    let cols = rows.iter().map(Vec::len).chain(std::iter::once(head.len())).max().unwrap_or(0);
+    if cols == 0 {
+        return;
+    }
+    let pad = vec2(10.0, 6.0) * cx.z;
+    let plain = FontSpec { size: cx.body(), bold: false };
+    let all: Vec<(&[Vec<Span>], bool)> = std::iter::once((head, true)).chain(rows.iter().map(|r| (r.as_slice(), false))).collect();
+    let font = |header: bool| FontSpec { bold: header, ..plain };
+    let mut natural = vec![0.0f32; cols];
+    for (row, header) in &all {
+        for (cell, w) in row.iter().zip(natural.iter_mut()) {
+            // A pixel to spare, so a cell that fits on one line isn't wrapped by rounding.
+            *w = w.max(measure(ui, cell, cx, font(*header), f32::INFINITY).x.ceil() + 1.0 + pad.x * 2.0);
+        }
+    }
+    let room = ui.available_width();
+    let widths = monun_markdown::fit_columns(&natural, room, 48.0 * cx.z);
+    let line_h = cx.body() * 1.4;
+    let heights: Vec<f32> = all
+        .iter()
+        .map(|(row, header)| {
+            let tallest = row.iter().zip(&widths).map(|(cell, w)| measure(ui, cell, cx, font(*header), w - pad.x * 2.0).y).fold(line_h, f32::max);
+            tallest + pad.y * 2.0
+        })
+        .collect();
+    let size = vec2(widths.iter().sum(), heights.iter().sum());
+    let head_fill = if t.dark { Color32::from_rgb(0x34, 0x38, 0x3D) } else { Color32::from_rgb(0xE3, 0xE8, 0xEF) };
+    let rule = if t.dark { Color32::from_rgb(0x55, 0x58, 0x5C) } else { Color32::from_rgb(0xC9, 0xCE, 0xD4) };
+    let draw = |ui: &mut Ui, out: &mut Out| {
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let radius = 4.0 * cx.z;
+        let head_h = heights.first().copied().unwrap_or(0.0);
+        let r8 = radius.round().clamp(0.0, 255.0) as u8;
+        ui.painter().rect_filled(
+            Rect::from_min_size(rect.min, vec2(rect.width(), head_h)),
+            egui::CornerRadius { nw: r8, ne: r8, sw: 0, se: 0 },
+            head_fill,
+        );
+        let mut y = rect.top();
+        for (r, ((row, header), h)) in all.iter().zip(&heights).enumerate() {
+            let mut x = rect.left();
+            for (c, w) in widths.iter().enumerate() {
+                if let Some(cell) = row.get(c) {
+                    let inner = Rect::from_min_size(pos2(x, y), vec2(*w, *h)).shrink2(pad);
+                    let shown = measure(ui, cell, cx, font(*header), inner.width());
+                    let column = if *header { Align::Center } else { align.get(c).copied().unwrap_or_default() };
+                    let left = match column {
+                        Align::Right => inner.right() - shown.x,
+                        Align::Center => inner.center().x - shown.x / 2.0,
+                        _ => inner.left(),
+                    };
+                    let at = Rect::from_min_size(pos2(left, inner.center().y - shown.y / 2.0), shown);
+                    let mut cell_ui = ui.new_child(egui::UiBuilder::new().id_salt(("monun.doc_cell", line, r, c)).max_rect(at));
+                    rich_line(&mut cell_ui, cell, cx, font(*header), t.text, line, out, inner.width());
                 }
-                ui.end_row();
-                for row in rows {
-                    for (i, cell) in row.iter().enumerate() {
-                        cell_ui(ui, cell, align.get(i).copied().unwrap_or_default(), cx, false, line, out);
-                    }
-                    ui.end_row();
-                }
-            })
-            .response;
-        let r = resp.rect;
-        let y = r.top() + cx.body() * 1.45 + 3.0 * cx.z;
-        ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, t.separator));
-    });
-}
-
-fn cell_ui(ui: &mut Ui, spans: &[Span], align: Align, cx: &Cx, head: bool, line: usize, out: &mut Out) {
-    let layout = match align {
-        Align::Right => egui::Layout::right_to_left(egui::Align::Center),
-        Align::Center => egui::Layout::top_down(egui::Align::Center),
-        _ => egui::Layout::left_to_right(egui::Align::Center),
+                x += w;
+            }
+            y += h;
+            // The line under the header is the stronger one.
+            if r + 1 < all.len() {
+                let stroke = if r == 0 { Stroke::new(1.5, rule) } else { Stroke::new(1.0, rule) };
+                ui.painter().line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], stroke);
+            }
+        }
+        let mut x = rect.left();
+        for w in widths.iter().take(widths.len().saturating_sub(1)) {
+            x += w;
+            ui.painter().line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0, rule));
+        }
+        ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, rule), egui::StrokeKind::Inside);
     };
-    ui.with_layout(layout, |ui| {
-        rich_line(ui, spans, cx, FontSpec { size: cx.body(), bold: head }, cx.t.text, line, out, f32::INFINITY);
-    });
+    if size.x <= room + 0.5 {
+        draw(ui, out);
+    } else {
+        // Too many columns to fit even narrowed: the table scrolls sideways.
+        egui::ScrollArea::horizontal().id_salt(("monun.doc_table", line)).auto_shrink([false, true]).show(ui, |ui| draw(ui, out));
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -295,13 +342,19 @@ fn rich(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, li
     rich_line(ui, spans, cx, font, color, line, out, width);
 }
 
-/// Lays out styled spans, draws them, and reports a click on a link (or a double-click).
-#[allow(clippy::too_many_arguments)]
-fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Out, width: f32) {
+/// Styled spans as text to lay out `width` wide.
+struct Styled<'a> {
+    job: LayoutJob,
+    /// Links' char ranges and targets.
+    links: Vec<(usize, usize, &'a str)>,
+    /// `{{…}}` fields: their char range and the expression, shown on hover.
+    tips: Vec<(usize, usize, String)>,
+}
+
+fn styled<'a>(spans: &'a [Span], cx: &Cx, font: FontSpec, color: Color32, width: f32) -> Styled<'a> {
     let t = cx.t;
     let mut job = LayoutJob::default();
     let mut links: Vec<(usize, usize, &str)> = Vec::new();
-    // `{{…}}` fields: their char range and the expression, shown on hover.
     let mut tips: Vec<(usize, usize, String)> = Vec::new();
     for s in spans {
         let family = if font.bold || s.style.bold { theme::UI_BOLD } else { theme::UI };
@@ -359,6 +412,19 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
         job.append(" ", 0.0, TextFormat::simple(FontId::new(font.size, FontFamily::Name(theme::UI.into())), color));
     }
     job.wrap.max_width = width;
+    Styled { job, links, tips }
+}
+
+/// The size styled spans take `width` wide.
+fn measure(ui: &Ui, spans: &[Span], cx: &Cx, font: FontSpec, width: f32) -> egui::Vec2 {
+    let job = styled(spans, cx, font, cx.t.text, width).job;
+    ui.fonts_mut(|f| f.layout_job(job)).size()
+}
+
+/// Lays out styled spans, draws them, and reports a click on a link (or a double-click).
+#[allow(clippy::too_many_arguments)]
+fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Out, width: f32) {
+    let Styled { job, links, tips } = styled(spans, cx, font, color, width);
     let galley = ui.fonts_mut(|f| f.layout_job(job));
     let (rect, resp) = ui.allocate_exact_size(galley.size(), Sense::click());
     let plain = galley.text().to_owned();

@@ -498,6 +498,39 @@ pub fn fields(blocks: &[Block]) -> Vec<String> {
     out
 }
 
+/// A table's column widths in `room`: each column as wide as its widest cell (`natural`) when
+/// they all fit. Otherwise the columns narrower than an even share keep their width and the
+/// others share what is left by their width, none below `floor` (so the table can still be wider
+/// than `room` when there are many columns).
+pub fn fit_columns(natural: &[f32], room: f32, floor: f32) -> Vec<f32> {
+    let natural: Vec<f32> = natural.iter().map(|w| if w.is_finite() { w.max(0.0) } else { 0.0 }).collect();
+    if natural.iter().sum::<f32>() <= room {
+        return natural;
+    }
+    let mut kept = vec![false; natural.len()];
+    let mut left = room;
+    loop {
+        let open = kept.iter().filter(|k| !**k).count();
+        if open == 0 {
+            break;
+        }
+        let share = left / open as f32;
+        let mut changed = false;
+        for (w, k) in natural.iter().zip(kept.iter_mut()) {
+            if !*k && *w <= share {
+                *k = true;
+                left -= w;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let wide: f32 = natural.iter().zip(&kept).filter(|(_, k)| !**k).map(|(w, _)| w).sum();
+    natural.iter().zip(&kept).map(|(w, k)| if *k || wide <= 0.0 { *w } else { (w * left.max(0.0) / wide).max(floor) }).collect()
+}
+
 /// Splits the `{{…}}` fields out of a leaf's runs. Code keeps its braces, and so does an empty
 /// or unclosed pair.
 fn split_fields(spans: Vec<Span>) -> Vec<Span> {

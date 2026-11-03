@@ -190,3 +190,34 @@ fn pictures_go_into_the_document_and_show_in_it() {
     assert!(h.query_by_label("chart").is_some());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_document_tab_has_no_ribbon() {
+    let mut h = with_document("# Plan\n");
+    assert!(h.query_by_label("File").is_some(), "File stays");
+    assert!(h.query_by_label("Ribbon").is_none(), "no button to show the ribbon");
+    assert!(h.query_by_label("Paste").is_none(), "no ribbon commands");
+    // Ctrl+F1 there leaves the sheets' ribbon as it was.
+    press(&mut h, Key::F1, Modifiers::COMMAND);
+    assert!(!h.state().ui.ribbon_collapsed);
+    // Back on a sheet the ribbon is there again.
+    press(&mut h, Key::PageUp, Modifiers::COMMAND);
+    assert!(h.query_by_label("Ribbon").is_some());
+    assert!(h.query_by_label("Paste").is_some());
+}
+
+#[test]
+fn tables_centre_their_header_and_wrap_to_the_width() {
+    let long = vec!["word"; 80].join(" ");
+    let mut h = with_document(&format!("| No | Detail |\n|---|---|\n| X1 | {long} |\n| X2 | short detail text |\n"));
+    h.run_steps(2);
+    let head = h.get_by_label("Detail").rect();
+    let wrapped = h.get_by_label(&long).rect();
+    let short = h.get_by_label("short detail text").rect();
+    assert!(wrapped.right() < 1200.0, "the long cell fits the window: {wrapped:?}");
+    assert!(wrapped.height() > 2.5 * short.height(), "its text wraps: {wrapped:?}");
+    // The header is in the middle of its column; the body starts at its left.
+    assert!((head.center().x - wrapped.center().x).abs() < 30.0, "{head:?} over {wrapped:?}");
+    assert!(head.left() > short.left() + 100.0, "{head:?} vs {short:?}");
+    assert!((short.left() - wrapped.left()).abs() < 1.0);
+}

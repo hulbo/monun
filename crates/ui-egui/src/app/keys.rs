@@ -30,6 +30,8 @@ impl SheetApp {
         for action in actions {
             match action {
                 keytips::Action::Tab("File") => self.open_backstage(backstage::Page::Home),
+                // A document tab shows no ribbon, so its tabs' letters lead nowhere.
+                keytips::Action::Tab(_) if crate::doc_view::is_active(self) => self.keytips.clear(),
                 keytips::Action::Tab(tab) => {
                     self.run_or_alert("ui.ribbonTab", json!({"tab": tab}));
                     self.ui.ribbon_collapsed = false;

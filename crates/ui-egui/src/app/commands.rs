@@ -142,7 +142,10 @@ impl SheetApp {
                 Ok(Json::Null)
             }
             "view.collapseRibbon" => {
-                self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
+                // A document tab shows no ribbon: Ctrl+F1 there leaves the sheets' ribbon alone.
+                if !crate::doc_view::is_active(self) {
+                    self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
+                }
                 Ok(Json::Null)
             }
             "view.expandFormulaBar" => {

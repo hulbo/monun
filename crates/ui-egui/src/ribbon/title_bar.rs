@@ -159,7 +159,11 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 theme.context_menu(|ui| theme_choices(app, ui));
                 // Show or hide the ribbon's commands to give the sheet more room (Excel's Ctrl+F1);
-                // the tabs stay, and clicking one shows its commands again.
+                // the tabs stay, and clicking one shows its commands again. A document tab has no
+                // ribbon to show.
+                if crate::doc_view::is_active(app) {
+                    return;
+                }
                 let collapsed = app.ui.ribbon_collapsed;
                 let (icon, tip) =
                     if collapsed { (Icon::Chevron, "Show the Ribbon (Ctrl+F1)") } else { (Icon::ChevronUp, "Collapse the Ribbon (Ctrl+F1)") };

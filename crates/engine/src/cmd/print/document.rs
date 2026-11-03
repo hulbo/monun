@@ -32,6 +32,8 @@ const DIM: Rgb = [0x60, 0x60, 0x60];
 const LINK: Rgb = [0x06, 0x45, 0xAD];
 const RULE: Rgb = [0xC0, 0xC0, 0xC0];
 const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
+/// A table's header row.
+const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
 /// The pages of document tab `sh`, as drawings.
 pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout) -> Vec<Vec<Op>> {
@@ -273,24 +275,7 @@ impl Flow<'_> {
         self.need(h);
         let base = self.y + size * 1.05;
         let mut x = self.left + indent;
-        // Words in the same look draw as one run.
-        let mut runs: Vec<Piece> = Vec::with_capacity(line.len());
-        for p in line {
-            match runs.last_mut() {
-                Some(last)
-                    if last.font == p.font
-                        && last.size == p.size
-                        && last.color == p.color
-                        && last.link == p.link
-                        && last.shade == p.shade
-                        && last.strike == p.strike =>
-                {
-                    last.text.push_str(&p.text);
-                }
-                _ => runs.push(p),
-            }
-        }
-        for p in runs {
+        for p in runs(line) {
             let w = p.width();
             if p.shade {
                 self.push(Op::Fill { x: x - 1.0, y: base - p.size * 0.85, w: w + 2.0, h: p.size * 1.15, color: SHADE });
@@ -431,38 +416,46 @@ impl Flow<'_> {
         };
         let head_cells = cells(head, true);
         let body: Vec<Vec<Vec<Piece>>> = rows.iter().map(|r| cells(r, false)).collect();
-        // Columns as wide as their widest cell, narrowed together to the line.
-        let mut widths = vec![24.0f32; cols];
-        for row in std::iter::once(&head_cells).chain(body.iter()) {
-            for (c, cell) in row.iter().enumerate() {
-                let w: f32 = cell.iter().map(Piece::width).sum::<f32>() + pad * 2.0;
-                if let Some(slot) = widths.get_mut(c) {
-                    *slot = slot.max(w);
-                }
-            }
-        }
-        let room = self.width - indent;
-        let total: f32 = widths.iter().sum();
-        if total > room {
-            for w in widths.iter_mut() {
-                *w = (*w * room / total).max(18.0);
-            }
-        }
+        // Columns as wide as their widest cell, narrowed to the line (the narrow ones keep theirs).
+        let natural: Vec<f32> = (0..cols)
+            .map(|c| {
+                std::iter::once(&head_cells)
+                    .chain(body.iter())
+                    .filter_map(|row| row.get(c))
+                    // Measured as `wrap` measures it, word by word, with a point to spare for rounding.
+                    .map(|cell| cell.iter().flat_map(words).map(|w| w.width()).sum::<f32>() + pad * 2.0 + 1.0)
+                    .fold(24.0, f32::max)
+            })
+            .collect();
+        let widths = monun_markdown::fit_columns(&natural, self.width - indent, 24.0);
         let x0 = self.left + indent;
+        let total: f32 = widths.iter().sum();
         let line_h = BODY * LEADING;
-        let draw_row = |flow: &mut Flow, row: &[Vec<Piece>], header: bool| {
+        // A row's cells wrapped to their columns, and its height.
+        let lay_out = |row: &[Vec<Piece>]| -> (Vec<Vec<Vec<Piece>>>, f32) {
             let laid: Vec<Vec<Vec<Piece>>> = row.iter().zip(&widths).map(|(cell, w)| wrap(cell.clone(), w - pad * 2.0)).collect();
-            let h = laid.iter().map(Vec::len).max().unwrap_or(1).max(1) as f32 * line_h + pad;
+            let h = laid.iter().map(Vec::len).max().unwrap_or(1).max(1) as f32 * line_h + pad * 1.5;
+            (laid, h)
+        };
+        // A row with its lines: the header shaded and centred, the rest aligned by their column.
+        let draw_row = |flow: &mut Flow, (laid, h): (Vec<Vec<Vec<Piece>>>, f32), header: bool| {
             flow.need(h);
             if header {
-                flow.push(Op::Fill { x: x0, y: flow.y, w: widths.iter().sum(), h, color: SHADE });
+                flow.push(Op::Fill { x: x0, y: flow.y, w: total, h, color: HEAD });
             }
             let mut x = x0;
             for ((lines, w), c) in laid.into_iter().zip(&widths).zip(0..) {
-                let mut y = flow.y + pad / 2.0;
+                let mut y = flow.y + (h - lines.len() as f32 * line_h) / 2.0;
+                let column = if header { Align::Center } else { align.get(c).copied().unwrap_or_default() };
                 for line in lines {
+                    // Aligned without the space after its last word.
+                    let mut line = runs(line);
+                    if let Some(last) = line.last_mut() {
+                        let end = last.text.trim_end().len();
+                        last.text.truncate(end);
+                    }
                     let lw: f32 = line.iter().map(Piece::width).sum();
-                    let mut lx = match align.get(c).copied().unwrap_or_default() {
+                    let mut lx = match column {
                         Align::Right => x + w - pad - lw,
                         Align::Center => x + (w - lw) / 2.0,
                         _ => x + pad,
@@ -476,15 +469,49 @@ impl Flow<'_> {
                 }
                 x += w;
             }
-            flow.y += h;
-            let y = flow.y;
-            flow.push(Op::Line { x0, y0: y, x1: x0 + widths.iter().sum::<f32>(), y1: y, width: if header { 0.8 } else { 0.4 }, color: RULE });
+            let (top, bottom) = (flow.y, flow.y + h);
+            flow.push(Op::Line { x0, y0: top, x1: x0 + total, y1: top, width: 0.5, color: RULE });
+            flow.push(Op::Line { x0, y0: bottom, x1: x0 + total, y1: bottom, width: if header { 1.0 } else { 0.5 }, color: RULE });
+            let mut x = x0;
+            for w in std::iter::once(&0.0).chain(widths.iter()) {
+                x += w;
+                flow.push(Op::Line { x0: x, y0: top, x1: x, y1: bottom, width: 0.5, color: RULE });
+            }
+            flow.y = bottom;
         };
-        draw_row(self, &head_cells, true);
+        draw_row(self, lay_out(&head_cells), true);
         for row in &body {
+            let row = lay_out(row);
+            let page = self.pages.len();
+            self.need(row.1);
+            if self.pages.len() > page {
+                // The table goes on over a page: its header row comes again first.
+                draw_row(self, lay_out(&head_cells), true);
+            }
             draw_row(self, row, false);
         }
     }
+}
+
+/// A line's words, those in the same look joined into one run.
+fn runs(line: Vec<Piece>) -> Vec<Piece> {
+    let mut runs: Vec<Piece> = Vec::with_capacity(line.len());
+    for p in line {
+        match runs.last_mut() {
+            Some(last)
+                if last.font == p.font
+                    && last.size == p.size
+                    && last.color == p.color
+                    && last.link == p.link
+                    && last.shade == p.shade
+                    && last.strike == p.strike =>
+            {
+                last.text.push_str(&p.text);
+            }
+            _ => runs.push(p),
+        }
+    }
+    runs
 }
 
 /// A piece cut into words, each with the spaces after it.

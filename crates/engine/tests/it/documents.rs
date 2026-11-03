@@ -231,3 +231,18 @@ fn a_document_prints_as_text_pages() {
     let (_, all) = pdf_of(&mut s, json!({"sheets": "all"}));
     assert!(all >= pages, "{all} pages for all sheets, {pages} for the document");
 }
+
+#[test]
+fn a_long_table_repeats_its_header_on_each_page() {
+    let mut s = session();
+    let mut text = String::from("| Ticker | Note |\n|---|---|\n");
+    for i in 0..150 {
+        text.push_str(&format!("| T{i} | row {i} |\n"));
+    }
+    s.execute("doc.insert", json!({"name": "Notes", "text": text})).unwrap();
+    let (pdf, pages) = pdf_of(&mut s, json!({}));
+    assert!(pages >= 2, "the table runs over pages: {pages}");
+    let headers = pdf.windows(b"(Ticker)".len()).filter(|w| *w == b"(Ticker)").count();
+    assert_eq!(headers as u64, pages, "one header row on every page");
+    assert!(contains(&pdf, "(row 149)"));
+}

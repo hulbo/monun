@@ -47,7 +47,8 @@ const _: () = assert!(TITLE_CONTROL_H < TITLE_BAR_H, "title-bar controls keep a 
 /// With the app's title bar the tabs sit in it (see [`tab_strip`]) and only the card is drawn here.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let collapsed = app.ui.ribbon_collapsed;
+    // A document tab has its own toolbar and no ribbon; the sheets keep the ribbon as it was.
+    let collapsed = app.ui.ribbon_collapsed || crate::doc_view::is_active(app);
     let tabs_here = !app.chrome.title_bar;
     let tabs_h = if tabs_here { 34.0 } else { 4.0 };
     let h = if collapsed { tabs_h } else { tabs_h + 92.0 };
@@ -132,6 +133,10 @@ pub(crate) fn tab_strip(app: &mut SheetApp, ui: &mut Ui) {
     ui.spacing_mut().item_spacing.x = 2.0;
     if app.chrome.file_tab {
         file_menu(app, ui);
+    }
+    // A document tab has no ribbon, so only File stays.
+    if crate::doc_view::is_active(app) {
+        return;
     }
     let mut tabs: Vec<&str> = TABS.to_vec();
     let ctx_tabs = contextual_tabs(app);
