@@ -141,6 +141,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                     .filter(|(_, s)| s.visibility == Visibility::Visible)
                     .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet(), s.is_document()))
                     .collect();
+            // The selected tab has a ✕ that deletes its sheet, when another one stays visible and
+            // the workbook's structure isn't protected (the command refuses both).
+            let deletable = sheets.len() > 1 && !d.wb.protected_structure;
+            let mut delete = None;
             // Keep worksheet tabs in their own horizontally scrollable viewport. As in Excel, the
             // tabs get up to 60% of the bar and the grid's horizontal scrollbar the rest; a strip
             // that needs less shrinks to its tabs, so New sheet (+) sits right after the last one.
@@ -187,9 +191,11 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                 let renaming = app.grid.renaming_tab == Some(i);
                                 let font = if active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
                                 let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
-                                // A document tab shows a page before its name.
+                                // A document tab shows a page before its name, the selected one a ✕ after it.
                                 let icon_w = if document { 18.0 } else { 0.0 };
-                                let w = (tw + icon_w + 32.0).max(72.0);
+                                let close = active && deletable && !renaming;
+                                let close_w = if close { 18.0 } else { 0.0 };
+                                let w = (tw + icon_w + close_w + 32.0).max(72.0);
                                 let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click_and_drag());
                                 if active && reveal_active {
                                     resp.scroll_to_me(None);
@@ -231,12 +237,27 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                     }
                                 } else {
                                     let ink = if active { t.accent } else { t.text };
-                                    let at = pos2(r.center().x + icon_w / 2.0, r.center().y);
+                                    // A little above the middle: the interface font keeps more room
+                                    // under its letters than above them, which set the names low.
+                                    let at = pos2(r.center().x + (icon_w - close_w) / 2.0, r.center().y - TEXT_RAISE);
                                     if document {
-                                        let icon = Rect::from_center_size(pos2(at.x - tw / 2.0 - 10.0, at.y), vec2(14.0, 14.0));
+                                        let icon = Rect::from_center_size(pos2(at.x - tw / 2.0 - 10.0, at.y + 1.0), vec2(14.0, 14.0));
                                         icons::paint(ui.painter(), icon, Icon::Document, if active { t.accent } else { t.text_dim });
                                     }
                                     ui.painter().text(at, Align2::CENTER_CENTER, &name, font, ink);
+                                }
+                                if close {
+                                    let x = Rect::from_center_size(pos2(r.right() - 15.0, r.center().y - 1.0), vec2(18.0, 18.0));
+                                    let resp = ui.interact(x, ui.scope_id().with(("sheet_tab_delete", i)), Sense::click());
+                                    if resp.hovered() {
+                                        ui.painter().rect_filled(x, 3.0, t.hover);
+                                    }
+                                    icons::paint(ui.painter(), x.shrink(4.0), Icon::Close, if resp.hovered() { t.text } else { t.text_dim });
+                                    let label = app.ui.language.tr("Delete this sheet");
+                                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+                                    if resp.on_hover_text(label).clicked() {
+                                        delete = Some(i);
+                                    }
                                 }
                                 // A right-click activates the tab too, as in Excel, so the menu's sheet commands (Protect
                                 // Sheet, Select All Sheets) act on the sheet that was clicked rather than the one that was active.
@@ -273,6 +294,9 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                         });
                     });
             });
+            if let Some(i) = delete {
+                delete_tab(app, i);
+            }
             ui.add_space(6.0);
             if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, app.ui.language.tr("New sheet (⇧F11)"), vec2(26.0, 26.0)).clicked() {
                 app.run_or_alert("home.insertSheet", json!({}));
@@ -296,6 +320,41 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
         });
     });
     tab_menu(app, ui);
+}
+
+/// How far above its tab's middle a sheet name sits.
+const TEXT_RAISE: f32 = 3.0;
+
+/// Whether deleting the sheet loses something: cells, objects, notes or a document's text.
+fn has_content(sh: &Sheet) -> bool {
+    sh.used_range().is_some()
+        || !(sh.images.is_empty()
+            && sh.charts.is_empty()
+            && sh.shapes.is_empty()
+            && sh.tables.is_empty()
+            && sh.comments.is_empty()
+            && sh.pivots.is_empty()
+            && sh.sparklines.is_empty())
+        || sh.document.as_ref().is_some_and(|d| !d.text.trim().is_empty())
+}
+
+/// The selected tab's ✕: an empty sheet goes at once, one with something on it after asking. A
+/// cell or document being typed counts.
+fn delete_tab(app: &mut SheetApp, i: usize) {
+    if !app.commit_edit(0, 0, false, false) {
+        return;
+    }
+    if let Err(e) = app.commit_doc_draft() {
+        app.alert(e);
+        return;
+    }
+    let Some(sh) = app.session.active().and_then(|d| d.wb.sheet(i)) else { return };
+    if has_content(sh) {
+        let name = sh.name.clone();
+        app.open_dialog("deleteSheet", json!({"sheet": i, "name": name}));
+    } else {
+        app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
+    }
 }
 
 /// The right-click menu of a sheet tab, opening upward from the pointer, with Excel's access keys

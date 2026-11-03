@@ -309,6 +309,26 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         }
                     }
                 }
+                "deleteSheet" => {
+                    // The sheet tab's ✕ on a sheet with something on it.
+                    let lang = app.ui.language;
+                    let name = d.values.get("name").and_then(Json::as_str).unwrap_or_default().to_string();
+                    ui.add_space(4.0);
+                    ui.label(lang.tr("Delete the sheet “{name}” and everything on it?").replace("{name}", &name));
+                    ui.label(egui::RichText::new(lang.tr("Undo (Ctrl+Z) brings it back.")).color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+                    ui.add_space(8.0);
+                    let row = [DialogButton::discard("Delete"), DialogButton::neutral("Cancel")];
+                    match crate::widgets::dialog_buttons(ui, &row) {
+                        Some(0) => {
+                            if let Some(i) = d.values.get("sheet").and_then(Json::as_u64) {
+                                app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
+                            }
+                            open = false;
+                        }
+                        Some(_) => open = false,
+                        None => {}
+                    }
+                }
                 "saveChanges" => {
                     // The window title asks the question; the window bar names the workbook.
                     let quitting = d.values.get("quit").and_then(Json::as_bool) == Some(true);

@@ -244,3 +244,46 @@ fn overflowing_tabs_keep_their_share_and_the_new_sheet_button_after_it() {
         assert!(plus >= viewport.right() && plus - viewport.right() <= 12.0, "{width}: + at {plus}, strip ends at {}", viewport.right());
     }
 }
+
+fn sheet_names(h: &Harness) -> Vec<String> {
+    h.state().session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect()
+}
+
+fn press_last(h: &mut Harness, label: &str) {
+    use egui_kittest::kittest::Queryable as _;
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, label).last().unwrap_or_else(|| panic!("no {label} button")).click();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_selected_tab_deletes_its_sheet_asking_first_when_it_has_content() {
+    use egui_kittest::kittest::Queryable as _;
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("home.insertSheet", json!({"name": "Empty"})).unwrap();
+    let mut h = crate::support::harness(s, 4);
+    // One ✕, on the selected tab; an empty sheet goes at once.
+    assert_eq!(h.get_all_by_label("Delete this sheet").count(), 1);
+    press_last(&mut h, "Delete this sheet");
+    assert_eq!(sheet_names(&h), ["Sheet1"]);
+    assert!(h.state().dialog.is_none());
+    // The last sheet can't go: no ✕.
+    assert!(h.query_by_label("Delete this sheet").is_none());
+    // A sheet with something on it asks first.
+    h.state_mut().run("home.insertSheet", json!({"name": "Data"})).unwrap();
+    h.state_mut().run("cell.set", json!({"cell": "A1", "input": "42"})).unwrap();
+    h.run_steps(3);
+    press_last(&mut h, "Delete this sheet");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("deleteSheet"));
+    press_last(&mut h, "Cancel");
+    assert!(h.state().dialog.is_none());
+    assert_eq!(sheet_names(&h), ["Sheet1", "Data"], "Cancel keeps it");
+    press_last(&mut h, "Delete this sheet");
+    press_last(&mut h, "Delete");
+    assert_eq!(sheet_names(&h), ["Sheet1"]);
+    // Undo brings it back with what was on it.
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(sheet_names(&h), ["Sheet1", "Data"]);
+    let d = h.state().session.active().unwrap();
+    assert_eq!(d.wb.sheet(1).unwrap().value(monun_engine::core::CellRef::new(0, 0)), monun_engine::core::Value::Number(42.0));
+}
