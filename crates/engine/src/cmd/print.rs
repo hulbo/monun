@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export as PDF",
             ["File", "Export"],
             None,
-            "{path?, sheets?: active|all, range?: \"A1:F40\" (active sheet), fitToPage?: bool} → {pages, bytes, path} or {pages, bytes, base64} when no path. Honours each sheet's Page Setup.",
+            "{path?, sheets?: active|all, range?: \"A1:F40\" (active sheet), fitToPage?: bool, fitWidth?: bool} → {pages, bytes, path} or {pages, bytes, base64} when no path. Honours each sheet's Page Setup; all prints every visible sheet, one after another; fitWidth: document tabs' tables and diagrams as wide as the page.",
             has_doc,
             export_pdf
         ),
@@ -92,13 +92,13 @@ pub(crate) const PX_TO_PT: f32 = 0.75;
 pub const MAX_PAGES: usize = 2000;
 
 /// Renders laid-out sheets to a PDF.
-pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str) -> (Vec<u8>, usize) {
+pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str, fit_width: bool) -> (Vec<u8>, usize) {
     let mut doc = PdfDoc::new();
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
     // Document tabs print as text pages of their own, laid out first so the page count is known.
     let documents: Vec<Option<Vec<Vec<document::Op>>>> =
-        layouts.iter().map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay))).collect();
+        layouts.iter().map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay, fit_width))).collect();
     let total: usize = layouts.iter().zip(&documents).map(|(l, d)| d.as_ref().map_or(l.pages.len(), Vec::len)).sum();
     let (date, time) = hf_date_time(wb);
     let mut page_no = 0usize;
@@ -199,7 +199,7 @@ fn build_pdf(s: &Session, p: &Json, cmd: &str) -> Result<(Vec<u8>, usize)> {
     let d = s.doc()?;
     let lays = layouts(&d.wb, &opts);
     let path = d.path.clone().unwrap_or_default();
-    Ok(render_pdf(&d.wb, &lays, &d.display_title(), &path))
+    Ok(render_pdf(&d.wb, &lays, &d.display_title(), &path, opts.fit_width))
 }
 
 pub(crate) fn export_pdf(s: &mut Session, p: &Json) -> Result<Json> {

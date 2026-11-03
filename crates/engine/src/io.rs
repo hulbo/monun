@@ -255,9 +255,9 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 
 /// Encodes a workbook as `kind`, whatever `path`'s extension says.
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
-    // Document tabs travel as worksheets of lines in every format but JSON, which keeps them
-    // (and Markdown, which writes one).
-    let lines = if matches!(kind, FileKind::Json | FileKind::Markdown) { None } else { crate::docs::with_cells(wb) };
+    // Document tabs travel as worksheets of lines in every format but JSON, which keeps them,
+    // Markdown, which writes one, and a web page, which shows one as the tab does.
+    let lines = if matches!(kind, FileKind::Json | FileKind::Markdown | FileKind::Html) { None } else { crate::docs::with_cells(wb) };
     let wb = lines.as_ref().unwrap_or(wb);
     let sheet = wb.active_sheet();
     match kind {
@@ -490,10 +490,14 @@ const HTML_EXPORT_MAX_CELLS: u64 = 4_000_000;
 
 /// A sheet as a standalone HTML table (Save as Web Page). A sheet with pictures gets the sheet's
 /// own column widths and row heights so each picture and chart (inline SVG) can sit at its anchor.
+/// A document tab is its document, as the tab shows it.
 pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
     let Some(sh) = wb.sheet(sheet) else { return Ok(String::new()) };
-    let fixed = !(sh.images.is_empty() && sh.charts.is_empty());
-    let used = sh.used_range();
+    if sh.is_document() {
+        let anchors = std::collections::HashMap::new();
+        return Ok(crate::doc_html::page(&crate::doc_html::Context { wb, sheet: sh, anchors: &anchors, fit: false }));
+    }
+    let fixed = has_objects(sh);
     let mut out = String::new();
     let _ = write!(
         out,
@@ -503,10 +507,30 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
         if fixed { "0 4px" } else { "2px 4px" },
         if fixed { ";overflow:hidden;line-height:1" } else { "" }
     );
+    sheet_table(wb, sheet, false, &mut out)?;
+    out.push_str("</body></html>");
+    Ok(out)
+}
+
+/// Whether a sheet has pictures or charts, which its web page places at the sheet's geometry.
+fn has_objects(sh: &Sheet) -> bool {
+    !(sh.images.is_empty() && sh.charts.is_empty())
+}
+
+/// The table of a web page's sheet, wrapped with its pictures and charts when it has them. With
+/// `class` the table names its look (`fixed` or `flow`), for a page of several sheets whose
+/// style sheet has both.
+fn sheet_table(wb: &Workbook, sheet: usize, class: bool, out: &mut String) -> Result<()> {
+    let Some(sh) = wb.sheet(sheet) else { return Ok(()) };
+    let fixed = has_objects(sh);
+    let used = sh.used_range();
     if fixed {
         out.push_str("<div style=\"position:relative\">");
     }
     let _ = write!(out, "<table{}", table_dir(sh));
+    if class {
+        out.push_str(if fixed { " class=\"fixed\"" } else { " class=\"flow\"" });
+    }
     if let (true, Some(r)) = (fixed, used) {
         let width: f32 = (r.start.col..=r.end.col).map(|c| sh.col_width(c)).sum();
         let _ = write!(out, " style=\"width:{width}px\"");
@@ -602,6 +626,67 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
             }
         }
         out.push_str("</div>");
+    }
+    Ok(())
+}
+
+/// The look of a page of several sheets: a menu of their names along the top, and the sheet
+/// chosen in it below (the first until one is chosen). The menu needs no script: each sheet is
+/// the page's `#sheet-N`, so a link can open it as well.
+const BOOK_CSS: &str = concat!(
+    "body{margin:0;background:#fff;font-family:\"Malgun Gothic\",\"Apple SD Gothic Neo\",\"Noto Sans KR\",sans-serif}",
+    "nav.sheets{position:sticky;top:0;z-index:2;display:flex;gap:2px;overflow-x:auto;padding:8px 12px 0;background:#f3f3f3;",
+    "border-bottom:1px solid #d0d0d0}",
+    "nav.sheets a{padding:6px 16px;color:#424242;text-decoration:none;white-space:nowrap;font-size:14px;border:1px solid transparent;",
+    "border-bottom:0;border-radius:6px 6px 0 0;margin-bottom:-1px}",
+    "nav.sheets a:hover{background:#e8e8e8}",
+    "section.sheet{display:none;padding:12px 16px;scroll-margin-top:60px}section.sheet:target{display:block}",
+    "body:not(:has(section.sheet:target)) section.sheet:first-of-type{display:block}",
+    "table.flow,table.fixed{border-collapse:collapse;font-family:Calibri,Carlito,Arial,sans-serif;font-size:11pt}",
+    "table.fixed{table-layout:fixed}",
+    "table.flow td{border:1px solid #d4d4d4;padding:2px 4px;white-space:nowrap}",
+    "table.fixed td{border:1px solid #d4d4d4;padding:0 4px;white-space:nowrap;overflow:hidden;line-height:1}",
+);
+
+/// The chosen menu entry: the sheet shown.
+const TAB_ON: &str = "{background:#fff;border-color:#d0d0d0;color:#107c41;font-weight:bold}";
+
+/// Sheets `sheets` of a workbook as one web page (Save as Web Page). One sheet is its page as
+/// [`to_html`] writes it; several get a menu of their names, each sheet behind it. `fit` widens
+/// document tabs' tables and diagrams to the page (their Fit Width).
+pub fn workbook_html(wb: &Workbook, sheets: &[usize], title: &str, fit: bool) -> Result<String> {
+    if let [one] = sheets {
+        return match wb.sheet(*one) {
+            Some(sh) if sh.is_document() && fit => {
+                let anchors = std::collections::HashMap::new();
+                Ok(crate::doc_html::page(&crate::doc_html::Context { wb, sheet: sh, anchors: &anchors, fit }))
+            }
+            _ => to_html(wb, *one),
+        };
+    }
+    let shown: Vec<(usize, &Sheet)> = sheets.iter().filter_map(|&i| wb.sheet(i).map(|sh| (i, sh))).collect();
+    let anchors: std::collections::HashMap<String, String> =
+        shown.iter().enumerate().map(|(n, (_, sh))| (sh.name.to_lowercase(), format!("sheet-{}", n + 1))).collect();
+    let mut out = String::new();
+    let _ = write!(out, "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>{BOOK_CSS}{}", esc(title), crate::doc_html::CSS);
+    // The menu marks the sheet shown: the one the address names, else the first.
+    let ids: Vec<String> = (1..=shown.len()).map(|n| format!("body:has(#sheet-{n}:target) nav.sheets a[href=\"#sheet-{n}\"]")).collect();
+    if !ids.is_empty() {
+        let _ = write!(out, "{}{TAB_ON}", ids.join(","));
+    }
+    let _ = write!(out, "body:not(:has(section.sheet:target)) nav.sheets a:first-child{TAB_ON}</style></head><body><nav class=\"sheets\">");
+    for (n, (_, sh)) in shown.iter().enumerate() {
+        let _ = write!(out, "<a href=\"#sheet-{}\">{}</a>", n + 1, esc(&sh.name));
+    }
+    out.push_str("</nav>");
+    for (n, (i, sh)) in shown.iter().enumerate() {
+        let _ = write!(out, "<section class=\"sheet\" id=\"sheet-{}\">", n + 1);
+        if sh.is_document() {
+            out.push_str(&crate::doc_html::article(&crate::doc_html::Context { wb, sheet: sh, anchors: &anchors, fit }));
+        } else {
+            sheet_table(wb, *i, true, &mut out)?;
+        }
+        out.push_str("</section>");
     }
     out.push_str("</body></html>");
     Ok(out)

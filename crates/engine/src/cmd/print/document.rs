@@ -35,8 +35,9 @@ const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
 /// A table's header row.
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
-/// The pages of document tab `sh`, as drawings.
-pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout) -> Vec<Vec<Op>> {
+/// The pages of document tab `sh`, as drawings; with `fit` its tables and diagrams are as wide as
+/// the page, as with the tab's Fit Width.
+pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, fit: bool) -> Vec<Vec<Op>> {
     let Some(doc) = &sh.document else { return Vec::new() };
     let [l, r, t, b, ..] = lay.margins;
     let mut flow = Flow {
@@ -48,6 +49,7 @@ pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout) -> Vec<Vec<Op>
         width: (lay.page_w - l - r).max(72.0),
         top: t,
         bottom: (lay.page_h - b).max(t + 72.0),
+        fit,
     };
     let blocks = monun_markdown::parse(&doc.text);
     for block in &blocks {
@@ -101,6 +103,8 @@ struct Flow<'a> {
     width: f32,
     top: f32,
     bottom: f32,
+    /// Fit Width: tables and diagrams as wide as the page.
+    fit: bool,
 }
 
 impl Flow<'_> {
@@ -360,11 +364,19 @@ impl Flow<'_> {
     /// A Mermaid diagram as a picture; false when this build draws none (or it has an error).
     #[cfg(feature = "diagrams")]
     fn diagram(&mut self, source: &str, indent: f32) -> bool {
-        let Ok(image) = monun_markdown::diagram::render(source, monun_markdown::diagram::Options { dark: false, scale: 2.0 }) else { return false };
-        // Drawn at two pixels per SVG unit, about 0.75 points each.
-        let natural = (image.width as f32 * 0.375, image.height as f32 * 0.375);
+        let draw = |scale| monun_markdown::diagram::render(source, monun_markdown::diagram::Options { dark: false, scale });
+        let Ok(mut image) = draw(2.0) else { return false };
+        // An SVG unit is about 0.75 points; with Fit Width the diagram grows to the page, at most
+        // twice its size, drawn again for that size so it stays as sharp.
+        let natural = (image.size.0 * 0.75, image.size.1 * 0.75);
+        let grow = if self.fit { ((self.width - indent) / natural.0.max(1.0)).clamp(1.0, 2.0) } else { 1.0 };
+        if grow > 1.01
+            && let Ok(sharper) = draw(2.0 * grow)
+        {
+            image = sharper;
+        }
         let rgba = unpremultiply(image.rgba);
-        self.place(Arc::new(rgba), [image.width, image.height], natural, indent);
+        self.place(Arc::new(rgba), [image.width, image.height], (natural.0 * grow, natural.1 * grow), indent, self.fit);
         true
     }
 
@@ -384,11 +396,12 @@ impl Flow<'_> {
         };
         let natural = (image.anchor.width.max(1.0) * 0.75, image.anchor.height.max(1.0) * 0.75);
         let Some((rgba, w, h)) = super::objects::decode_image(&image.data, 1600, 1600) else { return };
-        self.place(Arc::new(rgba), [w, h], natural, indent);
+        self.place(Arc::new(rgba), [w, h], natural, indent, false);
     }
 
-    /// Places an image of `natural` size (points), narrowed to the line and the page.
-    fn place(&mut self, rgba: Arc<Vec<u8>>, size: [u32; 2], natural: (f32, f32), indent: f32) {
+    /// Places an image of `natural` size (points), narrowed to the line and the page, at the left
+    /// or `centre`d.
+    fn place(&mut self, rgba: Arc<Vec<u8>>, size: [u32; 2], natural: (f32, f32), indent: f32, centre: bool) {
         let (mut w, mut h) = natural;
         let room = self.width - indent;
         if w > room {
@@ -401,7 +414,8 @@ impl Flow<'_> {
             h = tall;
         }
         self.need(h + 2.0);
-        self.push(Op::Image { rect: Rect::new(self.left + indent, self.y, w, h), rgba, size });
+        let x = self.left + indent + if centre { ((room - w) / 2.0).max(0.0) } else { 0.0 };
+        self.push(Op::Image { rect: Rect::new(x, self.y, w, h), rgba, size });
         self.y += h + 2.0;
     }
 
@@ -427,7 +441,7 @@ impl Flow<'_> {
                     .fold(24.0, f32::max)
             })
             .collect();
-        let widths = monun_markdown::fit_columns(&natural, self.width - indent, 24.0);
+        let widths = if self.fit { monun_markdown::fill_columns } else { monun_markdown::fit_columns }(&natural, self.width - indent, 24.0);
         let x0 = self.left + indent;
         let total: f32 = widths.iter().sum();
         let line_h = BODY * LEADING;

@@ -105,6 +105,8 @@ pub struct PrintOptions {
     pub all_sheets: bool,
     pub range: Option<RangeRef>,
     pub fit_to_page: Option<bool>,
+    /// Document tabs' tables and diagrams as wide as the page (their Fit Width).
+    pub fit_width: bool,
 }
 
 impl PrintOptions {
@@ -118,7 +120,7 @@ impl PrintOptions {
             Some(r) => Some(RangeRef::parse(split_sheet(r).1).ok_or_else(|| bad(cmd, format!("not a range: `{r}`")))?),
             None => None,
         };
-        Ok(PrintOptions { all_sheets, range, fit_to_page: bool_param(p, "fitToPage") })
+        Ok(PrintOptions { all_sheets, range, fit_to_page: bool_param(p, "fitToPage"), fit_width: bool_param(p, "fitWidth").unwrap_or(false) })
     }
 }
 

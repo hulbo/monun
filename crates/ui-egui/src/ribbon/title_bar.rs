@@ -132,14 +132,31 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 let share = small_button(ui, Icon::Share, "Share", "Share: export or save a copy", true);
                 egui::Popup::menu(&share).show(|ui| {
-                    if ui.button(app.ui.language.tr("Export as PDF…")).clicked() {
-                        app.run_or_alert("file.exportPdf", json!({}));
+                    // A PDF or web page of a workbook with several sheets: all of them or this one.
+                    let several = crate::backstage::several_sheets(app);
+                    let pdf: &[(&str, bool)] = if several {
+                        &[("Export All Sheets as PDF…", true), ("Export This Sheet as PDF…", false)]
+                    } else {
+                        &[("Export as PDF…", false)]
+                    };
+                    for (label, all) in pdf {
+                        if ui.button(app.ui.language.tr(label)).clicked() {
+                            crate::backstage::export_as(app, "pdf", *all);
+                        }
                     }
-                    for (label, fmt) in
-                        [("Save a Copy as Excel Workbook (.xlsx)…", "xlsx"), ("Export as CSV…", "csv"), ("Export as Web Page (.html)…", "html")]
-                    {
+                    for (label, fmt) in [("Save a Copy as Excel Workbook (.xlsx)…", "xlsx"), ("Export as CSV…", "csv")] {
                         if ui.button(app.ui.language.tr(label)).clicked() {
                             app.open_dialog("saveCopy", json!({"format": fmt}));
+                        }
+                    }
+                    let page: &[(&str, bool)] = if several {
+                        &[("Export All Sheets as a Web Page…", true), ("Export This Sheet as a Web Page…", false)]
+                    } else {
+                        &[("Export as Web Page (.html)…", false)]
+                    };
+                    for (label, all) in page {
+                        if ui.button(app.ui.language.tr(label)).clicked() {
+                            crate::backstage::export_as(app, "html", *all);
                         }
                     }
                 });

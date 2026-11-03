@@ -124,6 +124,8 @@ pub struct Backstage {
     preview: Option<((u64, u64, bool, bool), Json)>,
     /// Save As: the chosen file type, a format from [`SAVE_TYPES`] (its file extension: [`extension`]).
     pub save_format: &'static str,
+    /// Export and Save As: a PDF or web page of every visible sheet rather than the active one.
+    pub export_all: bool,
     /// Home and Open: when the recent workbooks were last changed.
     recent: RecentFiles,
 }
@@ -154,6 +156,7 @@ impl Backstage {
             preview_page: 0,
             preview: None,
             save_format: "xlsx",
+            export_all: true,
             recent: RecentFiles::default(),
         }
     }
@@ -237,7 +240,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     Page::Info => info(app, ui, &mut bs),
                     Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
                     Page::Print => print(app, ui, &mut bs, &mut out),
-                    Page::Export => export(app, ui, &mut out),
+                    Page::Export => export(app, ui, &mut bs, &mut out),
                     Page::Options => options(app, ui),
                     Page::Account => account(app, ui),
                 }
@@ -708,6 +711,10 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
             .response
             .labelled_by(label.id);
     });
+    if matches!(fmt, "html" | "pdf") {
+        ui.add_space(10.0);
+        sheets_choice(app, ui, bs);
+    }
     ui.add_space(14.0);
     // Desktop: the system Save dialog. Web: the file downloads.
     let web = app.services.pick_save.is_none() && app.services.download.is_some();
@@ -720,7 +727,7 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
             if after != before || app.services.pick_save.is_none() {
                 out.close = true;
             }
-        } else if export_as(app, fmt) {
+        } else if export_as(app, fmt, several_sheets(app) && bs.export_all) {
             out.close = true;
         }
     }
@@ -728,32 +735,69 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     dim(ui, lang.tr("A CSV file, web page or PDF is a copy: the workbook keeps its own file."));
 }
 
-fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
+fn export(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let lang = app.ui.language;
-    if action_row(ui, Icon::Paper, lang.tr("Create PDF"), lang.tr("Save the sheet as a PDF document that keeps its page layout.")).clicked()
-        && export_as(app, "pdf")
-    {
+    if sheets_choice(app, ui, bs) {
+        ui.add_space(12.0);
+    }
+    let all = several_sheets(app) && bs.export_all;
+    let pdf =
+        if all { "Save every sheet as one PDF document, page after page." } else { "Save the sheet as a PDF document that keeps its page layout." };
+    if action_row(ui, Icon::Paper, lang.tr("Create PDF"), lang.tr(pdf)).clicked() && export_as(app, "pdf", all) {
         out.close = true;
     }
     ui.add_space(14.0);
     section(ui, lang, "Change File Type");
+    let page = if all { "Save every sheet as one web page, with a menu of their names." } else { "Save the sheet as a web page." };
     for (fmt, icon, title, detail) in [
         ("csv-cp949", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
-        ("html", Icon::Link, "Web Page (.html)", "Save the workbook as a web page."),
+        ("html", Icon::Link, "Web Page (.html)", page),
     ] {
-        if action_row(ui, icon, lang.tr(title), lang.tr(detail)).clicked() && export_as(app, fmt) {
+        if action_row(ui, icon, lang.tr(title), lang.tr(detail)).clicked() && export_as(app, fmt, all) {
             out.close = true;
         }
     }
 }
 
+/// Whether the active workbook shows more than one sheet, so a PDF or web page can take them all.
+pub fn several_sheets(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(|d| d.wb.sheets.iter().filter(|s| s.visibility == monun_engine::model::Visibility::Visible).count() > 1)
+}
+
+/// The choice between every sheet and the active one, for a PDF or web page, when the workbook
+/// has more than one. Returns whether it was drawn.
+fn sheets_choice(app: &SheetApp, ui: &mut Ui, bs: &mut Backstage) -> bool {
+    if !several_sheets(app) {
+        return false;
+    }
+    let lang = app.ui.language;
+    ui.horizontal(|ui| {
+        ui.label(lang.tr("Sheets to export"));
+        ui.add_space(6.0);
+        for (all, label) in [(true, "All sheets"), (false, "This sheet")] {
+            if ui.radio(bs.export_all == all, lang.tr(label)).clicked() {
+                bs.export_all = all;
+            }
+        }
+    });
+    true
+}
+
 /// Exports the active workbook as `pdf`, `csv` (CSV UTF-8), `csv-cp949` (plain CSV) or `html`:
-/// through the save picker on the desktop, as a browser download on the web. Returns whether a
-/// file was written or handed over.
-pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
+/// through the save picker on the desktop, as a browser download on the web. A PDF or web page
+/// takes every visible sheet when `all` (one after another, or behind a menu of their names),
+/// else the active one, and document tabs' tables and diagrams follow their Fit Width. Returns
+/// whether a file was written or handed over.
+pub fn export_as(app: &mut SheetApp, fmt: &str, all: bool) -> bool {
     if !app.commit_edit(0, 0, false, false) {
         return false;
     }
+    // A document being typed is part of the copy.
+    if let Err(e) = app.commit_doc_draft() {
+        app.message = Some(("Monun".into(), crate::clean_error(&e)));
+        return false;
+    }
+    let scope = json!({"sheets": if all { "all" } else { "active" }, "fitWidth": app.ui.doc_fit_width});
     let (id, encoding) = match fmt {
         "pdf" => ("file.exportPdf", None),
         "csv" => ("file.exportCsv", Some("utf-8")),
@@ -770,7 +814,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         let path = std::path::Path::new(&path).with_extension(fmt).to_string_lossy().into_owned();
         let params = match encoding {
             Some(encoding) => json!({"path": path, "encoding": encoding}),
-            None => json!({"path": path}),
+            None => with(scope, "path", json!(path)),
         };
         return match app.run(id, params) {
             Ok(_) => true,
@@ -786,7 +830,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     }
     if fmt == "pdf" {
         // Without a path the PDF comes back as bytes, which `SheetApp::run` hands to the browser.
-        return match app.run(id, json!({})) {
+        return match app.run(id, scope) {
             Ok(_) => true,
             Err(e) => {
                 app.message = Some(("Monun".into(), crate::clean_error(&e)));
@@ -797,7 +841,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     app.store_view_state();
     let params = match encoding {
         Some(encoding) => json!({"format": fmt, "encoding": encoding}),
-        None => json!({"format": fmt}),
+        None => with(scope, "format", json!(fmt)),
     };
     match app.session.run("file.saveBytes", params) {
         Ok(r) => {
@@ -816,6 +860,14 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
             false
         }
     }
+}
+
+/// `params` with `key` set to `value`.
+fn with(mut params: Json, key: &str, value: Json) -> Json {
+    if let Some(map) = params.as_object_mut() {
+        map.insert(key.to_owned(), value);
+    }
+    params
 }
 
 /// Excel's File › Account: product information and the About window.

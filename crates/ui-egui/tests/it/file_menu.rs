@@ -722,3 +722,43 @@ fn control_requests_route_to_a_window_and_list_windows() {
     let r = call(&mut h, "engine.execute", serde_json::json!({"command": "cell.get", "params": {"cell": "A1"}, "window": 999}));
     assert_eq!(r["ok"], false, "{r}");
 }
+
+#[test]
+fn a_pdf_or_web_page_of_several_sheets_takes_them_all_or_this_one() {
+    let downloads = Arc::new(Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+    let capture = downloads.clone();
+    let mut h = harness(Services {
+        download: Some(Box::new(move |name, bytes| capture.lock().unwrap().push((name.to_string(), bytes.to_vec())))),
+        ..Default::default()
+    });
+    // One sheet: nothing to choose.
+    choose(&mut h, "Export");
+    assert!(h.query_by_label("All sheets").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    h.state_mut().run("cell.set", serde_json::json!({"cell": "A1", "input": "42"})).unwrap();
+    h.state_mut().run("doc.insert", serde_json::json!({"name": "Notes", "text": "# Plan\n"})).unwrap();
+    h.run_steps(2);
+    // All sheets, the first choice: one web page with a menu of their names, one PDF of both.
+    choose(&mut h, "Export");
+    click(&mut h, "Web Page (.html)");
+    choose(&mut h, "Export");
+    click(&mut h, "Create PDF");
+    // This sheet: the document alone.
+    choose(&mut h, "Export");
+    h.get_by_label("This sheet").click();
+    h.run_steps(2);
+    click(&mut h, "Web Page (.html)");
+    choose(&mut h, "Export");
+    h.get_by_label("This sheet").click();
+    h.run_steps(2);
+    click(&mut h, "Create PDF");
+    let saved = downloads.lock().unwrap();
+    assert_eq!(saved.len(), 4);
+    let page = |i: usize| String::from_utf8_lossy(&saved[i].1).into_owned();
+    let pages = |i: usize| saved[i].1.windows(b"/Type /Page /".len()).filter(|w| *w == b"/Type /Page /").count();
+    assert!(page(0).contains("<nav class=\"sheets\"><a href=\"#sheet-1\">Sheet1</a><a href=\"#sheet-2\">Notes</a></nav>"), "{}", page(0));
+    assert!(page(0).contains(">42</td>") && page(0).contains("<h1>Plan</h1>"));
+    assert!(!page(2).contains("<nav") && page(2).contains("<h1>Plan</h1>") && !page(2).contains(">42<"));
+    assert!(pages(1) == 2 && pages(3) == 1, "{} and {} pages", pages(1), pages(3));
+}

@@ -11,10 +11,10 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|cp949} → {base64} (encoding: csv and tsv only, see file.exportCsv)", has_doc, save_bytes),
+        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|cp949, sheets?: active|all, fitWidth?: bool} → {base64} (encoding: csv and tsv only, see file.exportCsv; sheets and fitWidth: html only, see file.exportHtml)", has_doc, save_bytes),
         cmd!(noundo "file.close", "Close", ["File"], Some("Cmd+W"), "{force?: bool, document?: bool} (closes the active window, or with `document` the workbook and all its windows; the workbook closes with its last window)", has_doc, close),
         cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, encoding?: utf-8|cp949} (utf-8 is Excel's CSV UTF-8, with a byte order mark; cp949 its plain CSV on Korean Windows; without it a workbook read from CSV or text keeps that file's encoding, any other is CSV UTF-8)", has_doc, |s, p| export(s, p, "csv")),
-        cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path}", has_doc, |s, p| export(s, p, "html")),
+        cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path, sheet?, sheets?: active|all, fitWidth?: bool} (all: every visible sheet on one page, behind a menu of their names; fitWidth: document tabs' tables and diagrams as wide as the page)", has_doc, |s, p| export(s, p, "html")),
         cmd!("file.properties", "Properties", ["File"], None, "{title?, subject?, author?, company?, keywords?, description?}", has_doc, properties),
         cmd!(
             query "file.options",
@@ -160,7 +160,12 @@ fn save_bytes(s: &mut Session, p: &Json) -> Result<Json> {
     let fmt = str_param(p, "format").unwrap_or("xlsx");
     let encoding = csv_encoding(p, "file.saveBytes")?;
     let d = s.doc()?;
-    let name = format!("{}.{fmt}", std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book"));
+    let stem = std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book").to_owned();
+    let name = format!("{stem}.{fmt}");
+    if fmt == "html" {
+        let bytes = web_page(&d.wb, p, &stem, "file.saveBytes")?;
+        return Ok(json!({"name": name, "base64": crate::io::base64_encode(&bytes), "bytes": bytes.len()}));
+    }
     // The file name goes into a PivotChart's link to its PivotTable.
     let bytes = match encoding {
         Some(encoding) => {
@@ -218,9 +223,28 @@ fn export(s: &mut Session, p: &Json, ext: &str) -> Result<Json> {
         wb.set_active_sheet(target_sheet(s, p)?);
     }
     let target = if path.ends_with(&format!(".{ext}")) { path.clone() } else { format!("{path}.{ext}") };
-    let bytes = crate::io::save_bytes(&wb, &target)?;
+    let bytes = if ext == "html" {
+        let title = std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book").to_owned();
+        web_page(&wb, p, &title, "file.exportHtml")?
+    } else {
+        crate::io::save_bytes(&wb, &target)?
+    };
     crate::io::write_file(&target, &bytes)?;
     Ok(json!({"path": target, "bytes": bytes.len()}))
+}
+
+/// A workbook as a web page: its active sheet, or with `sheets: all` every visible sheet behind a
+/// menu of their names.
+fn web_page(wb: &monun_model::Workbook, p: &Json, title: &str, id: &str) -> Result<Vec<u8>> {
+    let sheets: Vec<usize> = match str_param(p, "sheets") {
+        None | Some("active") => vec![wb.active_sheet()],
+        Some("all") | Some("workbook") => {
+            (0..wb.sheets.len()).filter(|i| wb.sheet(*i).is_some_and(|s| s.visibility == monun_model::Visibility::Visible)).collect()
+        }
+        Some(other) => return Err(bad(id, format!("`sheets` must be active or all, not `{other}`"))),
+    };
+    let fit = bool_param(p, "fitWidth").unwrap_or(false);
+    Ok(crate::io::workbook_html(wb, &sheets, title, fit)?.into_bytes())
 }
 
 fn properties(s: &mut Session, p: &Json) -> Result<Json> {

@@ -246,3 +246,85 @@ fn a_long_table_repeats_its_header_on_each_page() {
     assert_eq!(headers as u64, pages, "one header row on every page");
     assert!(contains(&pdf, "(row 149)"));
 }
+
+fn html_of(s: &mut Session, params: Value) -> String {
+    let mut p = json!({"format": "html"});
+    if let (Some(o), Some(extra)) = (p.as_object_mut(), params.as_object()) {
+        o.extend(extra.clone());
+    }
+    let r = s.execute("file.saveBytes", p).unwrap();
+    String::from_utf8(io::base64_decode(r["base64"].as_str().unwrap()).unwrap()).unwrap()
+}
+
+#[test]
+fn a_document_web_page_shows_it_as_the_tab_does() {
+    let mut s = session();
+    s.execute("cell.set", json!({"cell": "A1", "input": "30000"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A1", "code": "#,##0"})).unwrap();
+    let text = "# Plan\n\nTotal {{Sheet1!A1}} won, **bold** and `code`.\n\n- [x] done\n- [ ] open\n\n\
+                | Item | Amount |\n|---|--:|\n| AAA | 10 |\n\n> quoted\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n\
+                [see](https://example.com) and [the total](#Sheet1!A1)\n";
+    s.execute("doc.insert", json!({"name": "Notes", "text": text})).unwrap();
+    let html = html_of(&mut s, json!({}));
+    for needle in [
+        "<article class=\"doc\">",
+        "<h1>Plan</h1>",
+        "<span class=\"field\" title=\"{{Sheet1!A1}}\">30,000</span>",
+        "<strong>bold</strong>",
+        "<code>code</code>",
+        "<li class=\"task\"><input type=\"checkbox\" disabled checked>done</li>",
+        "<table class=\"md\"><thead><tr><th>Item</th><th>Amount</th></tr></thead>",
+        "<td style=\"text-align:right\">10</td>",
+        "<blockquote>",
+        "<a href=\"https://example.com\">see</a>",
+    ] {
+        assert!(html.contains(needle), "{needle} in {html}");
+    }
+    // A link to another sheet is plain text when that sheet isn't on the page.
+    assert!(html.contains("and the total</p>"), "{html}");
+    assert!(!html.contains("<nav"), "one sheet has no menu");
+    // Mermaid is drawn where this build draws diagrams, else it is its code.
+    assert!(html.contains(if cfg!(feature = "diagrams") { "<div class=\"diagram\"><svg" } else { "<div class=\"lang\">mermaid</div>" }));
+    // Save As a web page shows the document too, not its lines as cells.
+    let wb = s.active().unwrap().wb.clone();
+    let saved = String::from_utf8(io::save_bytes(&wb, "notes.html").unwrap()).unwrap();
+    assert!(saved.contains("<article class=\"doc\"><h1>Plan</h1>") && !saved.contains("<table class=\"flow\""), "{saved}");
+    // Fit Width widens tables to the page.
+    let fit = html_of(&mut s, json!({"fitWidth": true}));
+    assert!(fit.contains("<article class=\"doc fit\">"));
+    // A diagram grows with the page, at most twice its own width.
+    if cfg!(feature = "diagrams") {
+        assert!(fit.contains("<div class=\"diagram\" style=\"max-width:"), "{fit}");
+    }
+}
+
+#[test]
+fn a_web_page_of_all_sheets_has_a_menu_of_their_names() {
+    let mut s = session();
+    s.execute("cell.set", json!({"cell": "A1", "input": "42"})).unwrap();
+    s.execute("doc.insert", json!({"name": "Notes", "text": "# Plan\n\n[the answer](#Sheet1!A1)\n"})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "Hidden"})).unwrap();
+    s.execute("sheet.hide", json!({"sheet": "Hidden"})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": "Notes"})).unwrap();
+    let html = html_of(&mut s, json!({"sheets": "all"}));
+    assert!(html.contains("<nav class=\"sheets\"><a href=\"#sheet-1\">Sheet1</a><a href=\"#sheet-2\">Notes</a></nav>"), "{html}");
+    assert!(!html.contains(">Hidden<"), "hidden sheets stay out");
+    assert!(html.contains("<section class=\"sheet\" id=\"sheet-1\"><table class=\"flow\">"), "{html}");
+    assert!(html.contains(">42</td>"));
+    assert!(html.contains("<section class=\"sheet\" id=\"sheet-2\"><article class=\"doc\"><h1>Plan</h1>"), "{html}");
+    // A link to a sheet on the page goes to it.
+    assert!(html.contains("<a href=\"#sheet-1\">the answer</a>"), "{html}");
+    // Only the active sheet: no menu.
+    let one = html_of(&mut s, json!({"sheets": "active"}));
+    assert!(!one.contains("<nav") && one.contains("<h1>Plan</h1>") && !one.contains(">42<"));
+    assert!(s.execute("file.saveBytes", json!({"format": "html", "sheets": "some"})).is_err());
+}
+
+#[test]
+fn fit_width_widens_a_document_table_on_paper() {
+    let mut s = session();
+    s.execute("doc.insert", json!({"name": "Notes", "text": "| A | B |\n|---|---|\n| 1 | 2 |\n"})).unwrap();
+    let (plain, _) = pdf_of(&mut s, json!({}));
+    let (wide, _) = pdf_of(&mut s, json!({"fitWidth": true}));
+    assert_ne!(plain, wide, "the table's lines reach the page's width");
+}

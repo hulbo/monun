@@ -14,6 +14,10 @@ pub(super) fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &m
     if bs.fit_to_page {
         params["fitToPage"] = json!(true);
     }
+    // Document tabs print as they show, with their Fit Width.
+    if app.ui.doc_fit_width {
+        params["fitWidth"] = json!(true);
+    }
     let key = (uid, revision, bs.print_all, bs.fit_to_page);
     if bs.preview.as_ref().is_none_or(|(k, _)| *k != key) {
         let preview = app.session.run("file.printPreview", params.clone()).unwrap_or(Json::Null);
