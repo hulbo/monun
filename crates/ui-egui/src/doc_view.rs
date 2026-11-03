@@ -55,6 +55,8 @@ pub struct State {
     parsed: Option<(String, Arc<Vec<Block>>)>,
     /// Mermaid blocks drawn so far.
     diagrams: diagram::Cache,
+    /// The `{{…}}` fields' values, for a workbook version (uid, revision) and a parse.
+    fields: Option<((u64, u64, usize), Arc<Fields>)>,
 }
 
 /// Text typed into a document tab.
@@ -96,6 +98,48 @@ impl State {
                 blocks
             }
         }
+    }
+}
+
+/// What each `{{…}}` field of a document shows: its value as displayed, or its error.
+pub type Fields = HashMap<String, Result<String, String>>;
+
+/// The values of the fields in `blocks`, worked out again only when the workbook or the text
+/// changed.
+fn field_values(app: &mut SheetApp, blocks: &Arc<Vec<Block>>) -> Arc<Fields> {
+    let Some(d) = app.session.active() else { return Arc::default() };
+    let key = (d.uid, d.revision, Arc::as_ptr(blocks) as usize);
+    if let Some((k, values)) = &app.doc_view.fields
+        && *k == key
+    {
+        return values.clone();
+    }
+    let values: Arc<Fields> = Arc::new(monun_markdown::fields(blocks).into_iter().map(|e| (e.clone(), field_value(&d.wb, &e))).collect());
+    app.doc_view.fields = Some((key, values.clone()));
+    values
+}
+
+/// What a field shows: a cell reference (`구매목록!D1`) as the cell displays it, in its number
+/// format; anything else (`=SUM(구매목록!B:B)`) worked out as a formula, in General format.
+pub fn field_value(wb: &monun_engine::model::Workbook, expr: &str) -> Result<String, String> {
+    use monun_engine::core::{CellRef, Value};
+    let e = expr.trim();
+    let body = e.strip_prefix('=').unwrap_or(e);
+    if !e.starts_with('=') {
+        let (sheet, a1) = monun_engine::core::split_sheet(body);
+        let index = match &sheet {
+            Some(name) => wb.sheet_index(name),
+            None => Some(wb.active_sheet()),
+        };
+        if let Some(sh) = index.and_then(|i| wb.sheet(i))
+            && let Some(c) = CellRef::parse(&a1.replace('$', ""))
+        {
+            return Ok(monun_engine::display::cell_text(wb, sh, c));
+        }
+    }
+    match monun_engine::calc::recalc::evaluate(wb, wb.active_sheet(), CellRef::default(), body) {
+        Value::Error(e) => Err(e.to_string()),
+        v => Ok(monun_engine::display::format(&v, "General", wb).text),
     }
 }
 
@@ -160,6 +204,37 @@ impl SheetApp {
             None => json!({"prefix": prefix}),
         };
         self.run_or_alert("doc.insert", params);
+    }
+}
+
+impl SheetApp {
+    /// Asks for a Markdown file and adds it as a document tab (before sheet `before`, else after
+    /// the active one).
+    pub fn import_markdown(&mut self, before: Option<usize>) {
+        let Some(pick) = &self.services.pick_open else { return };
+        let Some(path) = pick() else { return };
+        let params = match before {
+            Some(i) => json!({"path": path, "before": i}),
+            None => json!({"path": path}),
+        };
+        self.run_or_alert("doc.import", params);
+    }
+
+    /// Asks where to save document tab `sheet` as Markdown, and writes it there.
+    pub fn export_markdown(&mut self, sheet: usize) {
+        if let Err(e) = self.commit_doc_draft() {
+            self.alert(e);
+            return;
+        }
+        let name = self.session.active().and_then(|d| d.wb.sheet(sheet)).map(|sh| sh.name.clone()).unwrap_or_else(|| "Doc".into());
+        let Some(pick) = &self.services.pick_save else { return };
+        let Some(path) = pick(&format!("{name}.md")) else { return };
+        // The picker may suggest a workbook extension; the export writes Markdown.
+        let path = std::path::Path::new(&path).with_extension("md").to_string_lossy().into_owned();
+        match self.session.run("doc.export", json!({"sheet": sheet, "path": path})) {
+            Ok(_) => self.toast = Some((format!("{} {path}", self.ui.language.tr("Saved:")), now_ms())),
+            Err(e) => self.alert(e),
+        }
     }
 }
 
@@ -365,6 +440,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let Some(text) = app.doc_view.draft.as_ref().map(|d| d.text.clone()) else { return };
     let blocks = app.doc_view.blocks(&text);
     let lang = app.ui.language;
+    let fields = field_values(app, &blocks);
     let mut action = None;
     egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]).show(ui, |ui| {
         let width = (PAGE_WIDTH * z).min(ui.available_width() - 48.0).max(120.0);
@@ -374,7 +450,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
             ui.vertical(|ui| {
                 ui.set_width(width);
                 ui.add_space(24.0 * z);
-                action = preview::show(ui, &blocks, z, t, lang, &mut app.doc_view.diagrams);
+                action = preview::show(ui, &blocks, z, t, lang, &fields, &mut app.doc_view.diagrams);
                 ui.add_space(48.0 * z);
             });
         });
@@ -410,11 +486,12 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
     let blocks = app.doc_view.blocks(&text);
     let lang = app.ui.language;
+    let fields = field_values(app, &blocks);
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut action = None;
     egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]).show(&mut right_ui, |ui| {
         ui.add_space(16.0 * z);
-        action = preview::show(ui, &blocks, z, t, lang, &mut app.doc_view.diagrams);
+        action = preview::show(ui, &blocks, z, t, lang, &fields, &mut app.doc_view.diagrams);
         ui.add_space(48.0 * z);
     });
     ui.allocate_rect(area, Sense::hover());
@@ -447,7 +524,10 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, action: Option<preview::Action>,
 pub fn follow_link(app: &mut SheetApp, ctx: &egui::Context, target: &str) {
     let lower = target.to_ascii_lowercase();
     if ["http://", "https://", "mailto:"].iter().any(|p| lower.starts_with(p)) {
-        ctx.open_url(egui::OpenUrl::new_tab(target));
+        match &app.services.open_url {
+            Some(open) => open(target),
+            None => ctx.open_url(egui::OpenUrl::new_tab(target)),
+        }
         return;
     }
     let Some(place) = target.strip_prefix('#') else { return };

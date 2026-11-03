@@ -23,8 +23,36 @@ const CELL_LIMIT: usize = 32_767;
 /// Column A's width in a saved document (pixels at 96 dpi), about a hundred characters.
 const TEXT_WIDTH: f32 = 720.0;
 
+/// Refused when Markdown is asked of a worksheet.
+pub const NOT_A_DOCUMENT: &str = "Only a document tab can be saved as Markdown (.md). Switch to the document first.";
+
 /// Refused when a command would put cells on a document tab.
 pub const NO_CELLS: &str = "A document has no cells. Switch to a worksheet to edit cells.";
+
+/// The text of a Markdown file: UTF-8 (a byte-order mark dropped), anything else read as well as
+/// it goes.
+pub fn markdown_text(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    normalize(&String::from_utf8_lossy(bytes))
+}
+
+/// A tab name from a file's name: its stem without the characters a sheet name can't have, at
+/// most 31 characters; `None` when nothing usable is left.
+pub fn name_from_path(path: &str) -> Option<String> {
+    let stem = std::path::Path::new(path).file_stem().and_then(std::ffi::OsStr::to_str)?;
+    let clean: String = stem.chars().filter(|c| !matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']')).take(31).collect();
+    let clean = clean.trim_matches('\'').trim().to_string();
+    (!clean.is_empty() && !clean.eq_ignore_ascii_case("History")).then_some(clean)
+}
+
+/// A workbook of one document tab holding a Markdown file, named after it.
+pub fn markdown_workbook(name: &str, bytes: &[u8]) -> Workbook {
+    let mut wb = Workbook::new();
+    let tab = name_from_path(name).unwrap_or_else(|| "Doc1".into());
+    wb.sheets = vec![Arc::new(Sheet::new_document(tab, markdown_text(bytes)))];
+    wb.set_active_sheet(0);
+    wb
+}
 
 /// Whether a document tab's grid is as it must be: empty.
 pub fn grid_is_empty(sh: &Sheet) -> bool {

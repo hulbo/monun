@@ -304,9 +304,11 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
 fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     let Some((i, at, opened)) = app.grid.tab_menu else { return };
     let protect = if app.active_sheet_protected() { "Un&protect Sheet…" } else { "&Protect Sheet…" };
-    let items = [
+    let document = app.session.active().and_then(|d| d.wb.sheet(i)).is_some_and(|sh| sh.is_document());
+    let mut items = vec![
         Entry::item("&Insert Sheet", "insert"),
         Entry::item("Insert D&ocument", "insertDocument"),
+        Entry::item("Import Mar&kdown…", "importMarkdown"),
         Entry::item("&Delete", "delete"),
         Entry::item("&Rename", "rename"),
         Entry::item("&Move or Copy…", "move"),
@@ -319,6 +321,9 @@ fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
         Entry::item(protect, "protect"),
         Entry::item("&Select All Sheets", "selectAll"),
     ];
+    if document {
+        items.insert(3, Entry::item("E&xport as Markdown…", "exportMarkdown"));
+    }
     let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
     let mut chosen = None;
     let mut submenu = None;
@@ -338,6 +343,8 @@ fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     match chosen {
         Some("insert") => app.run_or_alert("home.insertSheet", json!({"before": i})),
         Some("insertDocument") => app.insert_document(Some(i)),
+        Some("importMarkdown") => app.import_markdown(Some(i + 1)),
+        Some("exportMarkdown") => app.export_markdown(i),
         Some("delete") => app.run_or_alert("home.deleteSheet", json!({"sheet": i})),
         Some("rename") => {
             app.grid.renaming_tab = Some(i);

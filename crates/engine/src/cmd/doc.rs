@@ -17,7 +17,48 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("doc.setText", "Edit Document", [], None, "{sheet?, text}: replaces a document tab's Markdown text", has_doc, set_text),
         cmd!(query "doc.get", "Get Document", [], None, "{sheet?} → {name, text}", has_doc, get),
+        cmd!(
+            "doc.import",
+            "Import Markdown",
+            ["Insert", "Text"],
+            None,
+            "{path, before?: index}: a Markdown file (.md, UTF-8) as a new document tab named after it",
+            has_doc,
+            import
+        ),
+        cmd!(noundo "doc.export", "Export as Markdown", [], None, "{path, sheet?}: writes a document tab's text to a Markdown file (UTF-8)", has_doc, export),
     ]
+}
+
+fn import(s: &mut Session, p: &Json) -> Result<Json> {
+    let path = str_param(p, "path").ok_or_else(|| bad("path", "required"))?.to_owned();
+    let text = crate::docs::markdown_text(&crate::io::read_file(&path)?);
+    // Named after the file; a name in use gets " (2)", " (3)", … as a copy does.
+    let base = crate::docs::name_from_path(&path).unwrap_or_else(|| "Doc".into());
+    let wb = &s.doc()?.wb;
+    let name = std::iter::once(base.clone())
+        .chain((2..1000).map(|n| {
+            let tail = format!(" ({n})");
+            let head: String = base.chars().take(31 - tail.chars().count()).collect();
+            format!("{head}{tail}")
+        }))
+        .find(|n| wb.sheet_index(n).is_none())
+        .ok_or_else(|| bad("path", "no free tab name"))?;
+    let mut params = json!({"name": name});
+    if let Some(before) = p.get("before") {
+        params["before"] = before.clone();
+    }
+    super::sheet::insert_tab(s, &params, Some(text))
+}
+
+fn export(s: &mut Session, p: &Json) -> Result<Json> {
+    let path = str_param(p, "path").ok_or_else(|| bad("path", "required"))?.to_owned();
+    let sheet = target_sheet(s, p)?;
+    let sh = s.doc()?.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+    let doc = sh.document.as_ref().ok_or_else(|| EngineError::Other(crate::docs::NOT_A_DOCUMENT.into()))?;
+    let bytes = doc.text.clone().into_bytes();
+    crate::io::write_file(&path, &bytes)?;
+    Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
 fn insert(s: &mut Session, p: &Json) -> Result<Json> {

@@ -24,6 +24,7 @@ struct Cx<'a> {
     z: f32,
     t: &'a Tokens,
     lang: Lang,
+    fields: &'a super::Fields,
 }
 
 impl Cx<'_> {
@@ -42,8 +43,8 @@ struct Out<'a> {
 }
 
 /// Draws `blocks` into `ui`'s width.
-pub fn show(ui: &mut Ui, blocks: &[Block], z: f32, t: &Tokens, lang: Lang, diagrams: &mut diagram::Cache) -> Option<Action> {
-    let cx = Cx { z, t, lang };
+pub fn show(ui: &mut Ui, blocks: &[Block], z: f32, t: &Tokens, lang: Lang, fields: &super::Fields, diagrams: &mut diagram::Cache) -> Option<Action> {
+    let cx = Cx { z, t, lang, fields };
     let mut out = Out { action: None, diagrams };
     if blocks.is_empty() {
         ui.label(egui::RichText::new(lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(t.text_dim));
@@ -244,6 +245,8 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
     let t = cx.t;
     let mut job = LayoutJob::default();
     let mut links: Vec<(usize, usize, &str)> = Vec::new();
+    // `{{…}}` fields: their char range and the expression, shown on hover.
+    let mut tips: Vec<(usize, usize, String)> = Vec::new();
     for s in spans {
         let family = if font.bold || s.style.bold { theme::UI_BOLD } else { theme::UI };
         let mut f = TextFormat::simple(FontId::new(font.size, FontFamily::Name(family.into())), color);
@@ -255,10 +258,26 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
         if s.style.strike {
             f.strikethrough = Stroke::new(1.0, color);
         }
-        let text = if s.style.image { format!("[{}]", s.text) } else { s.text.clone() };
-        if s.style.image {
+        let text = if s.style.field {
+            // A field shows its value, on a tint that tells it apart from typed text.
+            f.background = t.accent_soft;
+            let start = job.text.chars().count();
+            let shown = match cx.fields.get(&s.text) {
+                Some(Ok(value)) => value.clone(),
+                Some(Err(e)) => {
+                    f.color = t.danger;
+                    e.clone()
+                }
+                None => "…".to_owned(),
+            };
+            tips.push((start, start + shown.chars().count(), format!("{{{{{}}}}}", s.text)));
+            shown
+        } else if s.style.image {
             f.color = t.text_dim;
-        }
+            format!("[{}]", s.text)
+        } else {
+            s.text.clone()
+        };
         if let Some(link) = &s.link {
             f.color = t.accent;
             f.underline = Stroke::new(1.0, t.accent);
@@ -276,10 +295,11 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
     let plain = galley.text().to_owned();
     resp.widget_info(|| egui::WidgetInfo::labeled(if links.is_empty() { egui::Role::Label } else { egui::Role::Link }, true, &plain));
     ui.painter().galley(rect.min, galley.clone(), color);
-    let link = resp.hover_pos().and_then(|p| {
-        let at: usize = galley.cursor_from_pos(p - rect.min).index.into();
-        links.iter().find(|(a, b, _)| (*a..*b).contains(&at)).map(|(_, _, l)| *l)
-    });
+    let at: Option<usize> = resp.hover_pos().map(|p| galley.cursor_from_pos(p - rect.min).index.into());
+    let link = at.and_then(|at| links.iter().find(|(a, b, _)| (*a..*b).contains(&at)).map(|(_, _, l)| *l));
+    if let Some(tip) = at.and_then(|at| tips.iter().find(|(a, b, _)| (*a..*b).contains(&at))).filter(|_| link.is_none()) {
+        resp.clone().on_hover_text(&tip.2);
+    }
     if let Some(l) = link {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         if resp.clicked() {

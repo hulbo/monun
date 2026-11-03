@@ -19,6 +19,9 @@ pub enum FileKind {
     Tsv,
     Json,
     Html,
+    /// A Markdown document: opens as a workbook holding it as a document tab; saving writes the
+    /// active document tab's text.
+    Markdown,
 }
 
 impl FileKind {
@@ -33,6 +36,7 @@ impl FileKind {
             "tsv" | "tab" | "txt" => FileKind::Tsv,
             "json" | "scjson" => FileKind::Json,
             "html" | "htm" => FileKind::Html,
+            "md" | "markdown" => FileKind::Markdown,
             _ => return None,
         })
     }
@@ -169,6 +173,7 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
         return Ok((wb, report.warnings));
     }
     match kind {
+        Some(FileKind::Markdown) => Ok((crate::docs::markdown_workbook(name, bytes), vec![])),
         Some(FileKind::Json) => {
             let mut wb: Workbook = serde_json::from_slice(bytes).map_err(|e| EngineError::Other(format!("not a Monun JSON workbook: {e}")))?;
             wb.styles.rebuild_index();
@@ -243,15 +248,16 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
     // a typo like `.cvs` would otherwise produce a file no other app recognises.
     let Some(kind) = FileKind::from_path(path) else {
         let name = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path);
-        return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json or .html.")));
+        return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json, .html or .md.")));
     };
     save_bytes_as(wb, path, kind)
 }
 
 /// Encodes a workbook as `kind`, whatever `path`'s extension says.
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
-    // Document tabs travel as worksheets of lines in every format but JSON, which keeps them.
-    let lines = if kind == FileKind::Json { None } else { crate::docs::with_cells(wb) };
+    // Document tabs travel as worksheets of lines in every format but JSON, which keeps them
+    // (and Markdown, which writes one).
+    let lines = if matches!(kind, FileKind::Json | FileKind::Markdown) { None } else { crate::docs::with_cells(wb) };
     let wb = lines.as_ref().unwrap_or(wb);
     let sheet = wb.active_sheet();
     match kind {
@@ -274,6 +280,10 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Tsv => wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t')).transpose().map(Option::unwrap_or_default),
         FileKind::Json => crate::macros::json_bytes(wb),
         FileKind::Html => to_html(wb, sheet).map(String::into_bytes),
+        FileKind::Markdown => match wb.sheet(sheet).and_then(|sh| sh.document.as_ref()) {
+            Some(doc) => Ok(doc.text.clone().into_bytes()),
+            None => Err(EngineError::Other(crate::docs::NOT_A_DOCUMENT.into())),
+        },
     }
 }
 

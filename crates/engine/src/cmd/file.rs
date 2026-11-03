@@ -130,8 +130,11 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         None => crate::io::save_bytes(wb, &path)?,
     };
     crate::io::write_file(&path, &bytes)?;
-    // Only a full-fidelity format clears the dirty flag and becomes the document's file.
-    if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) {
+    // Only a full-fidelity format clears the dirty flag and becomes the document's file: Markdown
+    // is one for a workbook that is a single document tab (a .md file opened).
+    let single_document = d.wb.sheets.len() == 1 && d.wb.sheets.first().is_some_and(|sh| sh.is_document());
+    if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) || (kind == Some(crate::io::FileKind::Markdown) && single_document)
+    {
         // The new file is the workbook's own now, so `CELL("filename")` reports it (#1489). Set
         // before the `saved` snapshot, or the workbook would read as dirty the moment it was
         // saved; and only when it changes, so an ordinary Save does not clone the workbook.

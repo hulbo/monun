@@ -132,3 +132,53 @@ fn documents_round_trip_through_json() {
     let back = io::open_bytes("book.json", &bytes).unwrap().0;
     assert_eq!(back.sheet(1).unwrap().document.as_ref().unwrap().text, AWKWARD);
 }
+
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("monun-doc-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn a_markdown_file_opens_as_a_document_and_saves_back() {
+    let bytes = "\u{feff}# 메모\r\n\r\n- [ ] 할 일\r\n".as_bytes();
+    let (wb, _) = io::open_bytes("매수 메모.md", bytes).unwrap();
+    assert_eq!(wb.sheets.len(), 1);
+    let sheet = wb.sheet(0).unwrap();
+    assert_eq!(sheet.name, "매수 메모");
+    assert_eq!(sheet.document.as_ref().unwrap().text, "# 메모\n\n- [ ] 할 일\n", "the mark goes and line breaks are \n");
+    assert_eq!(io::save_bytes(&wb, "매수 메모.md").unwrap(), "# 메모\n\n- [ ] 할 일\n".as_bytes());
+    // A worksheet isn't Markdown.
+    let mut s = session();
+    let e = io::save_bytes(&s.active().unwrap().wb, "x.md").unwrap_err();
+    assert!(e.to_string().contains("Only a document tab"), "{e}");
+    // In a session: Save of a .md opened alone writes it back and leaves it clean.
+    let dir = temp_dir("save");
+    let path = dir.join("메모.md");
+    std::fs::write(&path, "# 처음\n").unwrap();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    s.execute("doc.setText", json!({"text": "# 고침\n"})).unwrap();
+    s.execute("file.save", json!({})).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# 고침\n");
+    assert!(!s.active().unwrap().is_dirty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn documents_import_and_export_markdown_files() {
+    let dir = temp_dir("io");
+    let src = dir.join("계획.md");
+    std::fs::write(&src, "# 계획\n\n{{Sheet1!A1}}\n").unwrap();
+    let mut s = session();
+    let path = src.to_str().unwrap();
+    let r = s.execute("doc.import", json!({"path": path})).unwrap();
+    assert_eq!(r["name"], "계획");
+    let r = s.execute("doc.import", json!({"path": path})).unwrap();
+    assert_eq!(r["name"], "계획 (2)", "a name in use gets a number");
+    assert_eq!(text(&mut s, "계획 (2)"), "# 계획\n\n{{Sheet1!A1}}\n");
+    let out = dir.join("out.md");
+    s.execute("doc.export", json!({"sheet": "계획", "path": out.to_str().unwrap()})).unwrap();
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "# 계획\n\n{{Sheet1!A1}}\n");
+    assert!(s.execute("doc.export", json!({"sheet": "Sheet1", "path": out.to_str().unwrap()})).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

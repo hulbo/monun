@@ -75,3 +75,17 @@ fn odd_input_never_panics() {
         let _ = parse(text);
     }
 }
+
+#[test]
+fn fields_become_their_own_runs() {
+    let blocks = parse("총합계: **{{구매목록!D1}}** 원, 합 {{ =SUM(B:B) }}\n\n`{{코드}}` {{}} {{열림\n\n| a |\n|---|\n| {{Sheet1!A1}} |\n");
+    let Block::Paragraph { text, .. } = &blocks[0] else { panic!("{blocks:?}") };
+    let found: Vec<(&str, bool)> = text.iter().filter(|s| s.style.field).map(|s| (s.text.as_str(), s.style.bold)).collect();
+    assert_eq!(found, [("구매목록!D1", true), ("=SUM(B:B)", false)]);
+    assert_eq!(plain(text), "총합계: 구매목록!D1 원, 합 =SUM(B:B)");
+    // Code, an empty pair and an unclosed pair stay text.
+    let Block::Paragraph { text, .. } = &blocks[1] else { panic!("{blocks:?}") };
+    assert!(text.iter().all(|s| !s.style.field), "{text:?}");
+    assert_eq!(plain(text), "{{코드}} {{}} {{열림");
+    assert_eq!(fields(&blocks), ["구매목록!D1", "=SUM(B:B)", "Sheet1!A1"]);
+}

@@ -1843,4 +1843,15 @@ const MORE: &[(&str, &str)] = &[
     ("Click to enlarge", "눌러서 크게 보기"),
     ("Drawing the diagram…", "흐름도를 그리는 중…"),
     ("This diagram has an error:", "흐름도에 오류가 있습니다:"),
+    ("Import Markdown…", "Markdown 가져오기…"),
+    ("Export as Markdown…", "Markdown 파일로 내보내기…"),
+    ("Import Markdown", "Markdown 가져오기"),
+    ("Export as Markdown", "Markdown 파일로 내보내기"),
+    ("Saved:", "저장했습니다:"),
+    (
+        "Only a document tab can be saved as Markdown (.md). Switch to the document first.",
+        "Markdown(.md)으로는 문서 탭만 저장할 수 있습니다. 먼저 문서로 옮기세요.",
+    ),
+    ("Cell value", "셀 값"),
+    ("Show a cell's value: {{Sheet1!A1}}, or a formula's: {{=SUM(Sheet1!B:B)}}", "셀 값 넣기: {{시트1!A1}} 또는 수식 결과: {{=SUM(시트1!B:B)}}"),
 ];

@@ -100,6 +100,9 @@ pub struct Style {
     pub code: bool,
     /// The run is an image's alternative text (the preview shows no pictures yet).
     pub image: bool,
+    /// The run is a `{{…}}` field: its text is the expression (`구매목록!D1`, `=SUM(B:B)`) whose
+    /// value shows in its place.
+    pub field: bool,
 }
 
 /// A table column's alignment.
@@ -327,13 +330,13 @@ impl<'a> Builder<'a> {
         match tag {
             TagEnd::Paragraph => {
                 if let Some(Leaf::Paragraph(line)) = self.leaf.take() {
-                    let text = std::mem::take(&mut self.spans);
+                    let text = split_fields(std::mem::take(&mut self.spans));
                     self.push(Block::Paragraph { text, line });
                 }
             }
             TagEnd::Heading(_) => {
                 if let Some(Leaf::Heading(level, line)) = self.leaf.take() {
-                    let text = std::mem::take(&mut self.spans);
+                    let text = split_fields(std::mem::take(&mut self.spans));
                     self.push(Block::Heading { level, text, line });
                 }
             }
@@ -364,7 +367,7 @@ impl<'a> Builder<'a> {
             }
             TagEnd::TableCell => {
                 self.leaf = None;
-                let cell = std::mem::take(&mut self.spans);
+                let cell = split_fields(std::mem::take(&mut self.spans));
                 if let Some(t) = self.table.as_mut() {
                     t.row.push(cell);
                 }
@@ -405,7 +408,7 @@ impl<'a> Builder<'a> {
         if self.leaf.is_none() {
             self.leaf = Some(Leaf::Implicit(line));
         }
-        let style = Style { bold: self.bold > 0, italic: self.italic > 0, strike: self.strike > 0, code, image: self.image > 0 };
+        let style = Style { bold: self.bold > 0, italic: self.italic > 0, strike: self.strike > 0, code, image: self.image > 0, field: false };
         let link = self.links.last().cloned();
         match self.spans.last_mut() {
             Some(last) if last.style == style && last.link == link && text != "\n" && last.text != "\n" => last.text.push_str(text),
@@ -416,7 +419,7 @@ impl<'a> Builder<'a> {
     fn flush_implicit(&mut self) {
         if let Some(Leaf::Implicit(line)) = self.leaf {
             self.leaf = None;
-            let text = std::mem::take(&mut self.spans);
+            let text = split_fields(std::mem::take(&mut self.spans));
             if !text.is_empty() {
                 self.push(Block::Paragraph { text, line });
             }
@@ -466,6 +469,68 @@ impl<'a> Builder<'a> {
             _ => Vec::new(),
         }
     }
+}
+
+/// The `{{…}}` fields of `blocks`, each expression once, in order.
+pub fn fields(blocks: &[Block]) -> Vec<String> {
+    fn spans<'a>(out: &mut Vec<String>, spans: impl IntoIterator<Item = &'a Span>) {
+        for s in spans {
+            if s.style.field && !out.contains(&s.text) {
+                out.push(s.text.clone());
+            }
+        }
+    }
+    fn walk(out: &mut Vec<String>, blocks: &[Block]) {
+        for b in blocks {
+            match b {
+                Block::Heading { text, .. } | Block::Paragraph { text, .. } => spans(out, text),
+                Block::List { items, .. } => items.iter().for_each(|i| walk(out, &i.blocks)),
+                Block::Quote { blocks, .. } => walk(out, blocks),
+                Block::Table { head, rows, .. } => {
+                    head.iter().chain(rows.iter().flatten()).for_each(|cell| spans(out, cell));
+                }
+                Block::Code { .. } | Block::Rule { .. } => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&mut out, blocks);
+    out
+}
+
+/// Splits the `{{…}}` fields out of a leaf's runs. Code keeps its braces, and so does an empty
+/// or unclosed pair.
+fn split_fields(spans: Vec<Span>) -> Vec<Span> {
+    if !spans.iter().any(|s| !s.style.code && s.text.contains("{{")) {
+        return spans;
+    }
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    for s in spans {
+        if s.style.code || !s.text.contains("{{") {
+            out.push(s);
+            continue;
+        }
+        let piece = |text: &str, field: bool| Span { text: text.to_owned(), style: Style { field, ..s.style }, link: s.link.clone() };
+        let mut rest = s.text.as_str();
+        while let Some(open) = rest.find("{{") {
+            let Some(after) = rest.get(open + 2..) else { break };
+            let Some(close) = after.find("}}") else { break };
+            let expr = after.get(..close).unwrap_or("").trim();
+            if expr.is_empty() || expr.contains('\n') {
+                out.push(piece(rest.get(..open + 2 + close + 2).unwrap_or(rest), false));
+            } else {
+                if let Some(before) = rest.get(..open).filter(|b| !b.is_empty()) {
+                    out.push(piece(before, false));
+                }
+                out.push(piece(expr, true));
+            }
+            rest = after.get(close + 2..).unwrap_or("");
+        }
+        if !rest.is_empty() {
+            out.push(piece(rest, false));
+        }
+    }
+    out
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {

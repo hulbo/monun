@@ -24,6 +24,8 @@ pub enum Format {
     Quote,
     Table,
     Link,
+    /// A `{{…}}` field showing a cell's value.
+    Field,
     /// A block inserted below the current line (a diagram's template).
     Snippet(&'static str),
 }
@@ -43,6 +45,7 @@ pub const BUTTONS: &[(Format, &str, &str)] = &[
     (Format::Code, "Code", "Code"),
     (Format::Table, "Table", "Insert a table"),
     (Format::Link, "Link", "Link to a web page, or to a cell as #Sheet1!A1"),
+    (Format::Field, "Cell value", "Show a cell's value: {{Sheet1!A1}}, or a formula's: {{=SUM(Sheet1!B:B)}}"),
 ];
 
 /// Where a new group of [`BUTTONS`] starts (a separator goes before it).
@@ -311,6 +314,7 @@ pub fn format(text: &mut String, sel: (usize, usize), f: Format) -> (usize, usiz
         Format::Italic => wrap(text, a, b, "*"),
         Format::Strike => wrap(text, a, b, "~~"),
         Format::Code => wrap(text, a, b, "`"),
+        Format::Field => wrap_pair(text, a, b, "{{", "}}"),
         Format::Link => {
             let label: String = text.chars().skip(a).take(b - a).collect();
             let label = if label.is_empty() { "링크".to_owned() } else { label };
@@ -340,17 +344,22 @@ pub fn format(text: &mut String, sel: (usize, usize), f: Format) -> (usize, usiz
 /// Wraps the selection in `mark`, or unwraps it when it already is; with nothing selected, puts
 /// the caret between a pair of marks.
 fn wrap(text: &mut String, a: usize, b: usize, mark: &str) -> (usize, usize) {
-    let m = mark.chars().count();
+    wrap_pair(text, a, b, mark, mark)
+}
+
+/// [`wrap`] with different opening and closing marks.
+fn wrap_pair(text: &mut String, a: usize, b: usize, open: &str, close: &str) -> (usize, usize) {
+    let (o, c) = (open.chars().count(), close.chars().count());
     let chars: Vec<char> = text.chars().collect();
     let around = |from: usize, to: usize| chars.get(from..to).map(|s| s.iter().collect::<String>());
-    if a >= m && around(a - m, a).as_deref() == Some(mark) && around(b, b + m).as_deref() == Some(mark) {
-        replace_chars(text, b, b + m, "");
-        replace_chars(text, a - m, a, "");
-        return (a - m, b - m);
+    if a >= o && around(a - o, a).as_deref() == Some(open) && around(b, b + c).as_deref() == Some(close) {
+        replace_chars(text, b, b + c, "");
+        replace_chars(text, a - o, a, "");
+        return (a - o, b - o);
     }
-    replace_chars(text, b, b, mark);
-    replace_chars(text, a, a, mark);
-    (a + m, b + m)
+    replace_chars(text, b, b, close);
+    replace_chars(text, a, a, open);
+    (a + o, b + o)
 }
 
 /// The lines the selection touches: the char index where the first starts, and the lines.
@@ -465,6 +474,13 @@ mod tests {
         assert!(t.starts_with("메모\n\n| 항목"));
         assert_eq!(c, t.chars().count());
         assert_eq!(fmt("", (0, 0), Format::Snippet("X")).0, "X\n");
+    }
+
+    #[test]
+    fn fields_wrap_the_selection() {
+        assert_eq!(fmt("A1", (0, 2), Format::Field), ("{{A1}}".to_owned(), (2, 4)));
+        assert_eq!(fmt("{{A1}}", (2, 4), Format::Field), ("A1".to_owned(), (0, 2)));
+        assert_eq!(fmt("", (0, 0), Format::Field), ("{{}}".to_owned(), (2, 2)));
     }
 
     #[test]

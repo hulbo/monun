@@ -111,3 +111,17 @@ fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
     let mut h = with_document("```mermaid\nnot a diagram\n```\n");
     assert!(wait_for(&mut h, "This diagram has an error:"));
 }
+
+#[test]
+fn fields_show_cell_values_and_follow_them() {
+    let mut s = blank_session();
+    s.run("cell.set", json!({"cell": "A1", "input": "30000"})).unwrap();
+    s.run("home.numberFormat", json!({"range": "A1", "code": "#,##0"})).unwrap();
+    s.run("doc.insert", json!({"name": "Notes", "text": "Total {{Sheet1!A1}} and {{=Sheet1!A1*2}}, {{Nowhere!A1}}\n"})).unwrap();
+    let mut h = harness(s, 4);
+    // A reference shows as its cell does; a formula in General; a bad reference as its error.
+    assert!(h.query_by_label("Total 30,000 and 60000, #REF!").is_some());
+    h.state_mut().run("cell.set", json!({"cell": "Sheet1!A1", "input": "10"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Total 10 and 20, #REF!").is_some(), "the fields follow the sheet");
+}
