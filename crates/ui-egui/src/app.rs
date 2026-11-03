@@ -101,6 +101,12 @@ impl SheetApp {
 
     /// Per-frame logic (control channel, screenshots). Call before `ui`.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let t0 = now_ms();
+        self.logic_pass(ctx);
+        self.perf.logic_ms = now_ms() - t0;
+    }
+
+    fn logic_pass(&mut self, ctx: &egui::Context) {
         self.ensure_text_width(ctx);
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
@@ -132,8 +138,10 @@ impl SheetApp {
         self.guard_window_close(ctx);
         // Files read asynchronously (web file picker, dropped files).
         self.poll_async_opens();
+        let saves = now_ms();
         self.autosave(ctx);
         self.auto_recover(ctx);
+        self.perf.save_ms = now_ms() - saves;
         self.update_title(ctx);
         self.request_hidden_paint(ctx);
         // One window always shows a workbook, unless each workbook has a native window of its own
@@ -257,6 +265,7 @@ impl SheetApp {
             }
         }
         self.perf.last = now;
+        self.perf.finish_frame();
         // The step is applied only after a completed UI pass. A discarded or repeated pass of the
         // same frame must not offer it again (grid sizing calls `ui` more than once per frame);
         // provenance is the injected pass number, so only a pass that missed input handling is

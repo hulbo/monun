@@ -188,6 +188,51 @@ pub struct Perf {
     pub grid_ms: f64,
     pub fps: f64,
     last: f64,
+    /// This frame's logic pass (the control channel, AutoSave, AutoRecover), and the saves in it.
+    pub logic_ms: f64,
+    pub save_ms: f64,
+    /// The slowest command this frame: its id and time.
+    pub command: Option<(String, f64)>,
+    /// The latest frames' times (logic and interface together), newest last.
+    pub recent: std::collections::VecDeque<f64>,
+}
+
+/// A frame slower than this is logged, with where its time went.
+pub const SLOW_FRAME_MS: f64 = 250.0;
+
+impl Perf {
+    /// Notes how long `command` took this frame, keeping the slowest.
+    pub fn note_command(&mut self, command: &str, ms: f64) {
+        if self.command.as_ref().is_none_or(|(_, slowest)| ms > *slowest) {
+            self.command = Some((command.to_owned(), ms));
+        }
+    }
+
+    /// The slowest of the latest frames (ms).
+    pub fn slowest(&self) -> f64 {
+        self.recent.iter().copied().fold(0.0, f64::max)
+    }
+
+    /// Ends a frame: keeps its time, logs it when it was slow, and clears what it measured.
+    fn finish_frame(&mut self) {
+        let total = self.logic_ms + self.frame_ms;
+        if self.recent.len() >= 240 {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(total);
+        if total > SLOW_FRAME_MS {
+            let command = self.command.as_ref().map_or_else(|| "none".to_owned(), |(id, ms)| format!("{id} {ms:.0} ms"));
+            log::warn!(
+                "slow frame: {total:.0} ms (logic {:.0} ms, of it saves {:.0} ms; interface {:.0} ms, of it sheet or document {:.0} ms; slowest command {command})",
+                self.logic_ms,
+                self.save_ms,
+                self.frame_ms,
+                self.grid_ms
+            );
+        }
+        self.command = None;
+        self.save_ms = 0.0;
+    }
 }
 
 pub struct SheetApp {
@@ -308,4 +353,28 @@ pub fn clean_error(e: &str) -> String {
 
 pub fn cell(r: u32, c: u32) -> CellRef {
     CellRef::new(r, c)
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::Perf;
+
+    #[test]
+    fn frames_keep_the_slowest_command_and_the_latest_times() {
+        let mut perf = Perf::default();
+        perf.note_command("sheet.activate", 3.0);
+        perf.note_command("doc.setText", 40.0);
+        perf.note_command("cell.set", 1.0);
+        assert_eq!(perf.command.as_ref().map(|(id, _)| id.as_str()), Some("doc.setText"));
+        (perf.logic_ms, perf.frame_ms) = (5.0, 300.0);
+        perf.finish_frame();
+        assert!(perf.command.is_none(), "a frame's command is its own");
+        assert_eq!(perf.slowest(), 305.0);
+        for _ in 0..300 {
+            (perf.logic_ms, perf.frame_ms) = (0.0, 2.0);
+            perf.finish_frame();
+        }
+        assert_eq!(perf.recent.len(), 240, "only the latest frames are kept");
+        assert_eq!(perf.slowest(), 2.0);
+    }
 }

@@ -6,7 +6,9 @@ use super::{
 impl SheetApp {
     /// Runs an engine command (or a UI command) and handles UI requests it makes.
     pub fn run(&mut self, id: &str, params: Json) -> Result<Json, String> {
+        let started = now_ms();
         let r = self.run_command(id, params);
+        self.perf.note_command(id, now_ms() - started);
         // This copy leaves the system clipboard alone: note what it holds, so Paste can tell
         // that Monun's copy is newer while that text is still there.
         if matches!(id, "edit.copy" | "edit.cut") && r.is_ok() {
