@@ -58,3 +58,20 @@ fn clicking_a_cell_saves_the_sheet_name_and_closes_the_field() {
     assert_eq!(h.state().grid.renaming_tab, None, "clicking elsewhere must close the rename field");
     assert_eq!(sheet_name(&h), "Ledger");
 }
+
+#[test]
+fn the_name_field_fits_in_its_tab_and_grows_with_the_name() {
+    use egui_kittest::kittest::Queryable as _;
+    let mut h = harness();
+    start_rename(&mut h, "Q");
+    let field = h.get_by_label("Sheet Name").rect();
+    // The tabs show in a 30 px band in the middle of the strip, level with its arrows; the field keeps
+    // clear of the band's edges, so its frame shows all round.
+    let middle = h.get_by_label("Previous sheet").rect().center().y;
+    assert!(field.height() >= 19.0, "the whole field shows: {field:?}");
+    assert!(field.top() > middle - 15.0 && field.bottom() <= middle + 14.0, "inside the band around {middle}: {field:?}");
+    h.state_mut().grid.rename_text = "A much longer sheet name".into();
+    h.run_steps(3);
+    let longer = h.get_by_label("Sheet Name").rect();
+    assert!(longer.width() > field.width() + 100.0, "{field:?} → {longer:?}");
+}

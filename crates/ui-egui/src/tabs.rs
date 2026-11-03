@@ -190,7 +190,12 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                             for (i, name, color, active, document) in sheets {
                                 let renaming = app.grid.renaming_tab == Some(i);
                                 let font = if active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
-                                let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
+                                // A tab being renamed grows with the name typed into it.
+                                let tw = if renaming {
+                                    ui.painter().layout_no_wrap(app.grid.rename_text.clone(), theme::ui_font(13.0), t.text).size().x + 12.0
+                                } else {
+                                    ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x
+                                };
                                 // A document tab shows a page before its name, the selected one a ✕ after it.
                                 let icon_w = if document { 18.0 } else { 0.0 };
                                 let close = active && deletable && !renaming;
@@ -215,15 +220,26 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                 if let Some(c) = color {
                                     let band = Rect::from_min_size(pos2(r.left() + 6.0, r.bottom() - 4.0), vec2(r.width() - 12.0, 3.0));
                                     ui.painter().rect_filled(band, 1.0, theme::color32(c));
-                                } else if active {
+                                } else if active && !renaming {
                                     let band = Rect::from_center_size(pos2(r.center().x, r.bottom() - 3.0), vec2(tw.min(48.0), 2.5));
                                     ui.painter().rect_filled(band, 1.0, t.accent);
                                 }
                                 if renaming {
                                     let mut text = app.grid.rename_text.clone();
-                                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 5.0))));
+                                    // In the middle of the part of the tab the strip shows, at a height it
+                                    // holds: a field given less room grew down past the strip's edge, which
+                                    // cut off its bottom line.
+                                    let shown = r.intersect(ui.clip_rect());
+                                    let field = Rect::from_center_size(pos2(r.center().x, shown.center().y - 1.0), vec2(r.width() - 10.0, RENAME_H));
+                                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field));
+                                    child.spacing_mut().interact_size.y = RENAME_H;
                                     let ed = child
-                                        .add(egui::TextEdit::singleline(&mut text).font(theme::ui_font(13.0)).desired_width(r.width() - 12.0))
+                                        .add(
+                                            egui::TextEdit::singleline(&mut text)
+                                                .font(theme::ui_font(13.0))
+                                                .margin(egui::Margin::symmetric(4, 2))
+                                                .desired_width(field.width() - 8.0),
+                                        )
                                         .accessible_name(app.ui.language.tr("Sheet Name"));
                                     app.grid.rename_text = text.clone();
                                     if rename_needs_focus(ed.has_focus(), ed.lost_focus()) {
@@ -324,6 +340,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
 
 /// How far above its tab's middle a sheet name sits.
 const TEXT_RAISE: f32 = 3.0;
+
+/// The height of the field a tab is renamed in: its line and margin, a little under the interface's
+/// control height so the part of the tab the strip shows holds it with room above and below.
+const RENAME_H: f32 = 20.0;
 
 /// Whether deleting the sheet loses something: cells, objects, notes or a document's text.
 fn has_content(sh: &Sheet) -> bool {
