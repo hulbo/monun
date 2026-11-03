@@ -204,9 +204,10 @@ fn right_clicking_a_tab_activates_its_sheet_so_the_menu_acts_on_it() {
     assert!(texts.iter().any(|t| t == "Unprotect Sheet…"), "menu should offer Unprotect Sheet…, painted: {texts:?}");
 }
 
-/// The New sheet button's left edge. The scrollbar track starts 8 px after the 26 px button.
+/// The New sheet button's left edge. New document follows it, and the scrollbar track starts
+/// 8 px after the two 26 px buttons.
 fn new_sheet_left(h: &Harness) -> f32 {
-    h.state().grid.hscroll.expect("the tab bar has a horizontal scrollbar").left() - 8.0 - 26.0
+    h.state().grid.hscroll.expect("the tab bar has a horizontal scrollbar").left() - 8.0 - 26.0 - 26.0
 }
 
 /// The painted background of the active tab: the smallest fill enclosing its name (the bar's own fill encloses it too).

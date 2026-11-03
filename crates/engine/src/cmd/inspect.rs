@@ -40,6 +40,7 @@ fn inspect(s: &mut Session, _: &Json) -> Result<Json> {
         .map(|sh| {
             json!({
                 "name": sh.name,
+                "kind": if sh.is_document() { "document" } else { "worksheet" },
                 "visibility": format!("{:?}", sh.visibility),
                 "usedRange": sh.used_range().map(|r| r.a1()),
                 "cells": sh.cells.len(),

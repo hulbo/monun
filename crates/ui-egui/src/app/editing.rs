@@ -85,7 +85,8 @@ impl SheetApp {
         if !self.commit_edit(0, 0, false, false) {
             return Err(self.message.as_ref().map(|(_, m)| m.clone()).unwrap_or_else(|| "The cell being edited can't be entered.".into()));
         }
-        self.commit_text_box_edit()
+        self.commit_text_box_edit()?;
+        self.commit_doc_draft()
     }
 
     fn commit_edit_here(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {

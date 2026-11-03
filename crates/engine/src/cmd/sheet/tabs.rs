@@ -1,12 +1,23 @@
 use super::{Arc, CellRef, Ctx, EngineError, Json, Result, Session, Sheet, Visibility, bad, bool_param, edit, json, ok, str_param, target_sheet};
 
 pub(super) fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
+    insert_tab(s, p, None)
+}
+
+/// Inserts a worksheet, or a document tab holding `document` (`{name?, prefix?, before?}`; a
+/// document without a `name` takes the first free `<prefix>N`, `DocN` by default).
+pub(crate) fn insert_tab(s: &mut Session, p: &Json, document: Option<String>) -> Result<Json> {
     if s.doc()?.wb.protected_structure {
         return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
     }
-    let name = match str_param(p, "name") {
-        Some(n) => n.to_string(),
-        None => s.doc()?.wb.next_sheet_name(),
+    let name = match (str_param(p, "name"), &document) {
+        (Some(n), _) => n.to_string(),
+        (None, None) => s.doc()?.wb.next_sheet_name(),
+        (None, Some(_)) => {
+            let wb = &s.doc()?.wb;
+            let prefix = str_param(p, "prefix").unwrap_or("Doc");
+            (1..10_000).map(|n| format!("{prefix}{n}")).find(|n| wb.sheet_index(n).is_none()).unwrap_or_else(|| prefix.to_string())
+        }
     };
     s.doc()?.wb.check_sheet_name(&name, None).map_err(EngineError::Other)?;
     let paper = s.prefs.paper();
@@ -17,7 +28,10 @@ pub(super) fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
         let at = before.unwrap_or(cx.wb.active_sheet() + 1).min(cx.wb.sheets.len());
         // A new sheet keeps the active sheet's standard column width, so a workbook started with
         // wider default columns keeps them on every sheet.
-        let mut sheet = Sheet::new(name.clone());
+        let mut sheet = match document {
+            Some(text) => Sheet::new_document(name.clone(), text),
+            None => Sheet::new(name.clone()),
+        };
         if let Some(active) = cx.wb.sheets.get(cx.wb.active_sheet()) {
             sheet.default_col_width = active.default_col_width;
         }

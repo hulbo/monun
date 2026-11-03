@@ -125,6 +125,7 @@ fn decrypt_message(name: &str, e: monun_xlsx::DecryptError) -> String {
 fn open_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, Vec<String>)> {
     let (mut wb, mut warnings) = read_plain(name, bytes, csv_as_text)?;
     warnings.extend(crate::macros::load(&mut wb));
+    crate::docs::load(&mut wb);
     Ok((wb, warnings))
 }
 
@@ -249,6 +250,9 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 
 /// Encodes a workbook as `kind`, whatever `path`'s extension says.
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
+    // Document tabs travel as worksheets of lines in every format but JSON, which keeps them.
+    let lines = if kind == FileKind::Json { None } else { crate::docs::with_cells(wb) };
+    let wb = lines.as_ref().unwrap_or(wb);
     let sheet = wb.active_sheet();
     match kind {
         // The extension picks the package kind; only the macro-enabled kinds (.xlsm, .xltm) carry

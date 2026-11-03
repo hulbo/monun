@@ -14,6 +14,7 @@ use super::{
 
 mod tabs;
 
+pub(crate) use tabs::insert_tab;
 use tabs::{activate, delete_sheet, hide_sheet, insert_sheet, move_sheet, rename_sheet, step_sheet, tab_color, unhide_sheet};
 
 pub fn specs() -> Vec<CommandSpec> {

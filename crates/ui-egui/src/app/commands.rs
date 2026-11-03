@@ -40,8 +40,12 @@ impl SheetApp {
                 | "edit.redo"
                 | "object.delete"
                 | "object.move"
+                | "sheet.rename"
+                | "doc.insert"
+                | "doc.setText"
         ) {
             self.commit_text_box_edit()?;
+            self.commit_doc_draft()?;
         }
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
@@ -114,7 +118,7 @@ impl SheetApp {
     }
 
     /// Shows a command error: a toast for an unavailable command, else a message box.
-    pub(super) fn alert(&mut self, e: String) {
+    pub(crate) fn alert(&mut self, e: String) {
         // Shown in the window the user ends up in, also after a command that switched windows.
         self.follow_active_window();
         if e.contains("is not available right now") {

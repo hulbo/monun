@@ -20,6 +20,7 @@ monun-model = { path = "crates/model" }
 monun-calc = { path = "crates/calc" }
 monun-xlsx = { path = "crates/xlsx" }
 monun-chart = { path = "crates/chart" }
+monun-markdown = { path = "crates/markdown" }
 monun-engine = { path = "crates/engine" }
 monun-ui-egui = { path = "crates/ui-egui" }
 monun-mcp = { path = "crates/mcp" }
@@ -35,6 +36,8 @@ web-time = "1.1.0"
 rayon = "1"
 regex = { version = "1", default-features = false, features = ["std", "unicode", "perf"] }
 quick-xml = "0.41"
+# Markdown of document tabs: the parser only, no HTML output.
+pulldown-cmark = { version = "0.13", default-features = false }
 zip = { version = "3", default-features = false, features = ["deflate"] }
 sha2 = { version = "0.11", default-features = false }
 # Decrypting password-protected workbooks ([MS-OFFCRYPTO]): AES and SHA-1, pure Rust (wasm-safe).

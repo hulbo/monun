@@ -16,6 +16,7 @@ pub mod control;
 mod craft_fonts_policy;
 pub mod dialogs;
 pub mod dnd;
+pub mod doc_view;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_windows;
 pub mod editor;
@@ -198,6 +199,8 @@ pub struct SheetApp {
     pub views: HashMap<(u64, usize), SheetView>,
     pub editor: Option<editor::EditState>,
     pub text_box_editor: Option<text_box::EditState>,
+    /// Document tabs: the draft being typed, each document's mode.
+    pub doc_view: doc_view::State,
     pub dialog: Option<dialogs::Dialog>,
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,

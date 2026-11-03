@@ -17,6 +17,9 @@ fn rename_needs_focus(has_focus: bool, lost_focus: bool) -> bool {
     !has_focus && !lost_focus
 }
 
+/// A tab of the strip: workbook index, name, tab colour, active, a document tab.
+type TabRow = (usize, String, Option<[u8; 3]>, bool, bool);
+
 /// Rows of the All Sheets navigator as `(workbook index, name)`. Hidden sheets stay out, like on the tab strip:
 /// Unhide is the way to reach them.
 fn navigator_items(sheets: &[Arc<Sheet>]) -> Vec<(String, String)> {
@@ -56,8 +59,8 @@ fn tab_drop(i: usize, steps: i64, copy: bool) -> Option<serde_json::Value> {
     Some(json!({"sheet": i, "to": to}))
 }
 
-/// The New sheet (+) button and the gap before it.
-const NEW_SHEET_WIDTH: f32 = 32.0;
+/// The New sheet (+) and New document buttons and the gap before them.
+const NEW_SHEET_WIDTH: f32 = 58.0;
 /// The handle between the tabs and the horizontal scrollbar.
 const SPLIT_WIDTH: f32 = 8.0;
 /// The narrowest the scrollbar track gets when the handle is dragged to the right.
@@ -131,21 +134,22 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             // dragged in a wider window is held to the same limits as a drag at this width.
             let bar_right = app.grid.rect.map_or(bar_left + bar_width, |r| r.right()).min(bar_left + bar_width);
             let share = app.grid.tab_shares.get(&uid).map(|&share| dragged_share(bar_left + bar_width * share, (bar_left, bar_width), bar_right));
-            let sheets: Vec<(usize, String, Option<[u8; 3]>, bool)> =
+            let sheets: Vec<TabRow> =
                 d.wb.sheets
                     .iter()
                     .enumerate()
                     .filter(|(_, s)| s.visibility == Visibility::Visible)
-                    .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet()))
+                    .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet(), s.is_document()))
                     .collect();
             // Keep worksheet tabs in their own horizontally scrollable viewport. As in Excel, the
             // tabs get up to 60% of the bar and the grid's horizontal scrollbar the rest; a strip
             // that needs less shrinks to its tabs, so New sheet (+) sits right after the last one.
             // After the handle at the scrollbar's left edge is dragged, the tabs and New sheet
             // take the share it was dragged to.
+            // The default share leaves the track its usable width in a narrow window.
             let tabs_width = match share {
                 Some(share) => (bar_width * share - NEW_SHEET_WIDTH).max(0.0),
-                None => (bar_width * 0.6).max(100.0),
+                None => (bar_width * 0.6).min(bar_right - bar_left - NEW_SHEET_WIDTH - SPLIT_WIDTH - MIN_TRACK).max(100.0),
             };
             // Reveal the selected sheet after navigation or layout changes, but
             // allow browsing other tabs without snapping back on every frame.
@@ -179,11 +183,13 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                         }
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            for (i, name, color, active) in sheets {
+                            for (i, name, color, active, document) in sheets {
                                 let renaming = app.grid.renaming_tab == Some(i);
                                 let font = if active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
                                 let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
-                                let w = (tw + 32.0).max(72.0);
+                                // A document tab shows a page before its name.
+                                let icon_w = if document { 18.0 } else { 0.0 };
+                                let w = (tw + icon_w + 32.0).max(72.0);
                                 let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click_and_drag());
                                 if active && reveal_active {
                                     resp.scroll_to_me(None);
@@ -224,7 +230,13 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                         app.grid.renaming_tab = None;
                                     }
                                 } else {
-                                    ui.painter().text(r.center(), Align2::CENTER_CENTER, &name, font, if active { t.accent } else { t.text });
+                                    let ink = if active { t.accent } else { t.text };
+                                    let at = pos2(r.center().x + icon_w / 2.0, r.center().y);
+                                    if document {
+                                        let icon = Rect::from_center_size(pos2(at.x - tw / 2.0 - 10.0, at.y), vec2(14.0, 14.0));
+                                        icons::paint(ui.painter(), icon, Icon::Document, if active { t.accent } else { t.text_dim });
+                                    }
+                                    ui.painter().text(at, Align2::CENTER_CENTER, &name, font, ink);
                                 }
                                 // A right-click activates the tab too, as in Excel, so the menu's sheet commands (Protect
                                 // Sheet, Select All Sheets) act on the sheet that was clicked rather than the one that was active.
@@ -265,6 +277,11 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, app.ui.language.tr("New sheet (⇧F11)"), vec2(26.0, 26.0)).clicked() {
                 app.run_or_alert("home.insertSheet", json!({}));
             }
+            if crate::widgets::icon_button(ui, Icon::NewDocument, t.text_dim, app.ui.language.tr("New document (Markdown)"), vec2(26.0, 26.0))
+                .clicked()
+            {
+                app.insert_document(None);
+            }
             // The track ends where the grid does, so it stops under the vertical scrollbar.
             let avail = ui.available_rect_before_wrap();
             let right = app.grid.rect.map_or(avail.right(), |r| r.right()).min(avail.right());
@@ -289,6 +306,7 @@ fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     let protect = if app.active_sheet_protected() { "Un&protect Sheet…" } else { "&Protect Sheet…" };
     let items = [
         Entry::item("&Insert Sheet", "insert"),
+        Entry::item("Insert D&ocument", "insertDocument"),
         Entry::item("&Delete", "delete"),
         Entry::item("&Rename", "rename"),
         Entry::item("&Move or Copy…", "move"),
@@ -319,6 +337,7 @@ fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     });
     match chosen {
         Some("insert") => app.run_or_alert("home.insertSheet", json!({"before": i})),
+        Some("insertDocument") => app.insert_document(Some(i)),
         Some("delete") => app.run_or_alert("home.deleteSheet", json!({"sheet": i})),
         Some("rename") => {
             app.grid.renaming_tab = Some(i);
@@ -421,6 +440,14 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                         app.run_or_alert("view.zoom", json!({"percent": z}));
                     }
                     ui.add_space(10.0);
+                    // A document tab has no page views and no selection: its size instead.
+                    if let Some(dr) = app.doc_view.draft.as_ref().filter(|_| crate::doc_view::is_active(app)) {
+                        let lines = dr.text.lines().count().max(1);
+                        let chars = dr.text.chars().filter(|c| !c.is_control()).count();
+                        let size = format!("{} {lines} · {} {chars}", app.ui.language.tr("Lines:"), app.ui.language.tr("Characters:"));
+                        text(ui, egui::RichText::new(size).font(theme::ui_font(12.5)).color(t.text_dim));
+                        return;
+                    }
                     for (icon, tip, mode, cmd) in [
                         (Icon::PageBreak, "Page Break Preview", "pageBreakPreview", "view.pageBreakPreview"),
                         (Icon::PageLayout, "Page Layout", "pageLayout", "view.pageLayout"),

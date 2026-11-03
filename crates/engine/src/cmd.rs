@@ -3,6 +3,7 @@
 
 pub mod analysis;
 pub mod data;
+pub mod doc;
 pub mod draw;
 pub mod edit;
 pub mod extra;
@@ -137,6 +138,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(edit::specs());
         v.extend(format::specs());
         v.extend(sheet::specs());
+        v.extend(doc::specs());
         v.extend(insert::specs());
         v.extend(data::specs());
         v.extend(formulas::specs());
@@ -374,6 +376,9 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     };
     let r = f(&mut ctx)?;
     let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, edits, .. } = ctx;
+    if wb.sheets.iter().any(|sh| sh.is_document() && !crate::docs::grid_is_empty(sh)) {
+        return Err(EngineError::Other(crate::docs::NO_CELLS.into()));
+    }
     if !protection_checked {
         check_protection(&d.wb, &wb, &d.unlocked_ranges)?;
     }

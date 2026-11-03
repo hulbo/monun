@@ -154,6 +154,10 @@ pub enum Icon {
     RunTo,
     /// Stop: a square.
     StopSquare,
+    /// A document tab: a page with lines of text.
+    Document,
+    /// New document: the document page with a plus at its corner.
+    NewDocument,
 }
 
 struct G<'a> {
@@ -732,6 +736,16 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
             g.circle(8.0, 8.0, 6.5, None, Some(c));
             g.line(&[(11.5, 8.0), (4.8, 8.0)], c, 1.2);
             g.line(&[(7.5, 5.3), (4.8, 8.0), (7.5, 10.7)], c, 1.2);
+        }
+        Icon::Document | Icon::NewDocument => {
+            g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
+            for y in [7.0, 9.5, 12.0] {
+                g.stroke(&[(5.5, y), (if icon == Icon::NewDocument && y > 10.0 { 7.5 } else { 10.5 }, y)], c);
+            }
+            if icon == Icon::NewDocument {
+                g.line(&[(12.0, 9.5), (12.0, 15.5)], c, 1.3);
+                g.line(&[(9.0, 12.5), (15.0, 12.5)], c, 1.3);
+            }
         }
         Icon::NewFile => {
             g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);

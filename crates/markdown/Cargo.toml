@@ -1,0 +1,12 @@
+[package]
+name = "monun-markdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun document tabs: Markdown parsed into blocks for the preview, with source lines and task offsets"
+
+[lints]
+workspace = true
+
+[dependencies]
+pulldown-cmark = { workspace = true }

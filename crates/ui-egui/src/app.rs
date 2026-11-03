@@ -31,6 +31,7 @@ impl SheetApp {
             views: HashMap::new(),
             editor: None,
             text_box_editor: None,
+            doc_view: Default::default(),
             dialog: None,
             backstage: None,
             message: None,
@@ -215,7 +216,8 @@ impl SheetApp {
         } else {
             ribbon::show(self, ui);
             widgets::notice_bar(self, ui);
-            if self.session.prefs.formula_bar {
+            let document = crate::doc_view::is_active(self);
+            if self.session.prefs.formula_bar && !document {
                 formula_bar::show(self, ui);
             }
             if self.ui.status_bar {
@@ -226,7 +228,11 @@ impl SheetApp {
             panes::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {
                 let g0 = now_ms();
-                grid::show(self, ui);
+                if document {
+                    crate::doc_view::show(self, ui);
+                } else {
+                    grid::show(self, ui);
+                }
                 self.perf.grid_ms = now_ms() - g0;
             });
         }

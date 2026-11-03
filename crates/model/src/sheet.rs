@@ -129,6 +129,18 @@ pub struct Sheet {
     /// tables). Goes away with the sheet; not in JSON.
     #[serde(skip)]
     pub preserved: Option<Arc<crate::preserved::Preserved>>,
+    /// The Markdown text of a document tab, shown in place of the grid; `None` for a worksheet.
+    /// A document's grid stays empty. Not in older JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<Document>,
+}
+
+/// A document tab's content: Markdown text, lines separated by `\n`. An XLSX file holds it as a
+/// worksheet with one line per row of column A (see `monun_engine::docs`), so other
+/// spreadsheet apps show and keep it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Document {
+    pub text: String,
 }
 
 fn yes() -> bool {
@@ -190,7 +202,18 @@ impl Sheet {
             view_top_left: CellRef::default(),
             view: SheetViewMode::Normal,
             preserved: None,
+            document: None,
         }
+    }
+
+    /// A document tab named `name` holding `text`.
+    pub fn new_document(name: impl Into<String>, text: impl Into<String>) -> Sheet {
+        Sheet { document: Some(Document { text: text.into() }), ..Sheet::new(name) }
+    }
+
+    /// Whether this is a document tab rather than a worksheet.
+    pub fn is_document(&self) -> bool {
+        self.document.is_some()
     }
 
     pub fn cell(&self, c: CellRef) -> Option<&Cell> {
