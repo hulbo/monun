@@ -50,6 +50,10 @@ pub struct State {
     parsed: Option<(String, Arc<Vec<Block>>)>,
     /// Mermaid blocks drawn so far.
     diagrams: diagram::Cache,
+    /// The editor's layouts of the latest documents (see `editor::Laid`).
+    galleys: Vec<editor::Laid>,
+    /// The rendered document's block heights, so only the blocks in view are laid out.
+    heights: preview::Heights,
     /// The `{{…}}` fields' values, for a workbook version (uid, revision) and a parse.
     fields: Option<((u64, u64, usize), Arc<Fields>)>,
     /// The outline (the headings) shows beside the document.
@@ -184,6 +188,27 @@ pub fn active_document(app: &SheetApp) -> Option<(u64, usize, String)> {
 /// How the active document tab is set to show: its own mode, when one was chosen, and its Fit Width.
 fn chosen_view(app: &SheetApp) -> (Option<Mode>, bool) {
     app.session.active().and_then(|d| d.wb.active()).and_then(|sh| sh.document.as_ref()).map_or((None, false), |doc| (doc.mode, doc.fit_width))
+}
+
+/// A document's lines (at least one) and its characters other than control ones, for the status
+/// bar every frame: counted on the bytes, as walking a megabyte's characters took a millisecond
+/// or two.
+pub fn text_size(text: &str) -> (usize, usize) {
+    let breaks = text.bytes().filter(|&b| b == b'\n').count();
+    let lines = if text.is_empty() || text.ends_with('\n') { breaks } else { breaks + 1 };
+    // A character starts at every byte but a UTF-8 continuation byte; C0 controls and DEL are
+    // single bytes, and C1 controls (U+0080–U+009F) are 0xC2 followed by 0x80–0x9F.
+    let bytes = text.as_bytes();
+    let mut chars = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let starts = b & 0xC0 != 0x80;
+        let c0 = b < 0x20 || b == 0x7F;
+        let c1 = b == 0xC2 && bytes.get(i + 1).is_some_and(|&n| (0x80..=0x9F).contains(&n));
+        if starts && !c0 && !c1 {
+            chars += 1;
+        }
+    }
+    (lines.max(1), chars)
 }
 
 /// Whether the active sheet is a document tab.
@@ -839,7 +864,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
             ui.vertical(|ui| {
                 ui.set_width(width);
                 ui.add_space(lead);
-                (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams);
+                (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
                 ui.add_space(48.0 * z);
             });
         });
@@ -905,7 +930,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let (mut action, mut positions) = (None, Vec::new());
     scroll.show(&mut right_ui, |ui| {
         ui.add_space(lead);
-        (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams);
+        (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
         ui.add_space(48.0 * z);
     });
     app.doc_view.positions = positions;
@@ -975,6 +1000,15 @@ mod tests {
         assert_eq!(find_all("aaaa", "aa"), [0..2, 2..4]);
         assert!(find_all("abc", "").is_empty());
         assert!(find_all("", "x").is_empty());
+    }
+
+    #[test]
+    fn text_size_counts_as_the_characters_do() {
+        for text in ["", "a", "a\n", "a\nb", "\n\n", "가계부\n  들여쓴 줄\t끝\r\n", "x\u{85}y\u{7f}z\u{a0}", "🙂 emoji\n"] {
+            let lines = text.lines().count().max(1);
+            let chars = text.chars().filter(|c| !c.is_control()).count();
+            assert_eq!(text_size(text), (lines, chars), "{text:?}");
+        }
     }
 
     #[test]

@@ -119,6 +119,30 @@ pub(super) fn caret_to_end(app: &SheetApp, ctx: &egui::Context) {
     state.store(ctx, id);
 }
 
+/// How many documents' editor layouts are kept: the one shown and the last few before it, so going
+/// round a workbook's tabs lays none out again. A megabyte of text takes most of a second to lay
+/// out and some 170 MB once laid out, so no more are kept.
+const KEEP_LAID: usize = 4;
+
+/// What an editor layout was made for: the document, the width it wraps at, the font size and
+/// the theme.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Look {
+    doc: (u64, usize),
+    wrap: u32,
+    size: u32,
+    dark: bool,
+}
+
+/// An editor layout kept between frames: egui's own cache keeps only those drawn in the last
+/// frame, so a document's text was laid out again every time its tab was shown.
+pub(super) struct Laid {
+    look: Look,
+    query: String,
+    text: String,
+    galley: std::sync::Arc<egui::Galley>,
+}
+
 /// The editor, filling `ui`. Returns the first line in view.
 pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Option<usize> {
     let goto = app.doc_view.goto_line.take();
@@ -139,10 +163,21 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Optio
         state.store(&ctx, editor_id());
     }
     let colors = Colors::of(t);
+    let doc = (dr.uid, dr.sheet);
+    let galleys = &mut app.doc_view.galleys;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-        let mut job = markdown_job(buf.as_str(), &font, &colors, wrap);
-        tint(&mut job, &super::find_all(buf.as_str(), &query), super::preview::FOUND);
-        ui.fonts_mut(|f| f.layout_job(job))
+        let text = buf.as_str();
+        let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+        if let Some(kept) = galleys.iter().find(|g| g.look == look && g.query == query && g.text == text) {
+            return kept.galley.clone();
+        }
+        let mut job = markdown_job(text, &font, &colors, wrap);
+        tint(&mut job, &super::find_all(text, &query), super::preview::FOUND);
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        galleys.retain(|g| g.look.doc != doc);
+        galleys.insert(0, Laid { look, query: query.clone(), text: text.to_owned(), galley: galley.clone() });
+        galleys.truncate(KEEP_LAID);
+        galley
     };
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
     let scroll = egui::ScrollArea::vertical().id_salt("monun.doc_editor_scroll").auto_shrink([false, false]).show(ui, |ui| {

@@ -55,22 +55,62 @@ struct Out<'a> {
     diagrams: &'a mut diagram::Cache,
 }
 
-/// Draws `blocks` into `ui`'s width. Returns what a click asked for, and where each top-level
-/// block starts: its first line and its offset from the top of what was drawn.
-pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Cache) -> (Option<Action>, Vec<(usize, f32)>) {
+/// The heights of the rendered document's top-level blocks as last laid out, for one parse of the
+/// text at one width and zoom. Blocks out of view keep their room without being laid out: a
+/// long document (tens of thousands of lines) took most of a second to lay out whole, every time
+/// its tab was shown.
+#[derive(Default)]
+pub struct Heights {
+    key: Option<(usize, usize, u32, u32, bool)>,
+    known: Vec<Option<f32>>,
+}
+
+/// Draws `blocks` into `ui`'s width: those within a screen of the view laid out, the others as
+/// the room they took last (or an estimate until they have been seen). Returns what a click
+/// asked for, and where each top-level block starts: its first line and its offset from the top
+/// of what was drawn.
+pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Cache, heights: &mut Heights) -> (Option<Action>, Vec<(usize, f32)>) {
     let mut out = Out { action: None, diagrams };
     if blocks.is_empty() {
         ui.label(
             egui::RichText::new(cx.lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(cx.t.text_dim),
         );
     }
+    let key = (blocks.as_ptr() as usize, blocks.len(), ui.available_width().to_bits(), cx.z.to_bits(), cx.full);
+    if heights.key != Some(key) {
+        heights.key = Some(key);
+        heights.known = vec![None; blocks.len()];
+    }
+    let clip = ui.clip_rect();
+    let reach = clip.height().max(200.0);
+    let (near_top, near_bottom) = (clip.top() - reach, clip.bottom() + reach);
     let top = ui.cursor().top();
     let mut positions = Vec::with_capacity(blocks.len());
-    for b in blocks {
-        positions.push((b.line(), ui.cursor().top() - top));
+    for (i, b) in blocks.iter().enumerate() {
+        let y = ui.cursor().top();
+        positions.push((b.line(), y - top));
+        let lines = blocks.get(i + 1).map_or(1, |next| next.line().saturating_sub(b.line()));
+        let room = heights.known.get(i).copied().flatten().unwrap_or_else(|| estimate(b, lines, cx));
+        if y + room < near_top || y > near_bottom {
+            ui.add_space(room);
+            continue;
+        }
         block(ui, b, cx, &mut out, false);
+        if let Some(h) = heights.known.get_mut(i) {
+            *h = Some(ui.cursor().top() - y);
+        }
     }
     (out.action, positions)
+}
+
+/// The room a block not yet laid out is given: its source lines at the body's line height, a
+/// heading or diagram about what it takes.
+fn estimate(b: &Block, lines: usize, cx: &Cx) -> f32 {
+    match b {
+        Block::Heading { level, .. } => (if *level <= 2 { 50.0 } else { 34.0 }) * cx.z,
+        Block::Code { lang, .. } if lang == "mermaid" => 260.0 * cx.z,
+        _ => lines.max(1) as f32 * cx.body() * 1.45 + cx.gap(),
+    }
 }
 
 fn block(ui: &mut Ui, b: &Block, cx: &Cx, out: &mut Out, tight: bool) {

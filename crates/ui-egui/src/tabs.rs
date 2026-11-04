@@ -528,8 +528,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     ui.add_space(10.0);
                     // A document tab has no page views and no selection: its size instead.
                     if let Some(dr) = app.doc_view.draft.as_ref().filter(|_| crate::doc_view::is_active(app)) {
-                        let lines = dr.text.lines().count().max(1);
-                        let chars = dr.text.chars().filter(|c| !c.is_control()).count();
+                        let (lines, chars) = crate::doc_view::text_size(&dr.text);
                         let size = format!("{} {lines} · {} {chars}", app.ui.language.tr("Lines:"), app.ui.language.tr("Characters:"));
                         text(ui, egui::RichText::new(size).font(theme::ui_font(12.5)).color(t.text_dim));
                         return;
