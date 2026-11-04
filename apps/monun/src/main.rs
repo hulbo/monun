@@ -31,7 +31,13 @@ use serde_json::json;
 struct App(SheetApp, DocWindows, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>, #[cfg(target_os = "macos")] fmv_macos_events::Inbox);
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // The whole of the last frame, painting included (the app's own log covers its parts).
+        if let Some(cpu) = frame.info().cpu_usage
+            && f64::from(cpu) * 1000.0 > monun_ui_egui::SLOW_FRAME_MS
+        {
+            log::warn!("slow frame: {:.0} ms in all, painting included", f64::from(cpu) * 1000.0);
+        }
         #[cfg(target_os = "macos")]
         {
             if self.2.is_none() && std::env::var_os("MONUN_NO_NATIVE_MENU").is_none() {
