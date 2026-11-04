@@ -322,10 +322,11 @@ fn main() -> eframe::Result<()> {
     }
     // The log file lives in the settings folder, next to the preferences; opened after the
     // arguments, so `--version` leaves no file behind. Records logged until now are written to it
-    // first. Runs without preferences (agents' test runs) log to standard error only, so they
-    // don't rotate away the user's own logs.
+    // first. Runs without preferences and runs a script drives (agents' test runs, `--control`)
+    // log to standard error only, so they neither rotate away the user's own logs nor hold the
+    // file while the user's 모눈 starts, which left that run with no log at all.
     if let Some(logger) = logger {
-        match log_dir().filter(|_| prefs_enabled()) {
+        match log_dir().filter(|_| prefs_enabled() && control_port.is_none()) {
             Some(dir) => match logger.attach_dir(&dir) {
                 Ok(path) => log::info!("Monun {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
                 // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.

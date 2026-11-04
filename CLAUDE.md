@@ -47,7 +47,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - After moving the checkout, run `cargo clean -p xtask`: xtask compiles its own path in.
 - Headless: `monun-cli eval '=SUM(1,2,3)'`,
   `monun-cli run --cmd 'cell.set={"cell":"A1","input":"1"}' --out book.xlsx`.
-- Settings and logs: `%APPDATA%\Monun` (`prefs.json`, `ui.json`, `logs/monun.log`).
+- Settings and logs: `%APPDATA%\Monun` (`prefs.json`, `ui.json`, `logs/monun.log`; a frame over
+  250 ms is logged there as `slow frame`, with where its time went). `--control` runs keep no log
+  file, so they never touch the user's: their log is standard error (`verify` keeps it in
+  `target\verify\app.log`).
 - A normal start of the release build registers the running exe for .xlsx and the other types it
   opens under `HKCU` (Open with, Default apps; `apps/monun/src/file_types.rs`). Debug builds and
   `--control` runs don't, so a worktree's build never takes over the user's file types.

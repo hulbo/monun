@@ -101,7 +101,7 @@ function Get-ChangedPackages {
     }
 }
 
-# The lines the app logged after byte `from` (the log is shared with the running app).
+# The lines the app logged after byte `from` (the file may still be open in the running app).
 function Read-LogSince([string]$path, [long]$from) {
     if (-not (Test-Path $path)) { return @() }
     $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
@@ -177,9 +177,11 @@ if ('app' -in $Phase) {
             Get-Diagnostics $r.Lines | ForEach-Object { $summary.Add($_) }
         } else {
             Add-Result 'app: release build' 'PASS' "$($r.Seconds)s"
-            $appLog = Join-Path $env:APPDATA 'Monun\logs\monun.log'
-            $logStart = if (Test-Path $appLog) { (Get-Item $appLog).Length } else { 0 }
-            $proc = Start-Process -FilePath $exe -ArgumentList '--control', $Port -PassThru
+            # A --control run keeps no log file (it would rotate away the user's own and hold it
+            # while the user's 모눈 starts): its log is its standard error, kept here.
+            $appLog = Join-Path $logDir 'app.log'
+            $logStart = 0
+            $proc = Start-Process -FilePath $exe -ArgumentList '--control', $Port -PassThru -RedirectStandardError $appLog
             $ready = $false
             for ($i = 0; $i -lt 60 -and -not $ready -and -not $proc.HasExited; $i++) {
                 Start-Sleep -Milliseconds 500
