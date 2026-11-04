@@ -195,6 +195,9 @@ impl SheetApp {
             return;
         }
         let t0 = now_ms();
+        if ctx.viewport_id() == egui::ViewportId::ROOT {
+            crate::doc_view::check_fonts(self, &ctx);
+        }
         // A script may have switched windows since the last frame.
         self.follow_active_window();
         text_box::before_ui(self, &ctx);
@@ -252,6 +255,8 @@ impl SheetApp {
         // Requests are admitted in `logic`, for the root viewport, so only its pass issues them.
         if ctx.viewport_id() == egui::ViewportId::ROOT {
             control::issue_screenshots(self, &ctx);
+            // Long documents' editor text, a slice a frame, before their tabs are shown.
+            crate::doc_view::lay_out_ahead(self, &ctx);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

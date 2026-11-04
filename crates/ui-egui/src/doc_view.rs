@@ -50,8 +50,12 @@ pub struct State {
     parsed: Option<(String, Arc<Vec<Block>>)>,
     /// Mermaid blocks drawn so far.
     diagrams: diagram::Cache,
-    /// The editor's layouts of the latest documents (see `editor::Laid`).
-    galleys: Vec<editor::Laid>,
+    /// The editor's layouts kept between frames (see `editor::Layouts`).
+    layouts: editor::Layouts,
+    /// The long documents laid out ahead this session, and those shown laid out at the width of
+    /// their other mode too (see `lay_out_ahead`).
+    laid_ahead: std::collections::HashSet<(u64, usize)>,
+    laid_other: std::collections::HashSet<(u64, usize)>,
     /// The rendered document's block heights, so only the blocks in view are laid out.
     heights: preview::Heights,
     /// The `{{…}}` fields' values, for a workbook version (uid, revision) and a parse.
@@ -214,6 +218,87 @@ pub fn text_size(text: &str) -> (usize, usize) {
 /// Whether the active sheet is a document tab.
 pub fn is_active(app: &SheetApp) -> bool {
     app.session.active().and_then(|d| d.wb.active()).is_some_and(|sh| sh.is_document())
+}
+
+/// Forgets the editor's layouts when egui has started its fonts over (see
+/// `editor::Layouts::check_fonts`); long documents are laid out again a slice a frame. Called at
+/// the start of each frame, before anything shows them.
+pub fn check_fonts(app: &mut SheetApp, ctx: &egui::Context) {
+    if app.doc_view.layouts.check_fonts(ctx) {
+        app.doc_view.laid_ahead.clear();
+        app.doc_view.laid_other.clear();
+    }
+}
+
+/// How long a frame lays out the text of a document not shown (ms).
+const AHEAD_MS: f64 = 8.0;
+
+/// The editor's margins across, both sides together (px): what the window's width loses before
+/// the editor's text, for [`editor_wrap`].
+const EDITOR_EDGES: f32 = 28.0;
+
+/// Lays out ahead, a slice a frame, the editor text of the active workbook's first long documents
+/// that open in Edit or Side by Side, so their tabs show at once and not a second later; then the
+/// tab shown at the width of its other mode, so going between Edit and Side by Side is at once
+/// too. Each once a session: the editor keeps its layouts up to date from there. Not while typing
+/// waits to reach the workbook, which has the frames.
+pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
+    let shown = is_active(app);
+    let Some(d) = app.session.active() else { return };
+    let state = &mut app.doc_view;
+    if state.draft.as_ref().is_some_and(Draft::is_dirty) {
+        return;
+    }
+    let query = state.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let t = Tokens::get(ctx);
+    let (mut long, mut other) = (0, None);
+    for (i, sh) in (0..).map_while(|i| d.wb.sheet(i).map(|sh| (i, sh))) {
+        let Some(doc) = sh.document.as_ref() else { continue };
+        let key = (d.uid, i);
+        let mode = doc.mode.or_else(|| state.modes.get(&key).copied()).unwrap_or(Mode::View);
+        if mode == Mode::View || !editor::is_long(&doc.text) {
+            continue;
+        }
+        let z = f32::from(sh.zoom.clamp(10, 400)) / 100.0;
+        if shown && i == d.wb.active_sheet() {
+            if !state.layouts.ready(key, &doc.text) {
+                // Its first screen is laying it out (see `editor::show`).
+                return;
+            }
+            let mode = if mode == Mode::Split { Mode::Edit } else { Mode::Split };
+            other = (!state.laid_other.contains(&key)).then_some((key, mode, z, doc.text.as_str()));
+            continue;
+        }
+        long += 1;
+        if long > editor::AHEAD_DOCS || state.laid_ahead.contains(&key) {
+            continue;
+        }
+        if state.layouts.ready(key, &doc.text) {
+            state.laid_ahead.insert(key);
+            continue;
+        }
+        let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
+        if editor::lay_out_ahead(&mut state.layouts, ctx, key, &doc.text, (z, wrap, &query), &t, AHEAD_MS) {
+            state.laid_ahead.insert(key);
+        }
+        ctx.request_repaint();
+        return;
+    }
+    let Some((key, mode, z, text)) = other else { return };
+    let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
+    if editor::lay_out_ahead(&mut state.layouts, ctx, key, text, (z, wrap, &query), &t, AHEAD_MS) {
+        state.laid_other.insert(key);
+    }
+    ctx.request_repaint();
+}
+
+/// The width the editor wraps at in `mode` before it has shown: its share of the window, less its
+/// margins. A line shorter than it is laid out the same at whatever width the editor turns out
+/// to have, so only the longer lines depend on the guess.
+fn editor_wrap(ctx: &egui::Context, mode: Mode, split: Option<f32>) -> f32 {
+    let width = ctx.content_rect().width();
+    let share = if mode == Mode::Split { width * split.unwrap_or(0.5).clamp(0.2, 0.8) - 3.0 } else { width };
+    (share - EDITOR_EDGES).round().max(100.0)
 }
 
 impl SheetApp {
@@ -878,7 +963,7 @@ fn text_only(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let area = ui.available_rect_before_wrap();
     ui.painter().rect_filled(area, 0.0, t.input_bg);
     let mut editor_ui = ui.new_child(egui::UiBuilder::new().max_rect(area));
-    app.doc_view.editor_top = editor::show(app, &mut editor_ui, z, t);
+    app.doc_view.editor_top = editor::show(app, &mut editor_ui, z, t, Mode::Edit);
     ui.allocate_rect(area, Sense::hover());
 }
 
@@ -905,7 +990,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         .line_segment([pos2(mid, area.top()), pos2(mid, area.bottom())], Stroke::new(1.0, if handle.hovered() { t.accent } else { t.ribbon_border }));
 
     let mut left_ui = ui.new_child(egui::UiBuilder::new().max_rect(left));
-    let top = editor::show(app, &mut left_ui, z, t);
+    let top = editor::show(app, &mut left_ui, z, t, Mode::Split);
     // The rendered document follows the editor: scrolling the text brings its blocks into view.
     if top.is_some() && top != app.doc_view.editor_top {
         app.doc_view.scroll_to = app.doc_view.scroll_to.or(top);

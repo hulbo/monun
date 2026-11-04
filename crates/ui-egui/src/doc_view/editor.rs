@@ -126,6 +126,9 @@ pub(super) fn caret_to_end(app: &SheetApp, ctx: &egui::Context) {
 /// out and some 170 MB once laid out, so no more are kept.
 const KEEP_LAID: usize = 4;
 
+/// How many of a workbook's long documents are laid out ahead (see [`super::lay_out_ahead`]).
+pub(super) const AHEAD_DOCS: usize = 2;
+
 /// What an editor layout was made for: the document, the width it wraps at, the font size and
 /// the theme.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -137,89 +140,366 @@ struct Look {
 }
 
 /// An editor layout kept between frames: egui's own cache keeps only those drawn in the last
-/// frame, so a document's text was laid out again every time its tab was shown. Its paragraphs
-/// are kept too, by their content, so an edit lays out only the paragraphs it changed.
-pub(super) struct Laid {
+/// frame, so a document's text was laid out again every time its tab was shown.
+struct Laid {
     look: Look,
     query: String,
     text: String,
     galley: Arc<egui::Galley>,
-    paragraphs: Paragraphs,
 }
 
-/// Laid-out paragraphs by the hash of their layout job.
-type Paragraphs = std::collections::HashMap<u64, Arc<egui::Galley>>;
+/// A laid-out paragraph and the width it was laid out at, with its layout at the width before when
+/// it wraps differently there: going back (Edit and Side by Side, a window made wider and back)
+/// takes that as it was.
+#[derive(Clone)]
+struct Kept {
+    galley: Arc<egui::Galley>,
+    wrap: f32,
+    before: Option<(Arc<egui::Galley>, f32)>,
+}
+
+impl Kept {
+    /// `part` laid out.
+    fn new(ctx: &egui::Context, part: LayoutJob) -> Kept {
+        let wrap = part.wrap.max_width;
+        Kept { galley: ctx.fonts_mut(|f| f.layout_job(part)), wrap, before: None }
+    }
+
+    /// The paragraph as `part` lays it out: as kept at either width, or laid out now.
+    fn at(&self, ctx: &egui::Context, part: LayoutJob) -> Kept {
+        if same_at(&self.galley, self.wrap, &part) {
+            return self.clone();
+        }
+        let before = Some((self.galley.clone(), self.wrap));
+        match &self.before {
+            Some((galley, wrap)) if same_at(galley, *wrap, &part) => Kept { galley: galley.clone(), wrap: *wrap, before },
+            _ => Kept { before, ..Kept::new(ctx, part) },
+        }
+    }
+}
+
+/// Laid-out paragraphs by the hash of their layout job, its width left out (see [`same_at`]).
+type Paragraphs = std::collections::HashMap<u64, Kept>;
+
+/// A document's laid-out paragraphs, kept by their content so an edit lays out only the
+/// paragraphs it changed. `whole` once every paragraph of the text was laid out; `ahead`, the
+/// paragraphs being laid out ahead.
+struct DocParagraphs {
+    doc: (u64, usize),
+    paragraphs: Paragraphs,
+    whole: bool,
+    ahead: Option<Ahead>,
+}
+
+/// A long document's paragraphs being laid out ahead, a slice a frame: what for, the text's job,
+/// and the paragraph next (its byte, and the first section that may reach it).
+struct Ahead {
+    look: Look,
+    query: String,
+    text: String,
+    job: LayoutJob,
+    at: usize,
+    section: usize,
+}
+
+/// The editor's layouts kept between frames: whole texts and the latest documents' paragraphs.
+#[derive(Default)]
+pub(super) struct Layouts {
+    laid: Vec<Laid>,
+    docs: Vec<DocParagraphs>,
+    /// The width the editor last wrapped at in Edit (0) and Side by Side (1).
+    wraps: [Option<f32>; 2],
+    /// A galley in egui's own cache, to tell when it starts its fonts over (see `check_fonts`).
+    probe: Option<Arc<egui::Galley>>,
+}
+
+impl Layouts {
+    /// Forgets every layout kept when egui has started its font atlas over (new fonts, a font
+    /// found for a character, a full atlas): they point into the old atlas and would draw the
+    /// wrong glyphs. egui tells only by emptying its own cache, so a probe is laid out there
+    /// every frame: it comes back the same until the cache is emptied. Returns whether it was.
+    pub(super) fn check_fonts(&mut self, ctx: &egui::Context) -> bool {
+        // A letter every font set has.
+        let job = LayoutJob::simple_singleline("x".into(), FontId::default(), Color32::WHITE);
+        let probe = ctx.fonts_mut(|f| f.layout_job(job));
+        let started_over = self.probe.as_ref().is_some_and(|p| !Arc::ptr_eq(p, &probe));
+        if started_over {
+            self.laid.clear();
+            self.docs.clear();
+        }
+        self.probe = Some(probe);
+        started_over
+    }
+
+    /// Whether the document's text needs no long layout before the editor shows it: it is short,
+    /// or its paragraphs were all laid out (for this text or one before it).
+    pub(super) fn ready(&self, doc: (u64, usize), text: &str) -> bool {
+        !is_long(text) || self.docs.iter().any(|d| d.doc == doc && d.whole)
+    }
+
+    /// The width the editor wraps at in `mode`, as last seen.
+    pub(super) fn wrap(&self, mode: super::Mode) -> Option<f32> {
+        self.wraps.get(slot(mode)).copied().flatten()
+    }
+
+    /// The editor's galley of `text` for `look`: kept from before, or laid out with the
+    /// document's paragraphs (`job` makes its layout job).
+    fn layout(&mut self, ctx: &egui::Context, look: Look, query: &str, text: &str, job: impl FnOnce() -> LayoutJob) -> Arc<egui::Galley> {
+        if let Some(kept) = self.laid.iter().find(|g| g.look == look && g.query == query && g.text == text) {
+            return kept.galley.clone();
+        }
+        // The document's paragraphs as last laid out, whatever changed since.
+        let before = self.docs.iter().position(|d| d.doc == look.doc).map(|i| self.docs.remove(i));
+        let (paragraphs, ahead) = before.map_or_else(Default::default, |d| (d.paragraphs, d.ahead));
+        let (galley, paragraphs) = layout_paragraphs(ctx, job(), paragraphs);
+        if is_long(text) {
+            // Only long texts' paragraphs are kept, so short documents never push one's out.
+            self.keep(DocParagraphs { doc: look.doc, paragraphs, whole: true, ahead });
+        }
+        self.laid.insert(0, Laid { look, query: query.to_owned(), text: text.to_owned(), galley: galley.clone() });
+        self.laid.truncate(KEEP_LAID);
+        galley
+    }
+
+    /// Keeps a document's paragraphs first, dropping the oldest documents' beyond [`KEEP_LAID`]
+    /// with their whole layouts.
+    fn keep(&mut self, paragraphs: DocParagraphs) {
+        self.docs.retain(|d| d.doc != paragraphs.doc);
+        self.docs.insert(0, paragraphs);
+        self.docs.truncate(KEEP_LAID);
+        let docs = &self.docs;
+        self.laid.retain(|l| !is_long(&l.text) || docs.iter().any(|d| d.doc == l.look.doc));
+    }
+
+    /// Lays out, for about `budget` ms, more of the paragraphs the editor will want to show `text`
+    /// with `look` (`job` makes its layout job). Returns whether they are all laid out.
+    fn ahead(&mut self, ctx: &egui::Context, look: Look, query: &str, text: &str, job: impl FnOnce() -> LayoutJob, budget: f64) -> bool {
+        let deadline = crate::clock::monotonic_ms() + budget;
+        if !self.docs.iter().any(|d| d.doc == look.doc) {
+            self.keep(DocParagraphs { doc: look.doc, paragraphs: Paragraphs::new(), whole: false, ahead: None });
+        }
+        let Some(DocParagraphs { paragraphs, whole, ahead, .. }) = self.docs.iter_mut().find(|d| d.doc == look.doc) else { return false };
+        if !ahead.as_ref().is_some_and(|a| a.look == look && a.query == query && a.text == text) {
+            *ahead = Some(Ahead { look, query: query.to_owned(), text: text.to_owned(), job: rounded(job()), at: 0, section: 0 });
+        }
+        let Some(a) = ahead.as_mut() else { return false };
+        let ppp = ctx.pixels_per_point();
+        while let Some((mut part, next, section)) = paragraph_at(&a.job, a.at, a.section) {
+            (a.at, a.section) = (next, section);
+            let key = key_of(&mut part, ppp);
+            let kept = match paragraphs.get(&key) {
+                Some(k) => k.at(ctx, part),
+                None => Kept::new(ctx, part),
+            };
+            paragraphs.insert(key, kept);
+            if crate::clock::monotonic_ms() >= deadline {
+                return false;
+            }
+        }
+        *whole = true;
+        *ahead = None;
+        true
+    }
+}
+
+/// Which of [`Layouts::wraps`] a mode's editor wraps at.
+fn slot(mode: super::Mode) -> usize {
+    usize::from(mode == super::Mode::Split)
+}
 
 /// Below this many bytes a text is laid out whole: it is quick, and egui's own cache serves it.
 const PARAGRAPHS_FROM: usize = 64 * 1024;
 
-/// Lays out `job` a paragraph (a line) at a time and joins them, as egui does for long texts,
-/// taking every paragraph `kept` has with the same text, look and width as it is. Returns the
-/// galley and its paragraphs. egui keeps its paragraphs only while the whole is laid out every
-/// frame; kept here, a megabyte that changed in one line takes a few milliseconds, not a second.
-fn layout_paragraphs(ui: &Ui, mut job: LayoutJob, mut kept: Paragraphs) -> (Arc<egui::Galley>, Paragraphs) {
-    use egui::text::{ByteIndex, LayoutSection};
-    use std::hash::{Hash, Hasher};
-    if job.text.len() < PARAGRAPHS_FROM || !job.text.contains('\n') {
-        return (ui.fonts_mut(|f| f.layout_job(job)), Paragraphs::new());
-    }
+/// Whether a text is laid out a paragraph at a time (see [`layout_paragraphs`]).
+pub(super) fn is_long(text: &str) -> bool {
+    text.len() >= PARAGRAPHS_FROM && text.contains('\n')
+}
+
+/// The job with its width rounded as egui rounds it, so a paragraph wraps as it would whole.
+fn rounded(mut job: LayoutJob) -> LayoutJob {
     if job.wrap.max_width.is_finite() {
-        // As egui does, so a paragraph wraps as it would whole.
         job.wrap.max_width = job.wrap.max_width.round();
     }
-    let ppp = ui.ctx().pixels_per_point();
+    job
+}
+
+/// The paragraph of a long text's layout job that starts at byte `start`, its sections from the
+/// `section`-th on: its own job, where the next paragraph starts and its first section. A
+/// paragraph leaves out its `\n`, but the last keeps the one the text ends with, as egui splits.
+fn paragraph_at(job: &LayoutJob, start: usize, mut section: usize) -> Option<(LayoutJob, usize, usize)> {
+    use egui::text::{ByteIndex, LayoutSection};
+    if start >= job.text.len() {
+        return None;
+    }
+    let mut end = job.text.get(start..).and_then(|s| s.find('\n')).map_or(job.text.len(), |i| start + i);
+    if end + 1 == job.text.len() && job.text.ends_with('\n') {
+        end += 1;
+    }
+    let mut part = LayoutJob {
+        text: job.text.get(start..end).unwrap_or_default().to_owned(),
+        wrap: job.wrap.clone(),
+        first_row_min_height: if start == 0 { job.first_row_min_height } else { 0.0 },
+        break_on_newline: job.break_on_newline,
+        direction: job.direction,
+        halign: job.halign,
+        halign_min_is_start: job.halign_min_is_start,
+        justify: job.justify,
+        round_output_to_gui: job.round_output_to_gui,
+        keep_trailing_whitespace: job.keep_trailing_whitespace,
+        language: job.language.clone(),
+        ..LayoutJob::default()
+    };
+    for s in job.sections.get(section..).unwrap_or_default() {
+        if s.byte_range.end <= ByteIndex(start) {
+            section += 1;
+        } else if ByteIndex(end) < s.byte_range.start {
+            break;
+        } else {
+            part.sections.push(LayoutSection {
+                leading_space: if ByteIndex(start) <= s.byte_range.start { s.leading_space } else { 0.0 },
+                byte_range: s.byte_range.start.saturating_sub(start)..s.byte_range.end.min(ByteIndex(end)).saturating_sub(start),
+                format: s.format.clone(),
+            });
+        }
+    }
+    Some((part, end + 1, section))
+}
+
+/// The key a paragraph is kept by: its job but for the width, and the pixel density.
+fn key_of(part: &mut LayoutJob, ppp: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let wrap = std::mem::replace(&mut part.wrap.max_width, 0.0);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&*part, ppp.to_bits()).hash(&mut h);
+    part.wrap.max_width = wrap;
+    h.finish()
+}
+
+/// Whether a paragraph laid out at width `laid_at` comes out as `part` would: it was laid out at
+/// that width, or at another with room to spare at both. A left-to-right line that fits on one
+/// row (the editor's lines, but the longest) is laid out the same at any width it fits, so
+/// resizing the window or the editor lays out only the lines that wrap.
+fn same_at(galley: &egui::Galley, laid_at: f32, part: &LayoutJob) -> bool {
+    let wrap = part.wrap.max_width;
+    if laid_at.to_bits() == wrap.to_bits() {
+        return true;
+    }
+    // The width egui lets a row reach; 2 px spare cover the rounding of the size kept.
+    let room = |w: f32| if part.round_output_to_gui { w + 0.5 } else { w };
+    part.halign == egui::Align::LEFT
+        && !part.justify
+        && galley.rows.iter().all(|r| !r.rtl_paragraph)
+        && galley.intrinsic_size().x + 2.0 <= room(wrap).min(room(laid_at))
+}
+
+/// Lays out `job` a paragraph (a line) at a time and joins them, as egui does for long texts,
+/// taking every paragraph `kept` has that comes out the same (see [`same_at`]). Returns the galley
+/// and its paragraphs. egui keeps its paragraphs only while the whole is laid out every frame;
+/// kept here, a megabyte that changed in one line takes a few milliseconds, not a second.
+fn layout_paragraphs(ctx: &egui::Context, job: LayoutJob, kept: Paragraphs) -> (Arc<egui::Galley>, Paragraphs) {
+    if !is_long(&job.text) {
+        return (ctx.fonts_mut(|f| f.layout_job(job)), Paragraphs::new());
+    }
+    let job = rounded(job);
+    let ppp = ctx.pixels_per_point();
     let mut parts = Vec::new();
     let mut paragraphs = Paragraphs::new();
     let (mut start, mut section) = (0, 0);
-    while start < job.text.len() {
-        // A paragraph leaves out its `\n`, but the last keeps the one the text ends with.
-        let mut end = job.text.get(start..).and_then(|s| s.find('\n')).map_or(job.text.len(), |i| start + i);
-        if end + 1 == job.text.len() && job.text.ends_with('\n') {
-            end += 1;
-        }
-        let mut part = LayoutJob {
-            text: job.text.get(start..end).unwrap_or_default().to_owned(),
-            wrap: job.wrap.clone(),
-            first_row_min_height: if start == 0 { job.first_row_min_height } else { 0.0 },
-            break_on_newline: job.break_on_newline,
-            direction: job.direction,
-            halign: job.halign,
-            halign_min_is_start: job.halign_min_is_start,
-            justify: job.justify,
-            round_output_to_gui: job.round_output_to_gui,
-            keep_trailing_whitespace: job.keep_trailing_whitespace,
-            language: job.language.clone(),
-            ..LayoutJob::default()
+    while let Some((mut part, next, first)) = paragraph_at(&job, start, section) {
+        (start, section) = (next, first);
+        let key = key_of(&mut part, ppp);
+        // A line met before in this text (a blank one, a repeated one) is taken from there too.
+        let kept = match paragraphs.get(&key).or_else(|| kept.get(&key)) {
+            Some(k) => k.at(ctx, part),
+            None => Kept::new(ctx, part),
         };
-        for s in job.sections.get(section..).unwrap_or_default() {
-            if s.byte_range.end <= ByteIndex(start) {
-                section += 1;
-            } else if ByteIndex(end) < s.byte_range.start {
-                break;
-            } else {
-                part.sections.push(LayoutSection {
-                    leading_space: if ByteIndex(start) <= s.byte_range.start { s.leading_space } else { 0.0 },
-                    byte_range: s.byte_range.start.saturating_sub(start)..s.byte_range.end.min(ByteIndex(end)).saturating_sub(start),
-                    format: s.format.clone(),
-                });
-            }
-        }
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&part, ppp.to_bits()).hash(&mut h);
-        let key = h.finish();
-        let galley = match kept.remove(&key) {
-            Some(galley) => galley,
-            None => ui.fonts_mut(|f| f.layout_job(part)),
-        };
-        paragraphs.insert(key, galley.clone());
-        parts.push(galley);
-        start = end + 1;
+        parts.push(kept.galley.clone());
+        paragraphs.insert(key, kept);
     }
     (Arc::new(egui::Galley::concat(Arc::new(job), &parts, ppp)), paragraphs)
 }
 
-/// The editor, filling `ui`. Returns the first line in view.
-pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Option<usize> {
+/// The editor's font at zoom `z`.
+fn font_at(z: f32) -> FontId {
+    FontId::new(14.0 * z, FontFamily::Name(theme::MONO.into()))
+}
+
+/// The editor's layout job of `text`: its Markdown marks coloured and `query`'s matches tinted.
+fn job_of(text: &str, font: &FontId, colors: &Colors, wrap: f32, query: &str) -> LayoutJob {
+    let mut job = markdown_job(text, font, colors, wrap);
+    tint(&mut job, &super::find_all(text, query), super::preview::FOUND);
+    job
+}
+
+/// Lays out ahead, for about `budget` ms, the editor's paragraphs of document `doc`'s `text` at
+/// zoom `z`, wrapping at `wrap`. Returns whether they are all laid out.
+pub(super) fn lay_out_ahead(
+    layouts: &mut Layouts,
+    ctx: &egui::Context,
+    doc: (u64, usize),
+    text: &str,
+    (z, wrap, query): (f32, f32, &str),
+    t: &Tokens,
+    budget: f64,
+) -> bool {
+    let font = font_at(z);
+    let colors = Colors::of(t);
+    let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+    layouts.ahead(ctx, look, query, text, || job_of(text, &font, &colors, wrap, query), budget)
+}
+
+/// How long a frame lays out a shown document's paragraphs while its first screen stands in
+/// (ms): the window stays responsive, at some 25 frames a second.
+const FIRST_SHOW_MS: f64 = 30.0;
+
+/// The editor's place while a long document's text is first laid out, a slice a frame: its first
+/// lines, drawn as the editor will draw them, so the tab shows at once and not a second later.
+/// Typing waits for the editor.
+fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) {
+    let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let (draft, layouts) = (&app.doc_view.draft, &mut app.doc_view.layouts);
+    let Some(dr) = draft.as_ref() else { return };
+    let font = font_at(z);
+    let colors = Colors::of(t);
+    let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
+    // Two screens of lines, so the scroll bar shows as it will.
+    let end = dr.text.match_indices('\n').nth(rows * 2).map_or(dr.text.len(), |(i, _)| i);
+    let mut head = dr.text.get(..end).unwrap_or_default().to_owned();
+    let mut wrap_at = None;
+    let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+        wrap_at = Some(wrap);
+        ui.fonts_mut(|f| f.layout_job(job_of(buf.as_str(), &font, &colors, wrap, &query)))
+    };
+    egui::ScrollArea::vertical().id_salt("monun.doc_editor_first_screen").auto_shrink([false, false]).show(ui, |ui| {
+        egui::TextEdit::multiline(&mut head)
+            .id(editor_id().with("first_screen"))
+            .font(font.clone())
+            .frame(egui::Frame::NONE.inner_margin(14))
+            .margin(egui::Margin::same(14))
+            .desired_width(f32::INFINITY)
+            .desired_rows(rows)
+            .interactive(false)
+            .layouter(&mut layouter)
+            .show(ui)
+    });
+    let Some(wrap) = wrap_at else { return };
+    if let Some(w) = layouts.wraps.get_mut(slot(mode)) {
+        *w = Some(wrap);
+    }
+    let ctx = ui.ctx().clone();
+    lay_out_ahead(layouts, &ctx, (dr.uid, dr.sheet), &dr.text, (z, wrap, &query), t, FIRST_SHOW_MS);
+    ctx.request_repaint();
+}
+
+/// The editor, filling `ui`, in `mode` (Edit or Side by Side). Returns the first line in view.
+pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) -> Option<usize> {
+    if let Some(dr) = app.doc_view.draft.as_ref()
+        && !app.doc_view.layouts.ready((dr.uid, dr.sheet), &dr.text)
+    {
+        // Before anything else, so a line to go to and the focus wait for the editor.
+        first_screen(app, ui, z, t, mode);
+        return None;
+    }
     let goto = app.doc_view.goto_line.take();
     let select = app.doc_view.select.take();
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
@@ -229,7 +509,7 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Optio
         ctx.memory_mut(|m| m.request_focus(editor_id()));
     }
     let dr = app.doc_view.draft.as_mut()?;
-    let font = FontId::new(14.0 * z, FontFamily::Name(theme::MONO.into()));
+    let font = font_at(z);
     // A line to go to (the outline, a double-click) or a found match to select.
     let goto = goto.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line))).map(|at| (at, at)).or(select);
     if let Some((a, b)) = goto {
@@ -239,24 +519,18 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Optio
     }
     let colors = Colors::of(t);
     let doc = (dr.uid, dr.sheet);
-    let galleys = &mut app.doc_view.galleys;
+    let layouts = &mut app.doc_view.layouts;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let text = buf.as_str();
-        let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
-        if let Some(kept) = galleys.iter().find(|g| g.look == look && g.query == query && g.text == text) {
-            return kept.galley.clone();
+        if let Some(w) = layouts.wraps.get_mut(slot(mode)) {
+            *w = Some(wrap);
         }
-        let mut job = markdown_job(text, &font, &colors, wrap);
-        tint(&mut job, &super::find_all(text, &query), super::preview::FOUND);
-        // The document's paragraphs as last laid out, whatever changed since.
-        let before = galleys.iter().position(|g| g.look.doc == doc).map(|i| galleys.remove(i));
-        let (galley, paragraphs) = layout_paragraphs(ui, job, before.map(|g| g.paragraphs).unwrap_or_default());
-        galleys.insert(0, Laid { look, query: query.clone(), text: text.to_owned(), galley: galley.clone(), paragraphs });
-        galleys.truncate(KEEP_LAID);
-        galley
+        let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+        layouts.layout(ui.ctx(), look, &query, text, || job_of(text, &font, &colors, wrap, &query))
     };
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
-    let scroll = egui::ScrollArea::vertical().id_salt("monun.doc_editor_scroll").auto_shrink([false, false]).show(ui, |ui| {
+    // Each document keeps its own place in its text.
+    let scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_editor_scroll", doc)).auto_shrink([false, false]).show(ui, |ui| {
         let out = egui::TextEdit::multiline(&mut dr.text)
             .id(editor_id())
             .font(font.clone())
@@ -755,7 +1029,7 @@ mod paragraph_tests {
                 job
             };
             let whole = ui.fonts_mut(|f| f.layout_job(job()));
-            let (parts, kept) = layout_paragraphs(ui, job(), Paragraphs::new());
+            let (parts, kept) = layout_paragraphs(ui.ctx(), job(), Paragraphs::new());
             assert_eq!(parts.text(), text);
             assert_eq!(rows(&parts), rows(&whole));
             assert_eq!(parts.size(), whole.size());
@@ -765,14 +1039,101 @@ mod paragraph_tests {
             let job = markdown_job(&edited, &font, &colors, 400.0);
             let fresh = ui.fonts_mut(|f| f.layout_job(job.clone()));
             let reused_before = kept.len();
-            let (again, _) = layout_paragraphs(ui, job, kept);
+            let (again, _) = layout_paragraphs(ui.ctx(), job, kept);
             assert_eq!(again.text(), edited);
             assert_eq!(rows(&again), rows(&fresh));
             assert!(reused_before > 1000);
             // A short text is laid out whole, as before.
-            let (short, none) = layout_paragraphs(ui, markdown_job("# 제목\n본문\n", &font, &colors, 400.0), Paragraphs::new());
+            let (short, none) = layout_paragraphs(ui.ctx(), markdown_job("# 제목\n본문\n", &font, &colors, 400.0), Paragraphs::new());
             assert!(none.is_empty() && short.text() == "# 제목\n본문\n");
         });
+    }
+
+    /// The paragraphs of `kept` the galley `g` shares (by their rows).
+    /// The paragraphs of `kept` the galley `g` shares (by their rows), at either width kept.
+    fn shared(g: &egui::Galley, kept: &Paragraphs) -> usize {
+        let used = |p: &egui::Galley| p.rows.first().is_some_and(|r| g.rows.iter().any(|gr| Arc::ptr_eq(&gr.row, &r.row)));
+        kept.values().filter(|k| used(&k.galley) || k.before.as_ref().is_some_and(|(b, _)| used(b))).count()
+    }
+
+    #[test]
+    fn paragraphs_laid_out_at_one_width_serve_another_where_they_fit() {
+        in_frame(|ui| {
+            let t = Tokens::light();
+            let colors = Colors::of(&t);
+            let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
+            let text = long_text(2000);
+            let (_, kept) = layout_paragraphs(ui.ctx(), markdown_job(&text, &font, &colors, 700.0), Paragraphs::new());
+            // Wider, narrower (the prose wraps), back to about the first (a fraction of a pixel
+            // off) and without a limit; with whether every line is taken as it was.
+            let mut kept = kept;
+            for (wrap, all) in [(900.0, true), (320.0, false), (700.4, true), (f32::INFINITY, true)] {
+                let job = markdown_job(&text, &font, &colors, wrap);
+                let fresh = ui.fonts_mut(|f| f.layout_job(job.clone()));
+                let before = kept.clone();
+                let (again, k) = layout_paragraphs(ui.ctx(), job, kept);
+                assert_eq!(rows(&again), rows(&fresh), "at {wrap}");
+                assert_eq!(again.size(), fresh.size(), "at {wrap}");
+                // The headings and list items fit at every width; the prose wraps at 320, and
+                // back at 700 is taken as laid out there.
+                let taken = shared(&again, &before);
+                assert!(if all { taken == before.len() } else { taken > 700 && taken < before.len() }, "at {wrap}: {taken} of {}", before.len());
+                kept = k;
+            }
+        });
+    }
+
+    #[test]
+    fn a_long_text_laid_out_ahead_in_slices_shows_without_laying_out_again() {
+        in_frame(|ui| {
+            let t = Tokens::light();
+            let colors = Colors::of(&t);
+            let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
+            let text = long_text(2000);
+            let doc = (7, 1);
+            let job = || job_of(&text, &font, &colors, 500.0, "");
+            let look = Look { doc, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
+            let mut layouts = Layouts::default();
+            assert!(!layouts.ready(doc, &text));
+            let mut slices = 1;
+            // No time at all: a paragraph a call.
+            while !layouts.ahead(ui.ctx(), look, "", &text, job, 0.0) {
+                slices += 1;
+            }
+            assert!(slices > 1000);
+            assert!(layouts.ready(doc, &text) && layouts.docs.first().is_some_and(|d| d.ahead.is_none()));
+            let laid = layouts.docs.first().map(|d| d.paragraphs.len()).unwrap_or_default();
+            let galley = layouts.layout(ui.ctx(), look, "", &text, job);
+            let whole = ui.fonts_mut(|f| f.layout_job(job()));
+            assert_eq!(rows(&galley), rows(&whole));
+            let kept = layouts.docs.first().map(|d| &d.paragraphs).map_or(0, |p| shared(&galley, p));
+            assert_eq!(kept, laid, "every paragraph laid out ahead is used as it is");
+            // A short document is ready at once and keeps no paragraphs.
+            assert!(layouts.ready((7, 2), "# 짧은 문서\n"));
+            layouts.layout(ui.ctx(), Look { doc: (7, 2), ..look }, "", "# 짧은 문서\n", || job_of("# 짧은 문서\n", &font, &colors, 500.0, ""));
+            assert_eq!(layouts.docs.len(), 1);
+        });
+    }
+
+    #[test]
+    fn layouts_are_forgotten_when_egui_starts_its_fonts_over() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::pinned_font_definitions());
+        let frame = |layouts: &mut Layouts| {
+            let mut started_over = false;
+            ctx.run_ui(egui::RawInput::default(), |ui| started_over = layouts.check_fonts(ui.ctx())).textures_delta.clear();
+            started_over
+        };
+        let text = long_text(4000);
+        let mut layouts = Layouts::default();
+        assert!(!frame(&mut layouts));
+        layouts.docs.push(DocParagraphs { doc: (1, 1), paragraphs: Paragraphs::new(), whole: true, ahead: None });
+        assert!(!frame(&mut layouts) && !frame(&mut layouts));
+        assert!(layouts.ready((1, 1), &text));
+        ctx.set_fonts(egui::FontDefinitions::default());
+        assert!(frame(&mut layouts));
+        assert!(!layouts.ready((1, 1), &text));
+        assert!(!frame(&mut layouts));
     }
 
     #[test]
@@ -794,7 +1155,7 @@ mod paragraph_tests {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let clock = std::time::Instant::now();
                 let job = markdown_job(&edited, &font, &colors, 800.0);
-                let (_, k) = layout_paragraphs(ui, job, std::mem::take(&mut kept));
+                let (_, k) = layout_paragraphs(ui.ctx(), job, std::mem::take(&mut kept));
                 kept = k;
                 eprintln!("TIMING step {step}: {:?}", clock.elapsed());
             });
