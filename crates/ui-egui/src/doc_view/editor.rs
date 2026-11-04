@@ -2,6 +2,8 @@
 //! lists that continue on Enter. It is a plain `TextEdit`, so Korean input (IME) and the editor's
 //! own undo work as in every other text field; the edits here are pure functions on char indices.
 
+use std::sync::Arc;
+
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{Color32, FontFamily, FontId, Ui};
 
@@ -135,12 +137,85 @@ struct Look {
 }
 
 /// An editor layout kept between frames: egui's own cache keeps only those drawn in the last
-/// frame, so a document's text was laid out again every time its tab was shown.
+/// frame, so a document's text was laid out again every time its tab was shown. Its paragraphs
+/// are kept too, by their content, so an edit lays out only the paragraphs it changed.
 pub(super) struct Laid {
     look: Look,
     query: String,
     text: String,
-    galley: std::sync::Arc<egui::Galley>,
+    galley: Arc<egui::Galley>,
+    paragraphs: Paragraphs,
+}
+
+/// Laid-out paragraphs by the hash of their layout job.
+type Paragraphs = std::collections::HashMap<u64, Arc<egui::Galley>>;
+
+/// Below this many bytes a text is laid out whole: it is quick, and egui's own cache serves it.
+const PARAGRAPHS_FROM: usize = 64 * 1024;
+
+/// Lays out `job` a paragraph (a line) at a time and joins them, as egui does for long texts,
+/// taking every paragraph `kept` has with the same text, look and width as it is. Returns the
+/// galley and its paragraphs. egui keeps its paragraphs only while the whole is laid out every
+/// frame; kept here, a megabyte that changed in one line takes a few milliseconds, not a second.
+fn layout_paragraphs(ui: &Ui, mut job: LayoutJob, mut kept: Paragraphs) -> (Arc<egui::Galley>, Paragraphs) {
+    use egui::text::{ByteIndex, LayoutSection};
+    use std::hash::{Hash, Hasher};
+    if job.text.len() < PARAGRAPHS_FROM || !job.text.contains('\n') {
+        return (ui.fonts_mut(|f| f.layout_job(job)), Paragraphs::new());
+    }
+    if job.wrap.max_width.is_finite() {
+        // As egui does, so a paragraph wraps as it would whole.
+        job.wrap.max_width = job.wrap.max_width.round();
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let mut parts = Vec::new();
+    let mut paragraphs = Paragraphs::new();
+    let (mut start, mut section) = (0, 0);
+    while start < job.text.len() {
+        // A paragraph leaves out its `\n`, but the last keeps the one the text ends with.
+        let mut end = job.text.get(start..).and_then(|s| s.find('\n')).map_or(job.text.len(), |i| start + i);
+        if end + 1 == job.text.len() && job.text.ends_with('\n') {
+            end += 1;
+        }
+        let mut part = LayoutJob {
+            text: job.text.get(start..end).unwrap_or_default().to_owned(),
+            wrap: job.wrap.clone(),
+            first_row_min_height: if start == 0 { job.first_row_min_height } else { 0.0 },
+            break_on_newline: job.break_on_newline,
+            direction: job.direction,
+            halign: job.halign,
+            halign_min_is_start: job.halign_min_is_start,
+            justify: job.justify,
+            round_output_to_gui: job.round_output_to_gui,
+            keep_trailing_whitespace: job.keep_trailing_whitespace,
+            language: job.language.clone(),
+            ..LayoutJob::default()
+        };
+        for s in job.sections.get(section..).unwrap_or_default() {
+            if s.byte_range.end <= ByteIndex(start) {
+                section += 1;
+            } else if ByteIndex(end) < s.byte_range.start {
+                break;
+            } else {
+                part.sections.push(LayoutSection {
+                    leading_space: if ByteIndex(start) <= s.byte_range.start { s.leading_space } else { 0.0 },
+                    byte_range: s.byte_range.start.saturating_sub(start)..s.byte_range.end.min(ByteIndex(end)).saturating_sub(start),
+                    format: s.format.clone(),
+                });
+            }
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&part, ppp.to_bits()).hash(&mut h);
+        let key = h.finish();
+        let galley = match kept.remove(&key) {
+            Some(galley) => galley,
+            None => ui.fonts_mut(|f| f.layout_job(part)),
+        };
+        paragraphs.insert(key, galley.clone());
+        parts.push(galley);
+        start = end + 1;
+    }
+    (Arc::new(egui::Galley::concat(Arc::new(job), &parts, ppp)), paragraphs)
 }
 
 /// The editor, filling `ui`. Returns the first line in view.
@@ -173,9 +248,10 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) -> Optio
         }
         let mut job = markdown_job(text, &font, &colors, wrap);
         tint(&mut job, &super::find_all(text, &query), super::preview::FOUND);
-        let galley = ui.fonts_mut(|f| f.layout_job(job));
-        galleys.retain(|g| g.look.doc != doc);
-        galleys.insert(0, Laid { look, query: query.clone(), text: text.to_owned(), galley: galley.clone() });
+        // The document's paragraphs as last laid out, whatever changed since.
+        let before = galleys.iter().position(|g| g.look.doc == doc).map(|i| galleys.remove(i));
+        let (galley, paragraphs) = layout_paragraphs(ui, job, before.map(|g| g.paragraphs).unwrap_or_default());
+        galleys.insert(0, Laid { look, query: query.clone(), text: text.to_owned(), galley: galley.clone(), paragraphs });
         galleys.truncate(KEEP_LAID);
         galley
     };
@@ -625,6 +701,104 @@ mod tests {
         for text in ["", "# 제목\n- [ ] 할 일 `x` [a](#b) {{구매목록!D1}} **굵게**\n```\ncode\n```\n> 인용", "[unclosed `tick {{"] {
             let job = markdown_job(text, &font, &c, 100.0);
             assert_eq!(job.text, text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod paragraph_tests {
+    use super::*;
+
+    /// About `lines` lines of Markdown: headings, list items with code, blank lines and prose.
+    fn long_text(lines: usize) -> String {
+        let mut s = String::new();
+        for i in 0..lines {
+            match i % 8 {
+                0 => s.push_str(&format!("## 계정 {i} 정보\n")),
+                1 | 2 => s.push_str(&format!("- 아이디: user{i} · 메모 `code{i}` 확인 필요\n")),
+                3 => s.push('\n'),
+                _ => s.push_str(&format!("설명 문장 {i} 은 이렇게 길게 이어진다, 새 시스템 접속 정보와 담당자 연락처\n")),
+            }
+        }
+        s
+    }
+
+    /// Runs `f` in a frame of a context with the interface's fonts.
+    fn in_frame(f: impl FnOnce(&mut Ui)) {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::pinned_font_definitions());
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let mut f = Some(f);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            if let Some(f) = f.take() {
+                f(ui);
+            }
+        });
+        out.textures_delta.clear();
+    }
+
+    fn rows(g: &egui::Galley) -> Vec<(String, (i32, i32), bool)> {
+        g.rows.iter().map(|r| (r.text(), ((r.pos.x * 10.0) as i32, (r.pos.y * 10.0) as i32), r.ends_with_newline)).collect()
+    }
+
+    #[test]
+    fn a_long_text_lays_out_a_paragraph_at_a_time_as_it_would_whole() {
+        in_frame(|ui| {
+            let t = Tokens::light();
+            let colors = Colors::of(&t);
+            let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
+            let text = long_text(2000);
+            assert!(text.len() > PARAGRAPHS_FROM);
+            let job = || {
+                let mut job = markdown_job(&text, &font, &colors, 400.0);
+                tint(&mut job, &crate::doc_view::find_all(&text, "user1"), crate::doc_view::preview::FOUND);
+                job
+            };
+            let whole = ui.fonts_mut(|f| f.layout_job(job()));
+            let (parts, kept) = layout_paragraphs(ui, job(), Paragraphs::new());
+            assert_eq!(parts.text(), text);
+            assert_eq!(rows(&parts), rows(&whole));
+            assert_eq!(parts.size(), whole.size());
+            // An edit lays out again only what changed, and comes out the same as a fresh layout.
+            let mut edited = text.clone();
+            edited.insert_str(text.len() / 2, "고침 ");
+            let job = markdown_job(&edited, &font, &colors, 400.0);
+            let fresh = ui.fonts_mut(|f| f.layout_job(job.clone()));
+            let reused_before = kept.len();
+            let (again, _) = layout_paragraphs(ui, job, kept);
+            assert_eq!(again.text(), edited);
+            assert_eq!(rows(&again), rows(&fresh));
+            assert!(reused_before > 1000);
+            // A short text is laid out whole, as before.
+            let (short, none) = layout_paragraphs(ui, markdown_job("# 제목\n본문\n", &font, &colors, 400.0), Paragraphs::new());
+            assert!(none.is_empty() && short.text() == "# 제목\n본문\n");
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn timing_of_an_edit_in_a_megabyte() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::font_definitions_for_language(crate::i18n::Language::Ko));
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let text = long_text(24_000);
+        let t = Tokens::light();
+        let colors = Colors::of(&t);
+        let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
+        let mut kept = Paragraphs::new();
+        for (step, at) in [(0, None), (1, Some(text.len() / 2)), (2, Some(text.len() / 3)), (3, Some(text.len() / 4))] {
+            let mut edited = text.clone();
+            if let Some(at) = at.and_then(|at| (at..text.len()).find(|i| text.is_char_boundary(*i))) {
+                edited.insert(at, 'x');
+            }
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let clock = std::time::Instant::now();
+                let job = markdown_job(&edited, &font, &colors, 800.0);
+                let (_, k) = layout_paragraphs(ui, job, std::mem::take(&mut kept));
+                kept = k;
+                eprintln!("TIMING step {step}: {:?}", clock.elapsed());
+            });
+            out.textures_delta.clear();
         }
     }
 }
