@@ -282,6 +282,57 @@ impl WheelZoom {
     }
 }
 
+/// Turns the Ctrl+wheel zoom of `place` (a sheet or document tab showing `zoom` percent) by egui's
+/// `zoom_delta`: each whole notch steps [`WHEEL_ZOOM_LADDER`], and [`update_zoom_glide`] takes the
+/// zoom there.
+pub(crate) fn turn_wheel_zoom(app: &mut SheetApp, ctx: &egui::Context, place: (u64, usize), zoom: u16, zoom_delta: f32, now: f64) {
+    // egui's zoom factor is e^(speed × points); one notch is `line_scroll_speed` points.
+    let notch = ctx.options(|o| o.input_options.scroll_zoom_speed * o.input_options.line_scroll_speed);
+    let turned = zoom_delta.ln() / notch;
+    let mut zooming = WheelZoom::at(app, place, zoom, now);
+    if now - zooming.time > WHEEL_ZOOM_IDLE {
+        zooming.notches = 0.0;
+    }
+    if turned.is_finite() {
+        zooming.notches = (zooming.notches + turned).clamp(-32.0, 32.0);
+    }
+    zooming.time = now;
+    // A notch steps once 60% of it has turned, and the rest of it brings `notches` back to about
+    // 0. (Past half, so what's left after a step can't step back.) Steps count from where a glide
+    // is going, not from where it has got to.
+    let from = zooming.glide.map_or(zoom, |(to, _)| to);
+    let mut z = from;
+    while zooming.notches >= 0.6 {
+        z = wheel_zoom_step(z, true);
+        zooming.notches -= 1.0;
+    }
+    while zooming.notches <= -0.6 {
+        z = wheel_zoom_step(z, false);
+        zooming.notches += 1.0;
+    }
+    if z != from {
+        zooming.glide = Some((z, zoom));
+    }
+    app.grid.wheel_zoom = Some(zooming);
+}
+
+/// Takes the zoom of `place` (showing `zoom` percent) a frame's way along its Ctrl+wheel glide, or
+/// straight to the step with animations off.
+pub(crate) fn update_zoom_glide(app: &mut SheetApp, ui: &egui::Ui, place: (u64, usize), zoom: u16, now: f64) {
+    let mut zooming = WheelZoom::at(app, place, zoom, now);
+    if let Some((to, shown)) = zooming.glide {
+        let glides = app.ui.animations && ui.ctx().global_style().animation_time > 0.0 && !app.shots.in_flight();
+        let share = egui::emath::exponential_smooth_factor(0.9, 0.1, ui.input(|i| i.stable_dt).min(0.1));
+        let z = if glides { zoom_glide_step(shown, to, share) } else { to };
+        let _ = app.session.run("view.zoom", json!({"percent": z}));
+        zooming.glide = (z != to).then_some((to, z));
+        ui.ctx().request_repaint();
+    }
+    if app.grid.wheel_zoom.is_some_and(|w| w.glide.is_some()) {
+        app.grid.wheel_zoom = Some(zooming);
+    }
+}
+
 /// Row and column heading labels grow with the zoom as the cells do, as in Excel (at 400% the
 /// labels are four times their 100% size), and never get smaller than a readable 8.5 points.
 pub(crate) fn heading_font_size(zoom: f32) -> f32 {

@@ -327,3 +327,45 @@ fn each_document_keeps_its_own_mode_and_fit_width_in_its_file() {
     assert_eq!((doc("One").mode, doc("One").fit_width), (Some(DocMode::Edit), false));
     assert_eq!((doc("Two").mode, doc("Two").fit_width), (Some(DocMode::Split), true));
 }
+
+/// A Ctrl+wheel turn at `at`, `dy` notches (+ in), and the frames its glide takes.
+fn ctrl_wheel(h: &mut Harness, at: egui::Pos2, dy: f32) {
+    h.input_mut().events.push(Event::PointerMoved(at));
+    h.input_mut().events.push(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        source: egui::MouseWheelSource::Wheel,
+        delta: egui::vec2(0.0, dy),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::CTRL | Modifiers::COMMAND,
+    });
+    h.run_steps(40);
+}
+
+#[test]
+fn ctrl_and_the_wheel_zoom_a_document_a_step_a_notch() {
+    let text: String = (0..200).map(|i| format!("Line {i}\n\n")).collect();
+    let mut h = with_document(&text);
+    let zoom = |h: &Harness| h.state().session.active().unwrap().wb.active().unwrap().zoom;
+    let at = h.get_by_label("Line 1").rect().center();
+    assert_eq!(zoom(&h), 100);
+    // The grid's steps: 100 → 120, and back out past 100 to 85.
+    ctrl_wheel(&mut h, at, 1.0);
+    assert_eq!(zoom(&h), 120);
+    ctrl_wheel(&mut h, at, -1.0);
+    ctrl_wheel(&mut h, at, -1.0);
+    assert_eq!(zoom(&h), 85);
+    // In Edit mode too, and the text stays there to type into.
+    h.get_by_label("Edit").click();
+    h.run_steps(3);
+    ctrl_wheel(&mut h, at, 1.0);
+    assert_eq!(zoom(&h), 100);
+    assert!(h.query_by_label("Document text").is_some());
+    // The zoom is the document tab's own: Sheet1 keeps 100%, and its grid zooms the same way.
+    assert_eq!(h.state().session.active().unwrap().wb.sheet(0).unwrap().zoom, 100);
+    press(&mut h, Key::PageUp, Modifiers::COMMAND);
+    assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 0, "on Sheet1");
+    let grid = h.state().grid.rect.unwrap().center();
+    ctrl_wheel(&mut h, grid, 1.0);
+    assert_eq!(h.state().session.active().unwrap().wb.sheet(0).unwrap().zoom, 120);
+    assert_eq!(h.state().session.active().unwrap().wb.sheet(1).unwrap().zoom, 100);
+}

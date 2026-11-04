@@ -6,7 +6,8 @@
 //! - `document.inspect`, `sheet.read {range?}`, `cell.get {cell?}` — read state
 //! - `ui.inspect` — UI state (ribbon tab, editor, dialog, grid geometry, perf)
 //! - `ui.click {x, y, button?, count?, shift?, cmd?, alt?}`, `ui.drag {x, y, toX, toY}`,
-//!   `ui.move {x, y}` — real pointer input in window points
+//!   `ui.move {x, y}`, `ui.wheel {x, y, dy?, dx?, ctrl?, shift?}` (lines, +dy turned away: up, or
+//!   zoom in with Ctrl) — real pointer input in window points
 //! - `ui.cell.click {cell}`, `ui.cell.drag {from, to}` — pointer input on a cell's centre
 //! - `ui.key {key, shift?, cmd?, alt?, ctrl?}`, `ui.text {text}` — keyboard input
 //! - `ui.ribbon {tab}`, `ui.dialog {name}`, `ui.dialog.set {field, value}`,
@@ -37,7 +38,7 @@ use screenshots::{Shot, check_encoding_budget, check_peak_budget, reject_shot};
 use screenshots::{base64_len, png_worst_bytes, validate_image};
 pub(crate) use screenshots::{current_capture_geometry, note_capture_geometry};
 pub use synthetic::{MAX_QUEUED_SYNTHETIC_BYTES, MAX_QUEUED_SYNTHETIC_EVENTS, MAX_SYNTHETIC_TEXT_BYTES};
-use synthetic::{cell_center, key_from, modifiers, push_click, push_drag, push_key, push_move, push_text};
+use synthetic::{cell_center, key_from, modifiers, push_click, push_drag, push_key, push_move, push_text, push_wheel};
 
 pub type ControlResponse = Json;
 
@@ -349,6 +350,13 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
             Ok(()) => ok(Json::Null),
             Err(e) => err(e),
         },
+        "ui.wheel" => {
+            let lines = egui::vec2(f("dx"), p.get("dy").and_then(Json::as_f64).map_or(1.0, |d| d as f32));
+            match push_wheel(app, egui::pos2(f("x"), f("y")), lines, modifiers(p)) {
+                Ok(()) => ok(Json::Null),
+                Err(e) => err(e),
+            }
+        }
         "ui.click" => {
             let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
             let count = p.get("count").and_then(Json::as_u64).unwrap_or(1).min(u64::from(u32::MAX)) as u32;

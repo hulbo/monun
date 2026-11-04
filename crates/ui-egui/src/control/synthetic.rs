@@ -136,6 +136,21 @@ pub(super) fn push_text(app: &mut SheetApp, text: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Queues a pointer move to `pos` and a wheel turn of `lines` (+y as a wheel turned away, which
+/// scrolls up, or zooms in with Ctrl) under the shared synthetic queue budget.
+pub(super) fn push_wheel(app: &mut SheetApp, pos: egui::Pos2, lines: egui::Vec2, m: egui::Modifiers) -> Result<(), String> {
+    synthetic_budget(app, 2, 2 * std::mem::size_of::<egui::Event>())?;
+    app.synthetic.push_back(vec![egui::Event::PointerMoved(pos)]);
+    app.synthetic.push_back(vec![egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: lines,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: m,
+    }]);
+    Ok(())
+}
+
 /// Queues one pointer-move event under the shared synthetic queue budget.
 pub(super) fn push_move(app: &mut SheetApp, pos: egui::Pos2) -> Result<(), String> {
     let event = egui::Event::PointerMoved(pos);

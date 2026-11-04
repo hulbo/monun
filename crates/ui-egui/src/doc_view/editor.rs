@@ -182,12 +182,14 @@ impl Kept {
 type Paragraphs = std::collections::HashMap<u64, Kept>;
 
 /// A document's laid-out paragraphs, kept by their content so an edit lays out only the
-/// paragraphs it changed. `whole` once every paragraph of the text was laid out; `ahead`, the
-/// paragraphs being laid out ahead.
+/// paragraphs it changed. `whole` once every paragraph of the text was laid out, at the font size
+/// and in the theme of `font` (a new zoom or theme lays them all out again); `ahead`, the paragraphs
+/// being laid out ahead.
 struct DocParagraphs {
     doc: (u64, usize),
     paragraphs: Paragraphs,
     whole: bool,
+    font: (u32, bool),
     ahead: Option<Ahead>,
 }
 
@@ -231,10 +233,12 @@ impl Layouts {
         started_over
     }
 
-    /// Whether the document's text needs no long layout before the editor shows it: it is short,
-    /// or its paragraphs were all laid out (for this text or one before it).
-    pub(super) fn ready(&self, doc: (u64, usize), text: &str) -> bool {
-        !is_long(text) || self.docs.iter().any(|d| d.doc == doc && d.whole)
+    /// Whether the document's text needs no long layout before the editor shows it at zoom `z` in
+    /// the theme: it is short, or its paragraphs were all laid out at that size in that theme
+    /// (for this text or one before it).
+    pub(super) fn ready(&self, doc: (u64, usize), text: &str, z: f32, dark: bool) -> bool {
+        let font = (font_at(z).size.to_bits(), dark);
+        !is_long(text) || self.docs.iter().any(|d| d.doc == doc && d.whole && d.font == font)
     }
 
     /// The width the editor wraps at in `mode`, as last seen.
@@ -254,7 +258,7 @@ impl Layouts {
         let (galley, paragraphs) = layout_paragraphs(ctx, job(), paragraphs);
         if is_long(text) {
             // Only long texts' paragraphs are kept, so short documents never push one's out.
-            self.keep(DocParagraphs { doc: look.doc, paragraphs, whole: true, ahead });
+            self.keep(DocParagraphs { doc: look.doc, paragraphs, whole: true, font: (look.size, look.dark), ahead });
         }
         self.laid.insert(0, Laid { look, query: query.to_owned(), text: text.to_owned(), galley: galley.clone() });
         self.laid.truncate(KEEP_LAID);
@@ -276,9 +280,9 @@ impl Layouts {
     fn ahead(&mut self, ctx: &egui::Context, look: Look, query: &str, text: &str, job: impl FnOnce() -> LayoutJob, budget: f64) -> bool {
         let deadline = crate::clock::monotonic_ms() + budget;
         if !self.docs.iter().any(|d| d.doc == look.doc) {
-            self.keep(DocParagraphs { doc: look.doc, paragraphs: Paragraphs::new(), whole: false, ahead: None });
+            self.keep(DocParagraphs { doc: look.doc, paragraphs: Paragraphs::new(), whole: false, font: (look.size, look.dark), ahead: None });
         }
-        let Some(DocParagraphs { paragraphs, whole, ahead, .. }) = self.docs.iter_mut().find(|d| d.doc == look.doc) else { return false };
+        let Some(DocParagraphs { paragraphs, whole, font, ahead, .. }) = self.docs.iter_mut().find(|d| d.doc == look.doc) else { return false };
         if !ahead.as_ref().is_some_and(|a| a.look == look && a.query == query && a.text == text) {
             *ahead = Some(Ahead { look, query: query.to_owned(), text: text.to_owned(), job: rounded(job()), at: 0, section: 0 });
         }
@@ -296,7 +300,7 @@ impl Layouts {
                 return false;
             }
         }
-        *whole = true;
+        (*whole, *font) = (true, (look.size, look.dark));
         *ahead = None;
         true
     }
@@ -462,9 +466,14 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
     let font = font_at(z);
     let colors = Colors::of(t);
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
-    // Two screens of lines, so the scroll bar shows as it will.
-    let end = dr.text.match_indices('\n').nth(rows * 2).map_or(dr.text.len(), |(i, _)| i);
-    let mut head = dr.text.get(..end).unwrap_or_default().to_owned();
+    // From the line a zoom keeps at the top, which the editor goes to once it shows; two screens
+    // of lines, so the scroll bar shows as it will.
+    let doc = (dr.uid, dr.sheet);
+    let line = app.doc_view.anchor.filter(|(d, _)| *d == doc).map_or(0, |(_, line)| line);
+    app.doc_view.top = Some((doc, line));
+    let start = monun_markdown::line_start(&dr.text, line);
+    let end = dr.text.get(start..).and_then(|s| s.match_indices('\n').nth(rows * 2)).map_or(dr.text.len(), |(i, _)| start + i);
+    let mut head = dr.text.get(start..end).unwrap_or_default().to_owned();
     let mut wrap_at = None;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         wrap_at = Some(wrap);
@@ -494,7 +503,7 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
 /// The editor, filling `ui`, in `mode` (Edit or Side by Side). Returns the first line in view.
 pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) -> Option<usize> {
     if let Some(dr) = app.doc_view.draft.as_ref()
-        && !app.doc_view.layouts.ready((dr.uid, dr.sheet), &dr.text)
+        && !app.doc_view.layouts.ready((dr.uid, dr.sheet), &dr.text, z, t.dark)
     {
         // Before anything else, so a line to go to and the focus wait for the editor.
         first_screen(app, ui, z, t, mode);
@@ -519,6 +528,9 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     }
     let colors = Colors::of(t);
     let doc = (dr.uid, dr.sheet);
+    // The line to keep at the top after a zoom (a line to go to wins).
+    let anchor = app.doc_view.anchor.take_if(|(d, _)| *d == doc).map(|(_, line)| line).filter(|_| goto.is_none());
+    let anchor_at = anchor.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line)));
     let layouts = &mut app.doc_view.layouts;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let text = buf.as_str();
@@ -545,12 +557,18 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
             let r = out.galley.pos_from_cursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
             ui.scroll_to_rect(r.expand(40.0), Some(egui::Align::Center));
         }
+        if let Some(at) = anchor_at {
+            let r = out.galley.pos_from_cursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
+            ui.scroll_to_rect_animation(r, Some(egui::Align::Min), egui::style::ScrollAnimation::none());
+        }
         out
     });
     let viewport_top = scroll.inner_rect.top();
     let out = scroll.inner;
     let top_char: usize = out.galley.cursor_from_pos(egui::vec2(0.0, (viewport_top - out.galley_pos.y).max(0.0))).index.into();
-    let top = monun_markdown::line_of(&dr.text, byte_index(&dr.text, top_char));
+    // Scrolled to the line kept, from the next frame on.
+    let top = anchor.unwrap_or_else(|| monun_markdown::line_of(&dr.text, byte_index(&dr.text, top_char)));
+    app.doc_view.top = Some((doc, top));
     out.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Document text"));
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none());
     if out.response.changed() {
@@ -1094,14 +1112,16 @@ mod paragraph_tests {
             let job = || job_of(&text, &font, &colors, 500.0, "");
             let look = Look { doc, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
             let mut layouts = Layouts::default();
-            assert!(!layouts.ready(doc, &text));
+            assert!(!layouts.ready(doc, &text, 1.0, false));
             let mut slices = 1;
             // No time at all: a paragraph a call.
             while !layouts.ahead(ui.ctx(), look, "", &text, job, 0.0) {
                 slices += 1;
             }
             assert!(slices > 1000);
-            assert!(layouts.ready(doc, &text) && layouts.docs.first().is_some_and(|d| d.ahead.is_none()));
+            assert!(layouts.ready(doc, &text, 1.0, false) && layouts.docs.first().is_some_and(|d| d.ahead.is_none()));
+            // Another zoom or theme lays it out again.
+            assert!(!layouts.ready(doc, &text, 1.2, false) && !layouts.ready(doc, &text, 1.0, true));
             let laid = layouts.docs.first().map(|d| d.paragraphs.len()).unwrap_or_default();
             let galley = layouts.layout(ui.ctx(), look, "", &text, job);
             let whole = ui.fonts_mut(|f| f.layout_job(job()));
@@ -1109,7 +1129,7 @@ mod paragraph_tests {
             let kept = layouts.docs.first().map(|d| &d.paragraphs).map_or(0, |p| shared(&galley, p));
             assert_eq!(kept, laid, "every paragraph laid out ahead is used as it is");
             // A short document is ready at once and keeps no paragraphs.
-            assert!(layouts.ready((7, 2), "# 짧은 문서\n"));
+            assert!(layouts.ready((7, 2), "# 짧은 문서\n", 1.0, false));
             layouts.layout(ui.ctx(), Look { doc: (7, 2), ..look }, "", "# 짧은 문서\n", || job_of("# 짧은 문서\n", &font, &colors, 500.0, ""));
             assert_eq!(layouts.docs.len(), 1);
         });
@@ -1127,12 +1147,18 @@ mod paragraph_tests {
         let text = long_text(4000);
         let mut layouts = Layouts::default();
         assert!(!frame(&mut layouts));
-        layouts.docs.push(DocParagraphs { doc: (1, 1), paragraphs: Paragraphs::new(), whole: true, ahead: None });
+        layouts.docs.push(DocParagraphs {
+            doc: (1, 1),
+            paragraphs: Paragraphs::new(),
+            whole: true,
+            font: (font_at(1.0).size.to_bits(), false),
+            ahead: None,
+        });
         assert!(!frame(&mut layouts) && !frame(&mut layouts));
-        assert!(layouts.ready((1, 1), &text));
+        assert!(layouts.ready((1, 1), &text, 1.0, false));
         ctx.set_fonts(egui::FontDefinitions::default());
         assert!(frame(&mut layouts));
-        assert!(!layouts.ready((1, 1), &text));
+        assert!(!layouts.ready((1, 1), &text, 1.0, false));
         assert!(!frame(&mut layouts));
     }
 

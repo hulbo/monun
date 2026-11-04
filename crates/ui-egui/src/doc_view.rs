@@ -69,6 +69,12 @@ pub struct State {
     scroll_to: Option<usize>,
     /// The editor's first visible line last frame; the rendered document follows it.
     editor_top: Option<usize>,
+    /// The first line in view last frame, in any mode, and its document (workbook, sheet).
+    top: Option<((u64, usize), usize)>,
+    /// A line to bring to the top of the view, once the document shows at its new zoom.
+    anchor: Option<((u64, usize), usize)>,
+    /// The zoom the document shown last frame showed at.
+    shown_zoom: Option<((u64, usize), u16)>,
     /// Text the editor selects and shows next frame (char indices), for a found match.
     select: Option<(usize, usize)>,
     /// The find bar, when open.
@@ -261,7 +267,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
         }
         let z = f32::from(sh.zoom.clamp(10, 400)) / 100.0;
         if shown && i == d.wb.active_sheet() {
-            if !state.layouts.ready(key, &doc.text) {
+            if !state.layouts.ready(key, &doc.text, z, t.dark) {
                 // Its first screen is laying it out (see `editor::show`).
                 return;
             }
@@ -273,7 +279,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
         if long > editor::AHEAD_DOCS || state.laid_ahead.contains(&key) {
             continue;
         }
-        if state.layouts.ready(key, &doc.text) {
+        if state.layouts.ready(key, &doc.text, z, t.dark) {
             state.laid_ahead.insert(key);
             continue;
         }
@@ -489,6 +495,15 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     ui.painter().rect_filled(ui.max_rect(), 0.0, if t.dark { t.window } else { t.grid_bg });
     let (chosen, _) = chosen_view(app);
     let mode = app.doc_view.mode(uid, sheet, chosen, &text);
+    // A new zoom (Ctrl+wheel, the status bar) keeps the line at the top where it is.
+    let doc = (uid, sheet);
+    if app.doc_view.shown_zoom.is_some_and(|(d, z)| d == doc && z != zoom)
+        && let Some((d, line)) = app.doc_view.top
+        && d == doc
+    {
+        app.doc_view.anchor = Some((doc, line));
+    }
+    app.doc_view.shown_zoom = Some((doc, zoom));
     // An empty document opens ready to type.
     if started && mode != Mode::View && text.is_empty() {
         app.doc_view.focus_editor = true;
@@ -513,6 +528,12 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         Mode::Edit => text_only(app, &mut body_ui, z, &t),
     }
     ui.allocate_rect(area, Sense::hover());
+    // Ctrl+wheel over the document zooms it, in the steps and with the glide the grid's has.
+    let (zoom_delta, now) = ui.input(|i| (i.zoom_delta(), i.time));
+    if zoom_delta != 1.0 && ui.rect_contains_pointer(area) {
+        crate::grid::turn_wheel_zoom(app, ui.ctx(), doc, zoom, zoom_delta, now);
+    }
+    crate::grid::update_zoom_glide(app, ui, doc, zoom, now);
     diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
     idle_commit(app, ui.ctx());
 }
@@ -926,7 +947,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
 
 /// View mode: the rendered document, centred.
 fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
-    let Some(text) = app.doc_view.draft.as_ref().map(|d| d.text.clone()) else { return };
+    let Some((key, text)) = app.doc_view.draft.as_ref().map(|d| ((d.uid, d.sheet), d.text.clone())) else { return };
     let blocks = app.doc_view.blocks(&text);
     let lang = app.ui.language;
     let fields = field_values(app, &blocks);
@@ -936,12 +957,13 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
     let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1 };
     let lead = 24.0 * z;
-    let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_view").auto_shrink([false, false]);
+    // Each document keeps its own place.
+    let mut scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_view", key)).auto_shrink([false, false]);
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
         scroll = scroll.vertical_scroll_offset((y + lead - 8.0 * z).max(0.0));
     }
     let (mut action, mut positions) = (None, Vec::new());
-    scroll.show(ui, |ui| {
+    let shown = scroll.show(ui, |ui| {
         let width = (PAGE_WIDTH * z).min(ui.available_width() - 48.0).max(120.0);
         let margin = ((ui.available_width() - width) / 2.0).max(0.0);
         ui.horizontal_top(|ui| {
@@ -954,7 +976,18 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
             });
         });
     });
+    // The first block in view, for a zoom to keep there; one to keep there goes to the top once
+    // this frame has placed the blocks at the new zoom.
+    let offset = shown.state.clamped_offset().y;
+    let top = positions.iter().take_while(|(_, y)| y + lead - 8.0 * z <= offset + 0.5).last().map_or(0, |(line, _)| *line);
     app.doc_view.positions = positions;
+    match app.doc_view.anchor.take_if(|(d, _)| *d == key) {
+        Some((_, line)) => {
+            app.doc_view.scroll_to = Some(line);
+            app.doc_view.top = Some((key, line));
+        }
+        None => app.doc_view.top = Some((key, top)),
+    }
     act(app, ui.ctx(), action, Mode::View);
 }
 
