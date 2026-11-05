@@ -53,12 +53,17 @@ impl SheetApp {
             return r;
         }
         let before = self.session.active_window();
+        // Where each Markdown file was being read is kept before it closes.
+        if matches!(id, "file.close" | "window.close" | "file.closeAll") {
+            self.remember_open_doc_views();
+        }
         let r = self.session.run(id, params);
-        // A Markdown file's view lives outside its .md: kept by path, and given back on open.
-        if r.is_ok() {
+        // A Markdown file's view lives outside its .md: kept by path, and given back on open (not
+        // to a file already open, which shows as it is).
+        if let Ok(result) = &r {
             match id {
                 "doc.view" | "view.zoom" | "view.zoom100" => self.remember_doc_view(),
-                "file.open" => self.recall_doc_view(),
+                "file.open" if result.get("alreadyOpen").is_none() => self.recall_doc_view(),
                 _ => {}
             }
         }
@@ -92,13 +97,32 @@ impl SheetApp {
         r
     }
 
-    /// Keeps how the active Markdown or text file shows (mode, Fit Width, zoom), by its path.
+    /// Keeps how the active Markdown or text file shows (mode, Fit Width, zoom, the line it is
+    /// read at), by its path.
     pub(crate) fn remember_doc_view(&mut self) {
-        let Some(d) = self.session.active().filter(|d| d.is_text_file()) else { return };
+        if let Some(uid) = self.session.active().map(|d| d.uid) {
+            self.remember_view_of(uid);
+        }
+    }
+
+    /// [`Self::remember_doc_view`] for every open Markdown or text file: before files close, and
+    /// when 모눈 quits.
+    pub fn remember_open_doc_views(&mut self) {
+        let uids: Vec<u64> = self.session.documents().iter().filter(|d| d.is_text_file() && d.path.is_some()).map(|d| d.uid).collect();
+        for uid in uids {
+            self.remember_view_of(uid);
+        }
+    }
+
+    fn remember_view_of(&mut self, uid: u64) {
+        let Some(d) = self.session.documents().iter().find(|d| d.uid == uid && d.is_text_file()) else { return };
+        let sheet = d.wb.active_sheet();
         let (Some(path), Some(sh)) = (d.path.clone(), d.wb.active()) else { return };
         let Some(doc) = sh.document.as_ref() else { return };
-        let memory =
-            crate::DocViewMemory { path, mode: doc.mode.map(|m| m.name().to_string()).unwrap_or_default(), fit_width: doc.fit_width, zoom: sh.zoom };
+        let kept = self.ui.doc_views.iter().find(|v| v.path == path).map_or(0, |v| v.line);
+        let line = crate::doc_view::top_line(self, (uid, sheet)).unwrap_or(kept);
+        let mode = doc.mode.map(|m| m.name().to_string()).unwrap_or_default();
+        let memory = crate::DocViewMemory { path, mode, fit_width: doc.fit_width, zoom: sh.zoom, line };
         self.ui.doc_views.retain(|v| v.path != memory.path);
         self.ui.doc_views.insert(0, memory);
         self.ui.doc_views.truncate(crate::DOC_VIEWS_MAX);
@@ -115,6 +139,10 @@ impl SheetApp {
         let _ = self.session.run("doc.view", view);
         if v.zoom != 100 && (10..=400).contains(&v.zoom) {
             let _ = self.session.run("view.zoom", json!({"percent": v.zoom}));
+        }
+        if let Some(d) = self.session.active() {
+            let doc = (d.uid, d.wb.active_sheet());
+            crate::doc_view::restore_line(self, doc, v.line);
         }
     }
 

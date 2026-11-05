@@ -63,8 +63,12 @@ pub struct State {
     heights: preview::Heights,
     /// The `{{…}}` fields' values, for a workbook version (uid, revision) and a parse.
     fields: Option<((u64, u64, usize), Arc<Fields>)>,
-    /// The outline (the headings) shows beside the document.
-    outline: bool,
+    /// Each document's first line in view as last shown (workbook, sheet), to remember where it
+    /// was being read.
+    tops: HashMap<(u64, usize), usize>,
+    /// Lines to bring to the top of documents once they show: where a file just opened was being
+    /// read last time.
+    restore: HashMap<(u64, usize), usize>,
     /// Where the rendered document's top-level blocks start (first line, offset from the top of
     /// the scrolled page), as drawn last frame.
     positions: Vec<(usize, f32)>,
@@ -217,6 +221,19 @@ pub(crate) fn go_to_line(app: &mut SheetApp, line: usize) {
     app.doc_view.scroll_to = Some(line);
     if mode != Mode::View {
         app.doc_view.goto_line = Some(line);
+    }
+}
+
+/// The first line in view of document `doc` (workbook uid, sheet) as last shown, if it has shown.
+pub fn top_line(app: &SheetApp, doc: (u64, usize)) -> Option<usize> {
+    app.doc_view.tops.get(&doc).copied()
+}
+
+/// Shows line `line` of document `doc` at the top of its view the first time it shows: a file just
+/// opened, where it was being read last time.
+pub(crate) fn restore_line(app: &mut SheetApp, doc: (u64, usize), line: usize) {
+    if line > 0 {
+        app.doc_view.restore.insert(doc, line);
     }
 }
 
@@ -517,10 +534,12 @@ fn png(image: &egui::ColorImage) -> Option<Vec<u8>> {
 
 /// Starts, reloads or replaces the draft for the document shown. Returns whether it started one.
 fn sync_draft(app: &mut SheetApp, ctx: &egui::Context, uid: u64, sheet: usize, text: &str) -> bool {
-    if app.doc_view.draft.as_ref().is_some_and(|d| d.uid != uid || d.sheet != sheet)
-        && let Err(e) = app.commit_doc_draft()
-    {
-        app.alert(e);
+    // Another document's draft goes to its workbook, then makes way: kept, it would stand for this
+    // one whenever the two texts are the same (a file closed and opened again, two empty files).
+    if app.doc_view.draft.as_ref().is_some_and(|d| d.uid != uid || d.sheet != sheet) {
+        if let Err(e) = app.commit_doc_draft() {
+            app.alert(e);
+        }
         app.doc_view.draft = None;
     }
     match app.doc_view.draft.as_mut() {
@@ -564,6 +583,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         app.doc_view.anchor = Some((doc, line));
     }
     app.doc_view.shown_zoom = Some((doc, zoom));
+    // A file just opened shows where it was being read.
+    if let Some(line) = app.doc_view.restore.remove(&doc) {
+        app.doc_view.anchor = Some((doc, line));
+    }
     // An empty document opens ready to type.
     if started && mode != Mode::View && text.is_empty() {
         app.doc_view.focus_editor = true;
@@ -574,7 +597,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         find_bar(app, ui, mode, &t);
     }
     let area = ui.available_rect_before_wrap();
-    let body = if app.doc_view.outline && kind == TextKind::Markdown {
+    let body = if app.ui.doc_outline && kind == TextKind::Markdown {
         let side = Rect::from_min_max(area.min, pos2(area.left() + (area.width() * 0.25).clamp(140.0, 260.0), area.bottom()));
         outline(app, ui, side, mode, &t);
         Rect::from_min_max(pos2(side.right(), area.top()), area.max)
@@ -594,6 +617,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         crate::grid::turn_wheel_zoom(app, ui.ctx(), doc, zoom, zoom_delta, now);
     }
     crate::grid::update_zoom_glide(app, ui, doc, zoom, now);
+    if let Some((d, line)) = app.doc_view.top {
+        app.doc_view.tops.insert(d, line);
+    }
     diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
     idle_commit(app, ui.ctx());
 }
@@ -950,11 +976,11 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
         }
     }
     separator(ui);
-    let on = app.doc_view.outline;
+    let on = app.ui.doc_outline;
     let outline =
         ui.add(egui::Button::selectable(on, egui::RichText::new(lang.tr("Contents")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
     if outline.on_hover_text(lang.tr("Show the headings beside the document")).clicked() {
-        app.doc_view.outline = !on;
+        app.ui.doc_outline = !on;
     }
     // Each document's own, kept in its file like its mode.
     let (_, fit) = chosen_view(app);

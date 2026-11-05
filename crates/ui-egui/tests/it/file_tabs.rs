@@ -406,3 +406,45 @@ fn an_unsaved_markdown_file_waits_for_a_save_before_memos() {
     use egui_kittest::kittest::NodeT as _;
     assert!(item.accesskit_node().is_disabled(), "greyed until the file has a path");
 }
+
+#[test]
+fn a_markdown_file_opens_again_where_it_was_being_read_with_contents_as_left() {
+    let path = std::env::temp_dir().join(format!("monun-doc-line-{}.md", std::process::id()));
+    let text: String = (0..300).map(|i| format!("Paragraph {i} of the plan.\n\n")).collect();
+    std::fs::write(&path, text).unwrap();
+    let path = path.to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": path})).unwrap();
+    h.run_steps(4);
+    h.get_by_label("Contents").click();
+    h.run_steps(2);
+    assert!(h.state().ui.doc_outline, "Contents is the interface's, kept with its settings");
+    // Scroll well down, then close the file.
+    let over = h.get_by_label("Paragraph 3 of the plan.").rect().center();
+    for _ in 0..12 {
+        h.input_mut().events.push(egui::Event::PointerMoved(over));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            source: egui::MouseWheelSource::Wheel,
+            delta: egui::vec2(0.0, -400.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.run_steps(2);
+    }
+    h.run_steps(4);
+    let uid = h.state().session.active().unwrap().uid;
+    let read = monun_ui_egui::doc_view::top_line(h.state(), (uid, 0)).unwrap();
+    assert!(read > 20, "scrolled down to line {read}");
+    h.state_mut().run("file.close", json!({})).unwrap();
+    h.run_steps(3);
+    let kept = h.state().ui.doc_views.iter().find(|v| v.path == path).map(|v| v.line);
+    assert_eq!(kept, Some(read), "closing keeps the line it was read at");
+    // Opened again: there, not at the top.
+    h.state_mut().run("file.open", json!({"path": path})).unwrap();
+    h.run_steps(8);
+    let uid = h.state().session.active().unwrap().uid;
+    let shown = monun_ui_egui::doc_view::top_line(h.state(), (uid, 0)).unwrap();
+    assert!(shown.abs_diff(read) <= 4, "opens at line {shown}, was read at {read}");
+    let _ = std::fs::remove_file(&path);
+}

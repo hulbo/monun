@@ -113,10 +113,12 @@ pub struct UiState {
     pub memos: Vec<memos::DocMemo>,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
     pub doc_views: Vec<DocViewMemory>,
+    /// Contents (the headings) shows beside Markdown documents.
+    pub doc_outline: bool,
 }
 
-/// How a Markdown file was last shown: Edit, Side by Side or View, Fit Width and the zoom. Its .md
-/// keeps the text only, so 모눈 remembers the rest by the file's path.
+/// How a Markdown file was last shown: Edit, Side by Side or View, Fit Width, the zoom and where it
+/// was being read. Its .md keeps the text only, so 모눈 remembers the rest by the file's path.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DocViewMemory {
@@ -125,6 +127,8 @@ pub struct DocViewMemory {
     pub mode: String,
     pub fit_width: bool,
     pub zoom: u16,
+    /// The first line in view (0-based), to read on from there.
+    pub line: usize,
 }
 
 /// The most Markdown files whose view is remembered.
@@ -165,6 +169,7 @@ impl Default for UiState {
             doc_views: vec![],
             group_panel: false,
             memos: vec![],
+            doc_outline: false,
         }
     }
 }

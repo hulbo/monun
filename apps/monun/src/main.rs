@@ -89,6 +89,8 @@ impl eframe::App for App {
             l.close();
         }
         if persists() {
+            // Where each Markdown file was being read, to open it there next time.
+            self.app.remember_open_doc_views();
             save_prefs(&self.app);
         }
         // A clean exit: the save questions are answered, so the recovery copies go.
