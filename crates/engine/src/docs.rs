@@ -59,13 +59,123 @@ pub fn name_from_path(path: &str) -> Option<String> {
     (!clean.is_empty() && !clean.eq_ignore_ascii_case("History")).then_some(clean)
 }
 
-/// A workbook of one document tab holding a Markdown file, named after it.
+/// A workbook of one document tab holding a Markdown file, named after it. The pictures its text
+/// shows from files beside it (`![…](pictures/a.png)`) come along, to show and save with it.
 pub fn markdown_workbook(name: &str, bytes: &[u8]) -> Workbook {
     let mut wb = Workbook::new();
     let tab = name_from_path(name).unwrap_or_else(|| "Doc1".into());
-    wb.sheets = vec![Arc::new(Sheet::new_document(tab, markdown_text(bytes)))];
+    let mut sheet = Sheet::new_document(tab, markdown_text(bytes));
+    // Only a file read from a folder has pictures beside it.
+    let folder = std::path::Path::new(name).parent().filter(|f| !f.as_os_str().is_empty());
+    if let Some(folder) = folder {
+        let text = sheet.document.as_ref().map(|d| d.text.clone()).unwrap_or_default();
+        for link in image_links(&text) {
+            let Some(path) = local_path(&link) else { continue };
+            let file = folder.join(&path);
+            let small = std::fs::metadata(&file).is_ok_and(|m| m.is_file() && m.len() <= PICTURE_LIMIT);
+            if let Some(data) = std::fs::read(&file).ok().filter(|_| small) {
+                add_picture(&mut sheet, &link, data);
+            }
+        }
+    }
+    wb.sheets = vec![Arc::new(sheet)];
     wb.set_active_sheet(0);
     wb
+}
+
+/// The largest picture file read beside a Markdown file.
+const PICTURE_LIMIT: u64 = 32 * 1024 * 1024;
+
+/// Refused for a picture that is neither PNG nor JPEG.
+pub const NOT_A_PICTURE: &str = "Only PNG and JPEG pictures can be put in a document.";
+
+/// The links of the text's pictures (`![…](link)`), each once, in order.
+pub fn image_links(text: &str) -> Vec<String> {
+    let mut links: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("![") {
+        let Some(after) = rest.get(start + 2..) else { break };
+        let Some(close) = after.find("](") else { break };
+        let Some(target) = after.get(close + 2..) else { break };
+        let Some(end) = target.find(')') else { break };
+        let link = target.get(..end).unwrap_or_default().trim();
+        let link = link.strip_prefix('<').and_then(|l| l.strip_suffix('>')).unwrap_or(link);
+        if !link.is_empty() && !link.contains('\n') && !links.iter().any(|l| l == link) {
+            links.push(link.to_string());
+        }
+        rest = target.get(end..).unwrap_or_default();
+    }
+    links
+}
+
+/// The file a picture link names, `%20` and the like decoded; `None` for a web address, a
+/// `data:` picture or a document tab's own `image:N`.
+pub fn local_path(link: &str) -> Option<String> {
+    let link = link.split_once(' ').map_or(link, |(path, _title)| path);
+    if link.contains("://") || link.starts_with("image:") || link.starts_with("data:") || link.starts_with("mailto:") {
+        return None;
+    }
+    let bytes = link.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        let hex = |at: usize| bytes.get(at).and_then(|c| (*c as char).to_digit(16));
+        match (b, hex(i + 1), hex(i + 2)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            _ => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok().filter(|p| !p.is_empty())
+}
+
+/// Adds a picture to a document tab as the file `link` names; `None` when the bytes are no PNG
+/// or JPEG. Returns the picture's id.
+pub fn add_picture(sheet: &mut Sheet, link: &str, data: Vec<u8>) -> Option<u32> {
+    let (w, h) = crate::io::image_size(&data)?;
+    let mime = if data.starts_with(&[0x89, b'P', b'N', b'G']) { "image/png" } else { "image/jpeg" };
+    let id = sheet.images.iter().map(|p| p.id).max().map_or(1, |m| m.saturating_add(1));
+    let anchor = monun_model::Anchor { width: w as f32, height: h as f32, ..monun_model::Anchor::default() };
+    sheet.document.as_mut()?.files.push((link.to_string(), id));
+    sheet.images.push(monun_model::Image { id, anchor, data: Arc::new(data), mime: mime.into(), alt: link.to_string() });
+    Some(id)
+}
+
+/// The picture a document's `![…](link)` shows: `image:N` names one of the tab's pictures, and in a
+/// Markdown file any other link one of the files beside it.
+pub fn picture<'a>(sheet: &'a Sheet, link: &str) -> Option<&'a monun_model::Image> {
+    let link = link.trim();
+    let id: u32 = match link.strip_prefix("image:") {
+        Some(n) => n.trim().parse().ok()?,
+        None => sheet.document.as_ref()?.files.iter().find(|(l, _)| l == link)?.1,
+    };
+    sheet.images.iter().find(|p| p.id == id)
+}
+
+/// Writes a Markdown file's pictures beside `path` (the .md saved): each one its text still shows
+/// and that isn't there yet, so a Save As elsewhere takes its pictures along.
+pub fn write_pictures(sheet: &Sheet, path: &str) -> Result<(), String> {
+    let Some(doc) = sheet.document.as_ref() else { return Ok(()) };
+    let Some(folder) = std::path::Path::new(path).parent() else { return Ok(()) };
+    let shown = image_links(&doc.text);
+    for (link, id) in &doc.files {
+        let (Some(file), true) = (local_path(link), shown.contains(link)) else { continue };
+        let Some(image) = sheet.images.iter().find(|p| p.id == *id) else { continue };
+        let target = folder.join(file);
+        if target.exists() {
+            continue;
+        }
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(&target, image.data.as_slice()).map_err(|e| format!("{}: {e}", target.display()))?;
+    }
+    Ok(())
 }
 
 /// What a document's `{{…}}` field shows: a cell reference (`구매목록!D1`) as the cell displays
@@ -189,7 +299,12 @@ fn mark_text(lines: usize, doc: &Document) -> String {
 fn view_of(formula: &str) -> Document {
     let text = formula.trim().trim_matches('"');
     let words = || text.split_whitespace().skip(2);
-    Document { text: String::new(), mode: words().find_map(monun_model::DocMode::parse), fit_width: words().any(|w| w.eq_ignore_ascii_case("fit")) }
+    Document {
+        text: String::new(),
+        mode: words().find_map(monun_model::DocMode::parse),
+        fit_width: words().any(|w| w.eq_ignore_ascii_case("fit")),
+        files: Vec::new(),
+    }
 }
 
 /// The line count a mark's text (`"md1 12"`) records; 0 when it records none.

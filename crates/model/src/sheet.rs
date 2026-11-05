@@ -148,6 +148,10 @@ pub struct Document {
     /// Fit Width: tables and diagrams as wide as the page, on screen and on paper.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fit_width: bool,
+    /// A Markdown file's pictures, kept as files beside it: the path each `![…](path)` writes
+    /// (relative to the file) and the picture of [`Sheet::images`] that shows it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<(String, u32)>,
 }
 
 /// How a document tab shows: its text, its text beside the document, or the document.

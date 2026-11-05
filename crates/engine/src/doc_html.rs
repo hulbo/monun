@@ -224,8 +224,7 @@ fn table(out: &mut String, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<
 /// A picture of the document tab at its size (narrowed to the page), or its name when it isn't
 /// there.
 fn picture(out: &mut String, s: &Span, cx: &Context) {
-    let id: Option<u32> = s.link.as_deref().and_then(|l| l.strip_prefix("image:")).and_then(|n| n.trim().parse().ok());
-    match id.and_then(|id| cx.sheet.images.iter().find(|p| p.id == id)) {
+    match s.link.as_deref().and_then(|l| crate::docs::picture(cx.sheet, l)) {
         Some(image) => {
             let alt = if s.text.is_empty() { image.alt.as_str() } else { s.text.as_str() };
             let _ = write!(

@@ -258,3 +258,41 @@ fn a_markdown_file_opens_again_as_it_was_shown() {
     assert!(!d.is_dirty());
     let _ = std::fs::remove_file(&path);
 }
+
+/// A 1×1 PNG.
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+#[test]
+fn a_markdown_files_pictures_are_files_beside_it() {
+    let dir = std::env::temp_dir().join(format!("monun-md-pictures-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(dir.join("copy"));
+    let md = dir.join("notes.md");
+    std::fs::write(&md, "# Notes\n").unwrap();
+    let md = md.to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": md})).unwrap();
+    let r = h.state_mut().run("doc.picture", json!({"base64": PNG, "name": "screen shot"})).unwrap();
+    let link = r["link"].as_str().unwrap().to_string();
+    assert_eq!(link, "notes.assets/screen-shot.png", "beside the file, in a folder named after it");
+    h.state_mut().run("doc.setText", json!({"text": format!("# Notes\n\n![screen shot]({link})\n")})).unwrap();
+    h.state_mut().run("doc.view", json!({"mode": "view"})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Image, "screen shot").is_some(), "the picture shows");
+
+    h.state_mut().run("file.save", json!({})).unwrap();
+    assert!(dir.join("notes.assets").join("screen-shot.png").exists(), "saving writes the picture beside the .md");
+    assert!(std::fs::read_to_string(&md).unwrap().contains("](notes.assets/screen-shot.png)"), "and the .md links to it");
+
+    let copy = dir.join("copy").join("other.md").to_string_lossy().into_owned();
+    h.state_mut().run("file.saveAs", json!({"path": copy})).unwrap();
+    assert!(dir.join("copy").join("notes.assets").join("screen-shot.png").exists(), "a Save As elsewhere takes its pictures along");
+
+    h.state_mut().run("file.close", json!({"force": true, "document": true})).unwrap();
+    h.state_mut().run("file.open", json!({"path": md})).unwrap();
+    h.run_steps(4);
+    let sh = h.state().session.active().unwrap().wb.active().unwrap().clone();
+    assert_eq!(sh.images.len(), 1, "opening reads the pictures beside it");
+    assert_eq!(sh.document.as_ref().unwrap().files[0].0, link);
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Image, "screen shot").is_some(), "and shows them");
+    let _ = std::fs::remove_dir_all(&dir);
+}

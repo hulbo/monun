@@ -134,6 +134,12 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         None => crate::io::save_bytes(wb, &path)?,
     };
     crate::io::write_file(&path, &bytes)?;
+    // A Markdown file's pictures are files beside it.
+    if kind == Some(crate::io::FileKind::Markdown)
+        && let Some(sh) = d.wb.sheet(d.wb.active_sheet())
+    {
+        crate::docs::write_pictures(sh, &path).map_err(crate::EngineError::Other)?;
+    }
     // Only a full-fidelity format clears the dirty flag and becomes the document's file: Markdown
     // is one for a workbook that is a single document tab (a .md file opened).
     let single_document = d.wb.sheets.len() == 1 && d.wb.sheets.first().is_some_and(|sh| sh.is_document());

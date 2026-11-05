@@ -31,6 +31,8 @@ pub struct Look<'a> {
     /// The workbook's uid and the document tab's pictures, which `![…](image:N)` shows.
     pub doc: u64,
     pub pictures: &'a [monun_engine::model::Image],
+    /// A Markdown file's pictures beside it: the link its text writes and the picture's id.
+    pub files: &'a [(String, u32)],
     /// Fit Width: tables and diagrams as wide as the page.
     pub full: bool,
     /// `{{…}}` reads as typed, untinted: a Markdown file has no cells for a field to show.
@@ -172,9 +174,14 @@ fn is_pictures(spans: &[Span]) -> bool {
     spans.iter().any(|s| s.style.image) && spans.iter().all(|s| s.style.image || s.text.trim().is_empty())
 }
 
-/// The picture `image:N` names in the document tab's pictures.
+/// The picture a link names: `image:N` one of the document tab's pictures, any other link (in a
+/// Markdown file) a picture beside the file.
 fn picture<'a>(cx: &'a Look, link: Option<&str>) -> Option<&'a monun_engine::model::Image> {
-    let id: u32 = link?.strip_prefix("image:")?.trim().parse().ok()?;
+    let link = link?.trim();
+    let id: u32 = match link.strip_prefix("image:") {
+        Some(n) => n.trim().parse().ok()?,
+        None => cx.files.iter().find(|(l, _)| l == link)?.1,
+    };
     cx.pictures.iter().find(|p| p.id == id)
 }
 

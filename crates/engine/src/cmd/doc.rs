@@ -36,6 +36,15 @@ pub fn specs() -> Vec<CommandSpec> {
             import
         ),
         cmd!(noundo "doc.export", "Export as Markdown", [], None, "{path, sheet?}: writes a document tab's text to a Markdown file (UTF-8)", has_doc, export),
+        cmd!(
+            "doc.picture",
+            "Insert Picture",
+            [],
+            None,
+            "{path} | {base64}, name?: a PNG or JPEG for a Markdown file → {link, name, image}: written beside the file as <file>.assets/<name>.png when it is saved; the text shows it with ![name](link)",
+            has_doc,
+            picture
+        ),
     ]
 }
 
@@ -58,6 +67,54 @@ fn import(s: &mut Session, p: &Json) -> Result<Json> {
         params["before"] = before.clone();
     }
     super::sheet::insert_tab(s, &params, Some(text))
+}
+
+/// A name fit for a file in a Markdown link: no characters Windows refuses or a link would break
+/// on, spaces as dashes, at most 60 characters.
+fn file_name(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '(' | ')' | '[' | ']' | '#' | '%') && !c.is_control())
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .take(60)
+        .collect();
+    clean.trim_matches(|c| c == '-' || c == '.').to_string()
+}
+
+/// A picture for a Markdown file (see `doc.picture`'s params).
+fn picture(s: &mut Session, p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    if !d.is_markdown() {
+        return Err(bad("doc.picture", "a picture goes beside a Markdown file; a document tab in a workbook takes insert.picture"));
+    }
+    let data = match (str_param(p, "path"), str_param(p, "base64")) {
+        (Some(path), _) => crate::io::read_file(path)?,
+        (None, Some(b)) => crate::io::base64_decode(b).ok_or_else(|| bad("base64", "invalid base64"))?,
+        (None, None) => return Err(bad("path", "required (or base64)")),
+    };
+    if crate::io::image_size(&data).is_none() {
+        return Err(EngineError::Other(crate::docs::NOT_A_PICTURE.into()));
+    }
+    let ext = if data.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else { "jpg" };
+    let stem_of = |p: &str| std::path::Path::new(p).file_stem().and_then(std::ffi::OsStr::to_str).map(file_name);
+    let stem = d.path.as_deref().or(Some(d.title.as_str())).and_then(stem_of).filter(|s| !s.is_empty()).unwrap_or_else(|| "Doc".into());
+    let name = str_param(p, "name").map(str::to_string).or_else(|| str_param(p, "path").and_then(stem_of)).unwrap_or_else(|| "Picture".into());
+    let base = Some(file_name(&name)).filter(|b| !b.is_empty()).unwrap_or_else(|| "picture".into());
+    let folder = d.path.as_deref().and_then(|p| std::path::Path::new(p).parent().map(std::path::Path::to_path_buf));
+    let sheet = d.wb.active_sheet();
+    let files = d.wb.sheet(sheet).and_then(|sh| sh.document.as_ref()).map(|doc| doc.files.clone()).unwrap_or_default();
+    let taken = |link: &str| {
+        files.iter().any(|(l, _)| l == link) || folder.as_ref().zip(crate::docs::local_path(link)).is_some_and(|(f, file)| f.join(file).exists())
+    };
+    let link = (1..10_000)
+        .map(|n| if n == 1 { format!("{stem}.assets/{base}.{ext}") } else { format!("{stem}.assets/{base}-{n}.{ext}") })
+        .find(|l| !taken(l))
+        .ok_or_else(|| bad("doc.picture", "no free file name"))?;
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let id = crate::docs::add_picture(sh, &link, data).ok_or_else(|| EngineError::Other(crate::docs::NOT_A_PICTURE.into()))?;
+        Ok(json!({"link": link, "name": name, "image": id}))
+    })
 }
 
 fn export(s: &mut Session, p: &Json) -> Result<Json> {

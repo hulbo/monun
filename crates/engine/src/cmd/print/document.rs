@@ -387,8 +387,7 @@ impl Flow<'_> {
 
     /// A picture of the document tab, at its size narrowed to fit.
     fn picture(&mut self, span: &Span, indent: f32) {
-        let id: Option<u32> = span.link.as_deref().and_then(|l| l.strip_prefix("image:")).and_then(|n| n.trim().parse().ok());
-        let Some(image) = id.and_then(|id| self.sh.images.iter().find(|p| p.id == id)) else {
+        let Some(image) = span.link.as_deref().and_then(|l| crate::docs::picture(self.sh, l)) else {
             let piece =
                 Piece { text: format!("[{}]", span.text), font: Font::Helvetica, size: BODY, color: DIM, link: None, shade: false, strike: false };
             self.lines(vec![piece], indent);
