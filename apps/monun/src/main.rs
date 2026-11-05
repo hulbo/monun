@@ -18,6 +18,7 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod print;
+mod single_instance;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,9 +27,16 @@ use monun_engine::Session;
 use monun_ui_egui::{Services, SheetApp};
 use serde_json::json;
 
-/// The app in one window, every open file a tab at its bottom ([`SheetApp::file_tabs`]), and
-/// (macOS) the menu bar and Finder events.
-struct App(SheetApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>, #[cfg(target_os = "macos")] fmv_macos_events::Inbox);
+/// The app in one window, every open file a tab at its bottom ([`SheetApp::file_tabs`]), the
+/// files later starts hand over ([`single_instance`]), and (macOS) the menu bar and Finder events.
+struct App {
+    app: SheetApp,
+    instance: Option<single_instance::Listener>,
+    #[cfg(target_os = "macos")]
+    menu: Option<native_menu::NativeMenu>,
+    #[cfg(target_os = "macos")]
+    events: fmv_macos_events::Inbox,
+}
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -40,39 +48,51 @@ impl eframe::App for App {
         }
         #[cfg(target_os = "macos")]
         {
-            if self.1.is_none() && std::env::var_os("MONUN_NO_NATIVE_MENU").is_none() {
-                self.1 = Some(native_menu::NativeMenu::install(ctx));
+            if self.menu.is_none() && std::env::var_os("MONUN_NO_NATIVE_MENU").is_none() {
+                self.menu = Some(native_menu::NativeMenu::install(ctx));
             }
-            if let Some(m) = &mut self.1 {
-                m.poll(&mut self.0, ctx, egui::ViewportId::ROOT);
+            if let Some(m) = &mut self.menu {
+                m.poll(&mut self.app, ctx, egui::ViewportId::ROOT);
             }
-            apple_events::poll(&self.2, &mut self.0, ctx);
+            apple_events::poll(&self.events, &mut self.app, ctx);
         }
-        self.0.logic(ctx);
-        if ctx.input(|input| input.viewport().close_requested()) && self.0.printing.busy() {
+        // Files another start handed over open as tabs here, and this window comes forward.
+        let handed: Vec<Vec<String>> = self.instance.as_ref().map(|l| l.rx.try_iter().collect()).unwrap_or_default();
+        for files in handed {
+            for f in files {
+                self.app.open_path(&f);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        self.app.logic(ctx);
+        if ctx.input(|input| input.viewport().close_requested()) && self.app.printing.busy() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
     }
     /// Forwards raw input to the shared app, then opens every non-empty dropped file path as a workbook.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(ctx, raw);
+        self.app.raw_input_hook(ctx, raw);
         // Files dropped on the window open as workbooks.
         for f in std::mem::take(&mut raw.dropped_files) {
             if let Some(p) = f.path().to_str().map(str::to_string).filter(|p| !p.is_empty()) {
-                self.0.open_path(&p);
+                self.app.open_path(&p);
             }
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.app.ui(ui);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
+        if let Some(l) = &self.instance {
+            l.close();
+        }
         if persists() {
-            save_prefs(&self.0);
+            save_prefs(&self.app);
         }
         // A clean exit: the save questions are answered, so the recovery copies go.
-        self.0.finish_recovery();
+        self.app.finish_recovery();
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -336,6 +356,14 @@ fn main() -> eframe::Result<()> {
         }
         i += 1;
     }
+    // A 모눈 already running takes the files and comes forward; this start ends. Test runs (no
+    // preferences, `--control`) keep to themselves.
+    let instance_dir = config_dir().filter(|_| prefs_enabled() && control_port.is_none());
+    if let Some(dir) = &instance_dir
+        && single_instance::hand_over(dir, &files)
+    {
+        return Ok(());
+    }
     // The log file lives in the settings folder, next to the preferences; opened after the
     // arguments, so `--version` leaves no file behind. Records logged until now are written to it
     // first. Runs without preferences and runs a script drives (agents' test runs, `--control`)
@@ -399,6 +427,8 @@ fn main() -> eframe::Result<()> {
     for f in &files {
         app.open_path(f);
     }
+    // Later starts hand their files to this one.
+    let instance = instance_dir.as_deref().and_then(single_instance::listen);
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Monun")
         .with_inner_size([1440.0, 900.0])
@@ -448,13 +478,17 @@ fn main() -> eframe::Result<()> {
                     Err(e) => log::error!("control channel on port {port}: {e}"),
                 }
             }
-            Ok(Box::new(App(
+            if let Some(l) = &instance {
+                l.wake_with(&cc.egui_ctx);
+            }
+            Ok(Box::new(App {
                 app,
+                instance,
                 #[cfg(target_os = "macos")]
-                None,
+                menu: None,
                 #[cfg(target_os = "macos")]
-                apple_events.connect(&cc.egui_ctx),
-            )))
+                events: apple_events.connect(&cc.egui_ctx),
+            }))
         }),
     )
 }
