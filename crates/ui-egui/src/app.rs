@@ -32,6 +32,7 @@ impl SheetApp {
             editor: None,
             text_box_editor: None,
             doc_view: Default::default(),
+            memos: Default::default(),
             dialog: None,
             backstage: None,
             message: None,

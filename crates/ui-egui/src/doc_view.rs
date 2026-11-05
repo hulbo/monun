@@ -197,6 +197,29 @@ pub(crate) fn text_kind(app: &SheetApp) -> TextKind {
     app.session.active().and_then(monun_engine::DocState::text_kind).unwrap_or(TextKind::Markdown)
 }
 
+/// Whether a right click in the rendered document offers Add Memo (see `preview::Look::memos`).
+fn memo_menu(app: &SheetApp) -> Option<bool> {
+    match crate::memos::memo_file(app) {
+        Ok(_) => Some(true),
+        Err(unsaved) => unsaved.then_some(false),
+    }
+}
+
+/// Room left of Side by Side's rendered document, for the memos' marks.
+const MARKS_ROOM: f32 = 18.0;
+
+/// Brings line `line` of the document in front into view: the rendered document scrolls to it,
+/// and while the text shows the editor's caret goes there too.
+pub(crate) fn go_to_line(app: &mut SheetApp, line: usize) {
+    let Some((uid, sheet, text)) = active_document(app) else { return };
+    let (chosen, _) = chosen_view(app);
+    let mode = if text_kind(app) == TextKind::Markdown { app.doc_view.mode(uid, sheet, chosen, &text) } else { Mode::Edit };
+    app.doc_view.scroll_to = Some(line);
+    if mode != Mode::View {
+        app.doc_view.goto_line = Some(line);
+    }
+}
+
 /// The document editor's widget id.
 pub fn editor_id() -> egui::Id {
     egui::Id::unique("monun.doc_editor")
@@ -1042,6 +1065,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         files,
         full: chosen_view(app).1,
         plain_fields: markdown_file(app),
+        memos: memo_menu(app),
     };
     let lead = 24.0 * z;
     // Each document keeps its own place.
@@ -1050,19 +1074,27 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         scroll = scroll.vertical_scroll_offset((y + lead - 8.0 * z).max(0.0));
     }
     let (mut action, mut positions) = (None, Vec::new());
+    let (marks, picked) = (crate::memos::marks_of(app), app.memos.picked);
+    let mut marked = None;
     let shown = scroll.show(ui, |ui| {
-        let width = (PAGE_WIDTH * z).min(ui.available_width() - 48.0).max(120.0);
+        // Room either side, the left for the memos' marks.
+        let width = (PAGE_WIDTH * z).min(ui.available_width() - 80.0).max(120.0);
         let margin = ((ui.available_width() - width) / 2.0).max(0.0);
         ui.horizontal_top(|ui| {
             ui.add_space(margin);
             ui.vertical(|ui| {
                 ui.set_width(width);
                 ui.add_space(lead);
-                (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
+                let drawn = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
+                marked = crate::memos::draw_marks(ui, &drawn.lines, &marks, picked);
+                (action, positions) = (drawn.action, drawn.positions);
                 ui.add_space(48.0 * z);
             });
         });
     });
+    if let Some(id) = marked {
+        crate::memos::pick(app, id);
+    }
     // The first block in view, for a zoom to keep there; one to keep there goes to the top once
     // this frame has placed the blocks at the new zoom.
     let offset = shown.state.clamped_offset().y;
@@ -1137,6 +1169,7 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         files,
         full: chosen_view(app).1,
         plain_fields: markdown_file(app),
+        memos: memo_menu(app),
     };
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
@@ -1145,11 +1178,25 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
         scroll = scroll.vertical_scroll_offset(if y > 0.0 { y + lead - 8.0 * z } else { 0.0 });
     }
     let (mut action, mut positions) = (None, Vec::new());
+    let (marks, picked) = (crate::memos::marks_of(app), app.memos.picked);
+    let mut marked = None;
     scroll.show(&mut right_ui, |ui| {
-        ui.add_space(lead);
-        (action, positions) = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
-        ui.add_space(48.0 * z);
+        // Room on the left for the memos' marks.
+        ui.horizontal_top(|ui| {
+            ui.add_space(MARKS_ROOM);
+            ui.vertical(|ui| {
+                ui.set_width((ui.available_width() - 4.0).max(60.0));
+                ui.add_space(lead);
+                let drawn = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
+                marked = crate::memos::draw_marks(ui, &drawn.lines, &marks, picked);
+                (action, positions) = (drawn.action, drawn.positions);
+                ui.add_space(48.0 * z);
+            });
+        });
     });
+    if let Some(id) = marked {
+        crate::memos::pick(app, id);
+    }
     app.doc_view.positions = positions;
     ui.allocate_rect(area, Sense::hover());
     act(app, ui.ctx(), action, Mode::Split);
@@ -1168,6 +1215,7 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, action: Option<preview::Action>,
             }
         }
         Some(preview::Action::Link(target)) => follow_link(app, ctx, &target),
+        Some(preview::Action::Memo(line)) => crate::memos::start(app, line),
         Some(preview::Action::Goto(line)) if mode != Mode::View => {
             app.doc_view.goto_line = Some(line);
             app.doc_view.focus_editor = true;

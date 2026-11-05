@@ -60,7 +60,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
             // A document's memos are its own; a sheet's are its cells' comments.
-            "comments" if crate::doc_view::is_active(app) => document_memos(app, ui),
+            "comments" if crate::doc_view::is_active(app) => crate::memos::panel(app, ui),
             "comments" => comments(app, ui),
             "group" => crate::groups::panel(app, ui),
             "watch" => watch(app, ui),
@@ -107,12 +107,6 @@ pub(crate) fn toggle_groups(app: &mut SheetApp) {
         }
     }
     app.ui.group_panel = on;
-}
-
-/// A document's memos (a Markdown file, or a document tab of a workbook).
-fn document_memos(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    ui.label(egui::RichText::new(lang.tr("No memos in this document yet.")).italics());
 }
 
 /// Lists comments and replies, links each to its cell, and runs delete/resolve/reopen/reply commands.

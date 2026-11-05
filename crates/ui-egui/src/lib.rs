@@ -33,6 +33,7 @@ pub mod keymap;
 pub mod keytips;
 pub mod macro_editor;
 pub mod macro_ui;
+pub mod memos;
 pub mod outline;
 pub mod panes;
 pub mod paper_view;
@@ -108,6 +109,8 @@ pub struct UiState {
     pub group: String,
     /// The group panel ([`groups::panel`]) shows on the right, whichever file is in front.
     pub group_panel: bool,
+    /// The memos on Markdown files' paragraphs ([`memos`]), by the files' paths.
+    pub memos: Vec<memos::DocMemo>,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
     pub doc_views: Vec<DocViewMemory>,
 }
@@ -161,6 +164,7 @@ impl Default for UiState {
             group: String::new(),
             doc_views: vec![],
             group_panel: false,
+            memos: vec![],
         }
     }
 }
@@ -274,6 +278,8 @@ pub struct SheetApp {
     pub text_box_editor: Option<text_box::EditState>,
     /// Document tabs: the draft being typed, each document's mode.
     pub doc_view: doc_view::State,
+    /// The memo panel's memo being written and the one picked.
+    pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,

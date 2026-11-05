@@ -1,5 +1,6 @@
-//! The rendered document: Markdown blocks laid out with the interface's fonts. Links, task boxes
-//! and a double-click (go to that line in the editor) come back as an [`Action`].
+//! The rendered document: Markdown blocks laid out with the interface's fonts. Links, task boxes,
+//! a double-click (go to that line in the editor) and a right click's Add Memo come back as an
+//! [`Action`].
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, Color32, FontFamily, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -18,6 +19,8 @@ pub enum Action {
     Link(String),
     /// Put the editor's caret on this line.
     Goto(usize),
+    /// Put a memo on the paragraph starting on this line.
+    Memo(usize),
 }
 
 /// How to draw: the zoom, the theme, the language, the fields' values and the text being looked
@@ -37,6 +40,9 @@ pub struct Look<'a> {
     pub full: bool,
     /// `{{…}}` reads as typed, untinted: a Markdown file has no cells for a field to show.
     pub plain_fields: bool,
+    /// A right click offers Add Memo: `Some(true)` on a saved Markdown file, `Some(false)` (the
+    /// item greyed) on one not saved yet, `None` (no menu) elsewhere.
+    pub memos: Option<bool>,
 }
 
 /// Found text's tint.
@@ -53,10 +59,38 @@ impl Look<'_> {
     }
 }
 
-/// What drawing the blocks produced: a click's action, and the diagram drawings to use.
+/// What drawing the blocks produced: a click's action, the diagram drawings to use, and where each
+/// element drawn is (its source line, its place), for the memos' marks.
 struct Out<'a> {
     action: Option<Action>,
     diagrams: &'a mut diagram::Cache,
+    lines: Vec<(usize, Rect)>,
+}
+
+/// What [`show`] drew: a click's action, where each top-level block starts (its first line and its
+/// offset from the top of what was drawn), and each element drawn with its source line and place.
+pub struct Shown {
+    pub action: Option<Action>,
+    pub positions: Vec<(usize, f32)>,
+    pub lines: Vec<(usize, Rect)>,
+}
+
+/// An element's clicks: a double-click goes to its line in the editor, a right click offers Add
+/// Memo on it. Its place is kept for the memos' marks.
+fn clicks(resp: &egui::Response, line: usize, cx: &Cx, out: &mut Out) {
+    if resp.double_clicked() {
+        out.action = Some(Action::Goto(line));
+    }
+    out.lines.push((line, resp.rect));
+    if let Some(saved) = cx.memos {
+        resp.context_menu(|ui| {
+            let item = ui.add_enabled(saved, egui::Button::new(cx.lang.tr("Add Memo")));
+            let item = item.on_disabled_hover_text(cx.lang.tr("Save the file to put memos on its paragraphs."));
+            if item.clicked() {
+                out.action = Some(Action::Memo(line));
+            }
+        });
+    }
 }
 
 /// The heights of the rendered document's top-level blocks as last laid out, for one parse of the
@@ -70,11 +104,9 @@ pub struct Heights {
 }
 
 /// Draws `blocks` into `ui`'s width: those within a screen of the view laid out, the others as
-/// the room they took last (or an estimate until they have been seen). Returns what a click
-/// asked for, and where each top-level block starts: its first line and its offset from the top
-/// of what was drawn.
-pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Cache, heights: &mut Heights) -> (Option<Action>, Vec<(usize, f32)>) {
-    let mut out = Out { action: None, diagrams };
+/// the room they took last (or an estimate until they have been seen).
+pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Cache, heights: &mut Heights) -> Shown {
+    let mut out = Out { action: None, diagrams, lines: Vec::new() };
     if blocks.is_empty() {
         ui.label(
             egui::RichText::new(cx.lang.tr("This document is empty. Choose Edit to write it.")).font(theme::ui_font(cx.body())).color(cx.t.text_dim),
@@ -104,7 +136,7 @@ pub fn show(ui: &mut Ui, blocks: &[Block], cx: &Look, diagrams: &mut diagram::Ca
             *h = Some(ui.cursor().top() - y);
         }
     }
-    (out.action, positions)
+    Shown { action: out.action, positions, lines: out.lines }
 }
 
 /// The room a block not yet laid out is given: its source lines at the body's line height, a
@@ -206,9 +238,7 @@ fn pictures(ui: &mut Ui, spans: &[Span], cx: &Look, line: usize, out: &mut Out) 
         }
         let alt = if s.text.is_empty() { image.alt.clone() } else { s.text.clone() };
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &alt));
-        if resp.double_clicked() {
-            out.action = Some(Action::Goto(line));
-        }
+        clicks(&resp, line, cx, out);
         ui.add_space(4.0 * cx.z);
     }
 }
@@ -270,9 +300,7 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out
     if lang == "mermaid"
         && let Some(resp) = diagram::show(ui, out.diagrams, text, cx.z, cx.t, cx.lang, cx.full)
     {
-        if resp.double_clicked() {
-            out.action = Some(Action::Goto(line));
-        }
+        clicks(&resp, line, cx, out);
         return;
     }
     let t = cx.t;
@@ -293,9 +321,7 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out
         })
         .response
         .interact(Sense::click());
-    if resp.double_clicked() {
-        out.action = Some(Action::Goto(line));
-    }
+    clicks(&resp, line, cx, out);
 }
 
 /// A table with its lines drawn: the header row shaded, bold and centred, the other rows aligned
@@ -496,7 +522,5 @@ fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color3
         }
         resp.clone().on_hover_text(l);
     }
-    if resp.double_clicked() {
-        out.action = Some(Action::Goto(line));
-    }
+    clicks(&resp, line, cx, out);
 }

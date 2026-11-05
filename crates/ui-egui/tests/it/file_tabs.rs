@@ -338,3 +338,71 @@ fn a_markdown_files_pictures_are_files_beside_it() {
     assert!(h.query_by_role_and_label(egui::accesskit::Role::Image, "screen shot").is_some(), "and shows them");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_memo_goes_on_a_paragraph_of_a_markdown_file_and_follows_it() {
+    use egui::accesskit::Role;
+    let path = std::env::temp_dir().join(format!("monun-memos-{}.md", std::process::id()));
+    std::fs::write(&path, "# Plan\n\nFirst paragraph.\n\nSecond paragraph.\n").unwrap();
+    let path = path.to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": path})).unwrap();
+    h.run_steps(4);
+    // View mode: a right click on the paragraph, Add Memo.
+    h.get_by_label("Second paragraph.").click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Add Memo").click();
+    h.run_steps(3);
+    assert!(h.state().session.comments_pane, "the memo panel opens");
+    h.get_by_role_and_label(Role::MultilineTextInput, "Memo").type_text("Check the totals");
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(3);
+    let memos = h.state().ui.memos.clone();
+    assert_eq!(memos.len(), 1);
+    assert_eq!(
+        (memos[0].path.as_str(), memos[0].line, memos[0].quote.as_str(), memos[0].text.as_str()),
+        (path.as_str(), 4, "Second paragraph.", "Check the totals")
+    );
+    assert!(h.query_by_label("Check the totals").is_some(), "the panel lists it");
+    assert!(h.query_by_role_and_label(Role::Button, "Memo").is_some(), "and the paragraph is marked");
+    // Ctrl+Enter keeps one too.
+    h.get_by_label("First paragraph.").click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Add Memo").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::MultilineTextInput, "Memo").type_text("Source?");
+    h.run_steps(2);
+    key(&mut h, egui::Key::Enter, egui::Modifiers::COMMAND);
+    assert_eq!(h.state().ui.memos.len(), 2);
+    assert!(h.state().memos.draft.is_none());
+    h.state_mut().ui.memos.retain(|m| m.text != "Source?");
+    h.run_steps(2);
+    // Lines written above: the memo stays on its paragraph, and the .md is untouched by it.
+    h.state_mut().run("doc.setText", json!({"text": "# Plan\n\nNew line.\n\nFirst paragraph.\n\nSecond paragraph.\n"})).unwrap();
+    h.run_steps(4);
+    assert_eq!(h.state().ui.memos[0].line, 6);
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("Check the totals"));
+    // Delete asks once more.
+    h.get_by_label("Delete").click();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.memos.len(), 1);
+    h.get_by_label("Delete").click();
+    h.run_steps(2);
+    assert!(h.state().ui.memos.is_empty());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_unsaved_markdown_file_waits_for_a_save_before_memos() {
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.new", json!({"document": true})).unwrap();
+    h.state_mut().run("doc.setText", json!({"text": "Some text.\n"})).unwrap();
+    h.state_mut().run("doc.view", json!({"mode": "view"})).unwrap();
+    h.run_steps(4);
+    h.get_by_label("Some text.").click_secondary();
+    h.run_steps(3);
+    let item = h.get_by_label("Add Memo");
+    use egui_kittest::kittest::NodeT as _;
+    assert!(item.accesskit_node().is_disabled(), "greyed until the file has a path");
+}
