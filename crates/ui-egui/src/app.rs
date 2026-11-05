@@ -85,6 +85,14 @@ impl SheetApp {
         }
     }
 
+    /// Visual Studio-style file tabs ([`SheetApp::file_tabs`]), with workbooks and Markdown files
+    /// apart ([`Session::separate_files`]): a workbook takes sheets only, a Markdown file its one
+    /// document.
+    pub fn use_file_tabs(&mut self) {
+        self.file_tabs = true;
+        self.session.separate_files = true;
+    }
+
     /// One-time context setup: start cataloging the machine's fonts, then install the fonts and
     /// visuals. Workbook-specific fonts are bound later, once the scan is done (see [`logic`]).
     ///

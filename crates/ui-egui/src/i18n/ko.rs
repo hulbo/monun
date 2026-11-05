@@ -1897,4 +1897,13 @@ const MORE: &[(&str, &str)] = &[
     ("New sheet", "새 시트"),
     ("Files you open show here.", "연 파일이 여기에 나옵니다."),
     ("Open a file or make a new one. Each file opens as a tab at the bottom.", "파일을 열거나 새로 만드세요. 파일마다 아래쪽에 탭으로 열립니다."),
+    (
+        "A workbook holds sheets only. Make a Markdown file with + › New Markdown Document.",
+        "엑셀 통합 문서에는 시트만 넣을 수 있습니다. 문서는 + › 새 Markdown 문서로 따로 만드세요.",
+    ),
+    (
+        "A Markdown file holds its document only. Make an Excel workbook with + › New Excel Workbook for sheets.",
+        "Markdown 파일에는 문서만 들어갑니다. 시트는 + › 새 엑셀 통합 문서로 따로 만드세요.",
+    ),
+    ("A Markdown file keeps its text only, so pictures can't be put in it.", "Markdown 파일에는 글만 저장되므로 그림을 넣을 수 없습니다."),
 ];

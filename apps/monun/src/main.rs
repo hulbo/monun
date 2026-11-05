@@ -353,7 +353,7 @@ fn main() -> eframe::Result<()> {
     // Like Visual Studio, 모눈 starts on its start page rather than a blank workbook: every file
     // opened or made is a tab at the bottom of its one window.
     let mut app = SheetApp::new(session, services());
-    app.file_tabs = true;
+    app.use_file_tabs();
     app.watch_desktop_theme();
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;

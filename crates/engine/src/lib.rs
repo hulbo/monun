@@ -376,7 +376,7 @@ impl DocState {
     /// A Markdown file rather than a workbook: one document tab and nothing else (a `.md` file
     /// opened, or `file.new` with `document`), saved as .md.
     pub fn is_markdown(&self) -> bool {
-        self.wb.sheets.len() == 1 && self.wb.sheets.first().is_some_and(|sh| sh.is_document())
+        docs::is_markdown_file(&self.wb)
     }
 }
 
@@ -544,6 +544,10 @@ pub struct Session {
     /// Measures cell text for AutoFit Column Width. Without it (CLI, MCP) AutoFit uses
     /// [`cmd::format::approx_text_width`].
     pub text_width: Option<TextWidth>,
+    /// Workbooks and Markdown files are files apart (the desktop's file tabs): a workbook takes
+    /// sheets only, no document tab, and a Markdown file ([`DocState::is_markdown`]) keeps its one
+    /// document, no sheet. Off, a workbook holds document tabs beside its sheets.
+    pub separate_files: bool,
 }
 
 impl Session {

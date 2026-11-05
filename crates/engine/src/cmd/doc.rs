@@ -2,7 +2,7 @@
 
 use serde_json::{Value as Json, json};
 
-use super::{CommandSpec, EngineError, PROTECTED, Result, Session, bad, cmd, edit, has_doc, str_param, target_sheet};
+use super::{CommandSpec, EngineError, PROTECTED, Result, Session, bad, cmd, documents_allowed, edit, has_doc, str_param, target_sheet};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Insert", "Text"],
             None,
             "{name?, prefix?: \"Doc\" (an unnamed document takes the first free <prefix>N), before?: index, text?}: a Markdown document tab after the active sheet",
-            has_doc,
+            documents_allowed,
             insert
         ),
         cmd!("doc.setText", "Edit Document", [], None, "{sheet?, text}: replaces a document tab's Markdown text", has_doc, set_text),
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Insert", "Text"],
             None,
             "{path, before?: index}: a Markdown file (.md, UTF-8) as a new document tab named after it",
-            has_doc,
+            documents_allowed,
             import
         ),
         cmd!(noundo "doc.export", "Export as Markdown", [], None, "{path, sheet?}: writes a document tab's text to a Markdown file (UTF-8)", has_doc, export),
@@ -116,12 +116,17 @@ fn view(s: &mut Session, p: &Json) -> Result<Json> {
     let doc = sh.document.as_ref().ok_or_else(|| bad("sheet", format!("`{}` is not a document", sh.name)))?;
     let (mode, fit) = (mode.or(doc.mode), fit.unwrap_or(doc.fit_width));
     if (mode, fit) != (doc.mode, doc.fit_width) {
+        // A Markdown file keeps its text only, so how it shows leaves it as saved.
+        let saved = d.is_markdown() && !d.is_dirty();
         let wb = std::sync::Arc::make_mut(&mut d.wb);
         if let Some(doc) = wb.sheet_mut(sheet).and_then(|sh| sh.document.as_mut()) {
             doc.mode = mode;
             doc.fit_width = fit;
         }
         d.revision += 1;
+        if saved {
+            d.saved = d.wb.clone();
+        }
     }
     Ok(json!({"mode": mode.map(monun_model::DocMode::name), "fitWidth": fit}))
 }

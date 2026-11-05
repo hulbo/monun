@@ -29,6 +29,20 @@ pub const NOT_A_DOCUMENT: &str = "Only a document tab can be saved as Markdown (
 /// Refused when a command would put cells on a document tab.
 pub const NO_CELLS: &str = "A document has no cells. Switch to a worksheet to edit cells.";
 
+/// Refused, with workbooks and Markdown files apart ([`crate::Session::separate_files`]), when a
+/// document tab would go into a workbook.
+pub const SHEETS_ONLY: &str = "A workbook holds sheets only. Make a Markdown file with + › New Markdown Document.";
+
+/// Refused, with workbooks and Markdown files apart, when a sheet or a second document would go
+/// into a Markdown file.
+pub const ONE_DOCUMENT: &str = "A Markdown file holds its document only. Make an Excel workbook with + › New Excel Workbook for sheets.";
+
+/// A Markdown file rather than a workbook: one document tab and nothing else (a `.md` file
+/// opened, or `file.new` with `document`), saved as .md.
+pub fn is_markdown_file(wb: &Workbook) -> bool {
+    wb.sheets.len() == 1 && wb.sheets.first().is_some_and(|sh| sh.is_document())
+}
+
 /// The text of a Markdown file: UTF-8 (a byte-order mark dropped), anything else read as well as
 /// it goes.
 pub fn markdown_text(bytes: &[u8]) -> String {
@@ -57,7 +71,12 @@ pub fn markdown_workbook(name: &str, bytes: &[u8]) -> Workbook {
 /// What a document's `{{…}}` field shows: a cell reference (`구매목록!D1`) as the cell displays
 /// it, in its number format; anything else (`=SUM(구매목록!B:B)`) worked out as a formula and shown
 /// in General format. An error comes back as its code (`#REF!`).
+///
+/// A Markdown file has no cells to show: its fields read as they are written, `{{…}}` and all.
 pub fn field_value(wb: &Workbook, expr: &str) -> Result<String, String> {
+    if is_markdown_file(wb) {
+        return Ok(format!("{{{{{expr}}}}}"));
+    }
     let e = expr.trim();
     let body = e.strip_prefix('=').unwrap_or(e);
     if !e.starts_with('=') {

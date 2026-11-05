@@ -97,6 +97,22 @@ pub fn always(_: &Session) -> std::result::Result<(), String> {
 pub fn has_doc(s: &Session) -> std::result::Result<(), String> {
     s.active().map(|_| ()).ok_or_else(|| "no workbook open".into())
 }
+/// A document tab can go into the active workbook: not with workbooks and Markdown files apart
+/// ([`Session::separate_files`]).
+pub fn documents_allowed(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    match s.active() {
+        Some(d) if s.separate_files && d.is_markdown() => Err(crate::docs::ONE_DOCUMENT.into()),
+        _ if s.separate_files => Err(crate::docs::SHEETS_ONLY.into()),
+        _ => Ok(()),
+    }
+}
+/// A sheet can go into the active workbook: not into a Markdown file with workbooks and Markdown
+/// files apart ([`Session::separate_files`]).
+pub fn sheets_allowed(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    if s.separate_files && s.active().is_some_and(crate::DocState::is_markdown) { Err(crate::docs::ONE_DOCUMENT.into()) } else { Ok(()) }
+}
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     not_grouping(s)?;

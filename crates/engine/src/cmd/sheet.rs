@@ -55,7 +55,15 @@ pub fn specs() -> Vec<CommandSpec> {
             insert_copied_cells
         ),
         cmd!("home.deleteCells", "Delete Cells…", ["Home", "Cells", "Delete"], None, "{range?, shift: left|up|row|column}", has_doc, delete_cells),
-        cmd!("home.insertSheet", "Insert Sheet", ["Home", "Cells", "Insert"], Some("Shift+F11"), "{name?, before?: index}", has_doc, insert_sheet),
+        cmd!(
+            "home.insertSheet",
+            "Insert Sheet",
+            ["Home", "Cells", "Insert"],
+            Some("Shift+F11"),
+            "{name?, before?: index}",
+            super::sheets_allowed,
+            insert_sheet
+        ),
         cmd!("home.deleteSheet", "Delete Sheet", ["Home", "Cells", "Delete"], None, "{sheet?}", has_doc, delete_sheet),
         cmd!("sheet.rename", "Rename Sheet", ["Home", "Cells", "Format"], None, "{sheet?, name}", has_doc, rename_sheet),
         cmd!("sheet.move", "Move or Copy Sheet…", ["Home", "Cells", "Format"], None, "{sheet?, to: index, copy?: bool}", has_doc, move_sheet),

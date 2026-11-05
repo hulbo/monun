@@ -8,7 +8,7 @@ use serde_json::json;
 
 fn harness(session: Session) -> egui_kittest::Harness<'static, SheetApp> {
     let mut app = crate::common::app(session);
-    app.file_tabs = true;
+    app.use_file_tabs();
     let mut h = crate::common::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SheetApp| {
             let ctx = ui.ctx().clone();
@@ -129,4 +129,44 @@ fn close_other_tabs_keeps_the_one_clicked() {
     h.run_steps(4);
     assert_eq!(tab_labels(&h), ["Doc1.md"]);
     assert!(h.state().session.active().unwrap().is_markdown());
+}
+
+#[test]
+fn a_workbook_takes_sheets_only() {
+    let mut s = Session::new();
+    s.new_workbook();
+    let mut h = harness(s);
+    let refused = h.state_mut().run("doc.insert", json!({})).expect_err("no document tab in a workbook");
+    assert!(refused.contains("sheets only"), "{refused}");
+    assert!(h.state_mut().run("home.insertSheet", json!({})).is_ok(), "a sheet goes in as in Excel");
+    h.state_mut().ui.ribbon_tab = "Insert".into();
+    h.run_steps(3);
+    assert!(h.query_by_label("Text Box").is_some(), "the Insert tab shows");
+    assert!(h.query_by_label("Document").is_none(), "without its Document button");
+}
+
+#[test]
+fn a_markdown_file_keeps_its_one_document() {
+    let mut s = Session::new();
+    s.new_markdown("Doc");
+    s.run("doc.setText", json!({"text": "Total {{=1+2}}"})).unwrap();
+    let mut h = harness(s);
+    for (id, params) in [("home.insertSheet", json!({})), ("doc.insert", json!({})), ("sheet.move", json!({"sheet": 0, "to": 1, "copy": true}))] {
+        let refused = h.state_mut().run(id, params).expect_err(id);
+        assert!(refused.contains("Markdown file holds its document only"), "{id}: {refused}");
+    }
+    let d = h.state().session.active().unwrap();
+    assert!(d.is_markdown());
+    assert_eq!(monun_engine::docs::field_value(&d.wb, "=1+2").as_deref(), Ok("{{=1+2}}"), "a field reads as written: there are no cells");
+    // How the file shows is not part of its .md text, so it stays as saved.
+    let saved = h.state_mut().run("file.saveAs", json!({"path": std::env::temp_dir().join("monun-file-tabs-test.md").to_string_lossy()}));
+    assert!(saved.is_ok(), "{saved:?}");
+    assert!(!h.state().session.active().unwrap().is_dirty());
+    h.state_mut().run("doc.view", json!({"mode": "view"})).unwrap();
+    assert!(!h.state().session.active().unwrap().is_dirty(), "View mode leaves the file as saved");
+    h.state_mut().run("doc.view", json!({"mode": "edit"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_some() || h.query_by_label("B").is_some(), "the formatting buttons show");
+    assert!(h.query_by_label("Cell value").is_none(), "but not Cell value: there are no cells");
+    let _ = std::fs::remove_file(std::env::temp_dir().join("monun-file-tabs-test.md"));
 }

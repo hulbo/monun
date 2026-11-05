@@ -33,6 +33,8 @@ pub struct Look<'a> {
     pub pictures: &'a [monun_engine::model::Image],
     /// Fit Width: tables and diagrams as wide as the page.
     pub full: bool,
+    /// `{{…}}` reads as typed, untinted: a Markdown file has no cells for a field to show.
+    pub plain_fields: bool,
 }
 
 /// Found text's tint.
@@ -410,7 +412,9 @@ fn styled<'a>(spans: &'a [Span], cx: &Cx, font: FontSpec, color: Color32, width:
         if s.style.strike {
             f.strikethrough = Stroke::new(1.0, color);
         }
-        let text = if s.style.field {
+        let text = if s.style.field && cx.plain_fields {
+            format!("{{{{{}}}}}", s.text)
+        } else if s.style.field {
             // A field shows its value, on a tint that tells it apart from typed text.
             f.background = t.accent_soft;
             let start = job.text.chars().count();

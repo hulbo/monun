@@ -10,6 +10,15 @@ pub(crate) fn insert_tab(s: &mut Session, p: &Json, document: Option<String>) ->
     if s.doc()?.wb.protected_structure {
         return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
     }
+    // Workbooks and Markdown files apart: sheets only in a workbook, nothing more in a Markdown file.
+    if s.separate_files {
+        if s.doc()?.is_markdown() {
+            return Err(EngineError::Other(crate::docs::ONE_DOCUMENT.into()));
+        }
+        if document.is_some() {
+            return Err(EngineError::Other(crate::docs::SHEETS_ONLY.into()));
+        }
+    }
     let name = match (str_param(p, "name"), &document) {
         (Some(n), _) => n.to_string(),
         (None, None) => s.doc()?.wb.next_sheet_name(),
@@ -177,6 +186,16 @@ pub(super) fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     let i = target_sheet(s, p)?;
     let copy = bool_param(p, "copy").unwrap_or(false);
     let to = p.get("to").and_then(Json::as_u64).map(|v| v as usize).ok_or_else(|| bad("sheet.move", "missing `to`"))?;
+    // A copy is a new tab: none in a Markdown file, and no document in a workbook, with the two apart.
+    if copy && s.separate_files {
+        let d = s.doc()?;
+        if d.is_markdown() {
+            return Err(EngineError::Other(crate::docs::ONE_DOCUMENT.into()));
+        }
+        if d.wb.sheet(i).is_some_and(Sheet::is_document) {
+            return Err(EngineError::Other(crate::docs::SHEETS_ONLY.into()));
+        }
+    }
     edit(s, |cx| {
         let n = cx.wb.sheets.len();
         let Some(src) = cx.wb.sheets.get(i).cloned() else { return Err(bad("sheet.move", "no such sheet")) };

@@ -186,10 +186,14 @@ pub(super) fn insert(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         act(app, "insert.textBox", json!({}));
     }
-    let __k = big_button(ui, Icon::NewDocument, "Document", "New Document (Markdown) tab", false);
-    control_keytip(app, ui, &__k, "doc.insert");
-    if __k.clicked() {
-        app.insert_document(None);
+    // With file tabs a document is a Markdown file of its own (+ › New Markdown Document), and a
+    // workbook holds sheets only.
+    if !app.file_tabs {
+        let __k = big_button(ui, Icon::NewDocument, "Document", "New Document (Markdown) tab", false);
+        control_keytip(app, ui, &__k, "doc.insert");
+        if __k.clicked() {
+            app.insert_document(None);
+        }
     }
     let __k = big_button(ui, Icon::PageLayout, "Header &\nFooter", "Header & Footer", false);
     control_keytip(app, ui, &__k, "dialog:headerFooter");

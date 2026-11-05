@@ -182,6 +182,12 @@ fn field_values(app: &mut SheetApp, blocks: &Arc<Vec<Block>>) -> Arc<Fields> {
     values
 }
 
+/// The active file is a Markdown file of its own: no cells for a field to show, and its text alone
+/// is saved (no pictures).
+fn markdown_file(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(monun_engine::DocState::is_markdown)
+}
+
 /// The document editor's widget id.
 pub fn editor_id() -> egui::Id {
     egui::Id::unique("monun.doc_editor")
@@ -780,6 +786,12 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
             _ => true,
         })
     });
+    if pasted.is_some() && markdown_file(app) {
+        // Its .md file keeps the text only: a picture would be gone once saved.
+        let lang = app.ui.language;
+        app.toast = Some((lang.tr("A Markdown file keeps its text only, so pictures can't be put in it.").to_string(), now_ms()));
+        pasted = None;
+    }
     if let Some(image) = pasted {
         if mode == Mode::View {
             editor::caret_to_end(app, &ctx);
@@ -900,7 +912,12 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
     }
     if mode != Mode::View {
         separator(ui);
+        // A Markdown file has no cells for Cell value to show, and keeps no pictures.
+        let markdown = markdown_file(app);
         for (i, (f, label, tip)) in editor::BUTTONS.iter().enumerate() {
+            if markdown && *f == Format::Field {
+                continue;
+            }
             // Groups: headings, character styles, lists and quotes, blocks.
             if editor::GROUP_STARTS.contains(&i) {
                 ui.add_space(6.0);
@@ -931,7 +948,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
                 }
             }
         });
-        if app.services.pick_picture.is_some() {
+        if app.services.pick_picture.is_some() && !markdown {
             let picture = ui.add(
                 egui::Button::new(egui::RichText::new(lang.tr("Picture")).font(theme::ui_font(13.0)))
                     .frame_when_inactive(false)
@@ -955,7 +972,8 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1 };
+    let look =
+        preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1, plain_fields: markdown_file(app) };
     let lead = 24.0 * z;
     // Each document keeps its own place.
     let mut scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_view", key)).auto_shrink([false, false]);
@@ -1038,7 +1056,8 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let wb = app.session.active().map(|d| (d.uid, d.wb.clone()));
     let pictures = wb.as_ref().and_then(|(_, wb)| wb.active()).map_or(&[][..], |sh| sh.images.as_slice());
     let doc = wb.as_ref().map_or(0, |(uid, _)| *uid);
-    let look = preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1 };
+    let look =
+        preview::Look { z, t, lang, fields: &fields, query: &query, doc, pictures, full: chosen_view(app).1, plain_fields: markdown_file(app) };
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);
