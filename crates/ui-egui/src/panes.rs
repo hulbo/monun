@@ -59,9 +59,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         });
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
-            // A document's memos are its own; a sheet's are its cells' comments.
-            "comments" if crate::doc_view::is_active(app) => crate::memos::panel(app, ui),
-            "comments" => comments(app, ui),
+            // The file in front's memos (a sheet's: its cells' comments), then the group's others.
+            "comments" => crate::memos::panel(app, ui),
             "group" => crate::groups::panel(app, ui),
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
@@ -110,7 +109,7 @@ pub(crate) fn toggle_groups(app: &mut SheetApp) {
 }
 
 /// Lists comments and replies, links each to its cell, and runs delete/resolve/reopen/reply commands.
-fn comments(app: &mut SheetApp, ui: &mut Ui) {
+pub(crate) fn comments(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let Some(d) = app.session.active() else { return };
     let Some(sh) = d.wb.active() else { return };

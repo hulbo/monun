@@ -1919,6 +1919,8 @@ const MORE: &[(&str, &str)] = &[
     ("Right-click a paragraph in View or Side by Side to put a memo on it.", "보기·나란히 화면에서 문단을 오른쪽 클릭하면 메모를 달 수 있습니다."),
     ("Paragraph not found:", "문단을 찾을 수 없음:"),
     ("Go to the paragraph", "문단으로 가기"),
+    ("Other files of the group", "그룹의 다른 파일"),
+    ("Go there", "그곳으로 가기"),
     ("Go to This Group", "이 그룹으로 가기"),
     ("Delete Group…", "그룹 삭제…"),
     ("No files", "파일 없음"),

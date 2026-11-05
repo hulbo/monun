@@ -1,6 +1,8 @@
 //! Memos on Markdown files: a note on a paragraph, made with a right click on it in the rendered
 //! document (View, or Side by Side's right half), listed in the memo panel and marked beside the
-//! paragraph. They are 모눈's own, kept with the interface's settings ([`crate::UiState::memos`]) by
+//! paragraph. The memo panel shows the file in front's memos (a workbook's: its sheet's comments),
+//! then those of the group's other files, each file's under its name; a click on one goes there.
+//! They are 모눈's own, kept with the interface's settings ([`crate::UiState::memos`]) by
 //! the file's path, not in the .md: a work document stays as it is. A memo remembers its
 //! paragraph's line and first words, and follows the paragraph as the text around it changes; one
 //! whose paragraph is gone shows first in the panel, as lost.
@@ -156,8 +158,177 @@ enum Act {
     Cancel,
 }
 
-/// The memo panel with a Markdown file (or a workbook's document tab) in front.
+/// The memo panel: the file in front's memos (a workbook's: its sheet's comments), then the group's
+/// other files'.
 pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    if let Some(name) = app.session.active().map(|d| d.display_title()) {
+        file_header(ui, &t, &name, None, true);
+    }
+    if crate::doc_view::is_active(app) {
+        this_document(app, ui);
+    } else {
+        crate::panes::comments(app, ui);
+    }
+    group(app, ui, &t);
+}
+
+/// A file's name over its memos: its icon, its name (the file in front's in the accent colour) and
+/// how many memos it has.
+fn file_header(ui: &mut Ui, t: &Tokens, name: &str, count: Option<usize>, front: bool) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+    let icon = Rect::from_center_size(pos2(r.left() + 8.0, r.center().y), vec2(14.0, 14.0));
+    icons::paint(ui.painter(), icon, crate::file_tabs::path_icon(name), if front { t.accent } else { t.text_dim });
+    let small = theme::ui_font(11.5);
+    let count = count.map(|n| n.to_string()).unwrap_or_default();
+    let count_w = ui.painter().layout_no_wrap(count.clone(), small.clone(), t.text_dim).size().x;
+    ui.painter().text(pos2(r.right() - 2.0, r.center().y), Align2::RIGHT_CENTER, &count, small, t.text_dim);
+    let font = theme::ui_bold(12.5);
+    let shown = crate::file_tabs::fit(ui, name, &font, (r.right() - icon.right() - count_w - 14.0).max(20.0));
+    ui.painter().text(pos2(icon.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, if front { t.text } else { t.text_dim });
+    ui.add_space(2.0);
+}
+
+/// A memo of another file of the group, as the panel lists it.
+#[derive(Clone, Debug, PartialEq)]
+enum Other {
+    /// A Markdown file's memo; `line` none when its paragraph is gone.
+    Memo { id: u64, line: Option<usize>, quote: String, text: String, created: String },
+    /// A workbook's cell comment.
+    Comment { sheet: usize, cell: String, place: String, author: String, text: String },
+}
+
+/// The most memos a file of the group lists.
+const OTHERS_MAX: usize = 100;
+
+/// The group's other files with memos (the tabs other than the one in front, in tab order): each
+/// one's document uid, name and memos. SQL and text files have none.
+fn others(app: &mut SheetApp) -> Vec<(u64, String, Vec<Other>)> {
+    let active = app.session.active().map(|d| d.uid);
+    let mut uids: Vec<u64> = Vec::new();
+    for w in app.session.windows() {
+        if Some(w.doc_uid) != active && !uids.contains(&w.doc_uid) {
+            uids.push(w.doc_uid);
+        }
+    }
+    let mut out = Vec::new();
+    for uid in uids {
+        let Some(d) = app.session.documents().iter().find(|d| d.uid == uid) else { continue };
+        let name = d.display_title();
+        match d.text_kind() {
+            Some(TextKind::Markdown) => {
+                let Some(path) = d.path.clone() else { continue };
+                let text = d.wb.sheet(0).and_then(|sh| sh.document.as_ref()).map(|doc| doc.text.clone()).unwrap_or_default();
+                let items: Vec<Other> = placed(app, &path, &text)
+                    .into_iter()
+                    .map(|(m, line)| Other::Memo { id: m.id, line, quote: m.quote, text: m.text, created: m.created })
+                    .collect();
+                out.push((uid, name, items));
+            }
+            None => {
+                let mut items = Vec::new();
+                for (i, sh) in d.wb.sheets.iter().enumerate() {
+                    for (cell, c) in sh.comments.iter() {
+                        let place = format!("{}!{}", sh.name, cell.a1());
+                        items.push(Other::Comment { sheet: i, cell: cell.a1(), place, author: c.author.clone(), text: c.text.clone() });
+                    }
+                }
+                out.push((uid, name, items));
+            }
+            Some(_) => {}
+        }
+    }
+    out.retain(|(_, _, items)| !items.is_empty());
+    for (_, _, items) in &mut out {
+        items.truncate(OTHERS_MAX);
+    }
+    out
+}
+
+/// The group's other files' memos, under their names; a click on one goes there.
+fn group(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    let lang = app.ui.language;
+    let files = others(app);
+    if files.is_empty() {
+        return;
+    }
+    ui.add_space(10.0);
+    ui.separator();
+    ui.label(egui::RichText::new(lang.tr("Other files of the group")).font(theme::ui_font(12.0)).color(t.text_dim));
+    ui.add_space(4.0);
+    let mut chosen = None;
+    for (uid, name, items) in &files {
+        file_header(ui, t, name, Some(items.len()), false);
+        for item in items {
+            let (head, body, lost) = match item {
+                Other::Memo { line, quote, text, created, .. } => (format!("“{}”  {created}", plain_quote(quote)), text.clone(), line.is_none()),
+                Other::Comment { place, author, text, .. } => (format!("{place}  {author}"), text.clone(), false),
+            };
+            let resp = egui::Frame::new()
+                .fill(t.window)
+                .stroke(Stroke::new(1.0, t.ribbon_border))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let mut job = egui::text::LayoutJob::default();
+                    if lost {
+                        let lost = format!("{}  ", lang.tr("Paragraph not found:"));
+                        job.append(&lost, 0.0, egui::TextFormat::simple(theme::ui_font(11.0), t.danger));
+                    }
+                    job.append(&head, 0.0, egui::TextFormat::simple(theme::ui_font(11.0), t.text_dim));
+                    job.wrap.max_width = ui.available_width();
+                    job.wrap.max_rows = 1;
+                    ui.add(egui::Label::new(job).selectable(false));
+                    let mut text = egui::text::LayoutJob::simple(body.clone(), theme::ui_font(12.5), t.text, ui.available_width());
+                    text.wrap.max_rows = 3;
+                    ui.add(egui::Label::new(text).selectable(false));
+                })
+                .response
+                .interact(Sense::click());
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &body));
+            if resp.on_hover_text(lang.tr("Go there")).clicked() {
+                chosen = Some((*uid, item.clone()));
+            }
+            ui.add_space(4.0);
+        }
+        ui.add_space(4.0);
+    }
+    if let Some((uid, item)) = chosen {
+        go_to(app, uid, &item);
+    }
+}
+
+/// Goes to another file's memo: its tab comes to the front, at the memo's paragraph (picked) or
+/// on the comment's cell.
+fn go_to(app: &mut SheetApp, uid: u64, item: &Other) {
+    let Some(window) = app.session.doc_window(uid) else { return };
+    app.run_or_alert("window.activate", json!({"window": window}));
+    app.follow_active_window();
+    if app.session.active().map(|d| d.uid) != Some(uid) {
+        return;
+    }
+    match item {
+        Other::Memo { id, line, .. } => {
+            app.memos.picked = Some(*id);
+            // The document shows its paragraph once it has been laid out.
+            if let Some(line) = line {
+                crate::doc_view::show_line_later(app, (uid, 0), *line);
+            }
+        }
+        Other::Comment { sheet, cell, .. } => {
+            app.run_or_alert("sheet.activate", json!({"sheet": sheet}));
+            app.run_or_alert("selection.set", json!({"cell": cell}));
+            app.grid.ensure_visible = true;
+        }
+    }
+}
+
+/// The memos of the Markdown file (or a workbook's document tab) in front.
+fn this_document(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
     let path = match memo_file(app) {

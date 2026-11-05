@@ -256,3 +256,40 @@ fn a_file_of_another_group_in_the_group_panel_opens_that_group_with_it_in_front(
     assert_eq!(h.state().session.active().map(|d| d.display_title()).as_deref(), Some("a.xlsx"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_memo_panel_lists_the_groups_other_files_and_goes_to_them() {
+    let dir = folder("memo-list");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    // A comment on the workbook's B2, and a memo on the Markdown file's paragraph.
+    let book = h.state().session.windows()[0].id;
+    h.state_mut().enter_window(book);
+    h.state_mut().run("review.newComment", json!({"cell": "B2", "text": "Check this total", "author": "me"})).unwrap();
+    h.state_mut().run("selection.set", json!({"cell": "A1"})).unwrap();
+    h.state_mut().ui.memos.push(monun_ui_egui::memos::DocMemo {
+        id: 1,
+        path: path(&dir, "b.md"),
+        line: 0,
+        quote: "# b".into(),
+        text: "Rename this heading".into(),
+        created: "2026-11-05 15:00".into(),
+    });
+    let md = h.state().session.windows()[1].id;
+    h.state_mut().enter_window(md);
+    h.state_mut().run("review.showComments", json!({"on": true})).unwrap();
+    h.run_steps(4);
+    // The Markdown file in front: its memo first, then the workbook's comment under its name.
+    assert!(h.query_by_label("Rename this heading").is_some());
+    assert!(h.query_by_label("Other files of the group").is_some());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Check this total").click();
+    h.run_steps(4);
+    let d = h.state().session.active().unwrap();
+    assert_eq!(d.display_title(), "a.xlsx", "the comment's file comes to the front");
+    assert_eq!(d.selection.active.a1(), "B2", "on its cell");
+    // And back: from the workbook, the Markdown file's memo.
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Rename this heading").click();
+    h.run_steps(4);
+    assert_eq!(h.state().session.active().unwrap().display_title(), "b.md");
+    assert_eq!(h.state().memos.picked, Some(1), "with its memo picked");
+    let _ = std::fs::remove_dir_all(&dir);
+}

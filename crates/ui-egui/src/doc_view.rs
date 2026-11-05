@@ -220,6 +220,12 @@ pub(crate) fn go_to_line(app: &mut SheetApp, line: usize) {
     }
 }
 
+/// Shows line `line` of document `doc` (workbook uid, sheet) at the top of its view, once it shows:
+/// for a document just brought to the front, which has not been laid out yet.
+pub(crate) fn show_line_later(app: &mut SheetApp, doc: (u64, usize), line: usize) {
+    app.doc_view.anchor = Some((doc, line));
+}
+
 /// The document editor's widget id.
 pub fn editor_id() -> egui::Id {
     egui::Id::unique("monun.doc_editor")
