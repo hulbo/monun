@@ -13,7 +13,7 @@ use crate::theme::{self, Tokens};
 
 /// The rename field asks for focus only while it has not got it yet. Asking again on the frame it lost focus (Enter or a click elsewhere)
 /// would keep the field focused after it is closed, so the keyboard stayed stuck in the sheet name.
-fn rename_needs_focus(has_focus: bool, lost_focus: bool) -> bool {
+pub(crate) fn rename_needs_focus(has_focus: bool, lost_focus: bool) -> bool {
     !has_focus && !lost_focus
 }
 
@@ -22,13 +22,13 @@ type TabRow = (usize, String, Option<[u8; 3]>, bool, bool);
 
 /// Rows of the All Sheets navigator as `(workbook index, name)`. Hidden sheets stay out, like on the tab strip:
 /// Unhide is the way to reach them.
-fn navigator_items(sheets: &[Arc<Sheet>]) -> Vec<(String, String)> {
+pub(crate) fn navigator_items(sheets: &[Arc<Sheet>]) -> Vec<(String, String)> {
     sheets.iter().enumerate().filter(|(_, s)| s.visibility == Visibility::Visible).map(|(i, s)| (i.to_string(), s.name.clone())).collect()
 }
 
 /// Switch to sheet `i` from the tab strip or the navigator. In point mode the formula being typed keeps going on the
 /// other sheet; otherwise the edit is committed first.
-fn activate_sheet(app: &mut SheetApp, i: usize) {
+pub(crate) fn activate_sheet(app: &mut SheetApp, i: usize) {
     if app.editor.as_ref().is_some_and(|e| e.can_point()) {
         let _ = app.session.run("sheet.activate", json!({"sheet": i}));
     } else {
@@ -62,9 +62,9 @@ fn tab_drop(i: usize, steps: i64, copy: bool) -> Option<serde_json::Value> {
 /// The New sheet (+) and New document buttons and the gap before them.
 const NEW_SHEET_WIDTH: f32 = 58.0;
 /// The handle between the tabs and the horizontal scrollbar.
-const SPLIT_WIDTH: f32 = 8.0;
+pub(crate) const SPLIT_WIDTH: f32 = 8.0;
 /// The narrowest the scrollbar track gets when the handle is dragged to the right.
-const MIN_TRACK: f32 = 100.0;
+pub(crate) const MIN_TRACK: f32 = 100.0;
 
 /// The share of the tab bar (`bar`: its left edge and width) the tabs and New sheet take with
 /// the handle dragged to `x`: New sheet stays shown, and the track ending at `right` keeps
@@ -81,7 +81,7 @@ fn dragged_share(x: f32, bar: (f32, f32), right: f32) -> f32 {
 
 /// The handle at the left edge of the horizontal scrollbar: dragging it gives the sheet tabs more
 /// or less of the bar, as in Excel, for the workbook `uid`.
-fn tab_split_handle(app: &mut SheetApp, ui: &mut Ui, split: Rect, bar: (f32, f32), right: f32, uid: u64, t: &Tokens) {
+pub(crate) fn tab_split_handle(app: &mut SheetApp, ui: &mut Ui, split: Rect, bar: (f32, f32), right: f32, uid: u64, t: &Tokens) {
     app.grid.tab_split = Some(split);
     let resp = ui.interact(split, ui.scope_id().with("tab_split"), Sense::drag());
     let name = app.ui.language.tr("Split tabs");
@@ -343,7 +343,7 @@ const TEXT_RAISE: f32 = 3.0;
 
 /// The height of the field a tab is renamed in: its line and margin, a little under the interface's
 /// control height so the part of the tab the strip shows holds it with room above and below.
-const RENAME_H: f32 = 20.0;
+pub(crate) const RENAME_H: f32 = 20.0;
 
 /// Whether deleting the sheet loses something: cells, objects, notes or a document's text.
 fn has_content(sh: &Sheet) -> bool {
@@ -380,7 +380,7 @@ fn delete_tab(app: &mut SheetApp, i: usize) {
 /// The right-click menu of a sheet tab, opening upward from the pointer, with Excel's access keys
 /// (Duplicate is Monun's own, on a letter free in the menu). It is drawn before the grid, so its
 /// keys never reach the cells.
-fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
+pub(crate) fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     let Some((i, at, opened)) = app.grid.tab_menu else { return };
     let protect = if app.active_sheet_protected() { "Un&protect Sheet…" } else { "&Protect Sheet…" };
     let document = app.session.active().and_then(|d| d.wb.sheet(i)).is_some_and(|sh| sh.is_document());
@@ -402,6 +402,11 @@ fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
     ];
     if document {
         items.insert(3, Entry::item("E&xport as Markdown…", "exportMarkdown"));
+    }
+    // With file tabs a document is a Markdown file of its own (the + beside them), and a
+    // workbook holds sheets only.
+    if app.file_tabs {
+        items.retain(|e| !matches!(e.id(), "insertDocument" | "importMarkdown"));
     }
     let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
     let mut chosen = None;

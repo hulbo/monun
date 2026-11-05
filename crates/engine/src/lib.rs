@@ -373,6 +373,11 @@ impl DocState {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| self.title.clone())
     }
+    /// A Markdown file rather than a workbook: one document tab and nothing else (a `.md` file
+    /// opened, or `file.new` with `document`), saved as .md.
+    pub fn is_markdown(&self) -> bool {
+        self.wb.sheets.len() == 1 && self.wb.sheets.first().is_some_and(|sh| sh.is_document())
+    }
 }
 
 /// Engine-side preferences.
@@ -637,6 +642,16 @@ impl Session {
             }
         }
         self.add_document(DocState::new(wb, None, format!("Book{n}"), Trust::Local))
+    }
+    /// A new empty Markdown file titled `{prefix}N.md` (`Doc1.md`), one document tab, saved as
+    /// .md: what a `.md` file opened is, before it has a file.
+    pub fn new_markdown(&mut self, prefix: &str) -> usize {
+        let prefix = prefix.trim();
+        let prefix = if prefix.is_empty() { "Doc" } else { prefix };
+        let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("{prefix}{n}.md") && d.path.is_none())).unwrap_or(1);
+        let title = format!("{prefix}{n}.md");
+        let wb = docs::markdown_workbook(&title, b"");
+        self.add_document(DocState::new(wb, None, title, Trust::Local))
     }
 
     /// Journals a command, then trims the oldest entries past either cap. A recording in progress

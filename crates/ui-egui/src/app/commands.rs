@@ -319,9 +319,11 @@ impl SheetApp {
             }
             "saveAs" => {
                 let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
+                // A Markdown file is saved as one; a workbook as .xlsx.
+                let ext = if self.session.active().is_some_and(monun_engine::DocState::is_markdown) { "md" } else { "xlsx" };
                 if let Some(pick) = &self.services.pick_save {
                     if let Some(path) = pick(&suggested) {
-                        let path = if std::path::Path::new(&path).extension().is_none() { format!("{path}.xlsx") } else { path };
+                        let path = if std::path::Path::new(&path).extension().is_none() { format!("{path}.{ext}") } else { path };
                         self.run_or_alert("file.save", json!({"path": path}));
                     }
                 } else if self.services.download.is_some()

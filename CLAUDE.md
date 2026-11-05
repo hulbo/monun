@@ -43,7 +43,9 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   `target/release/monun.exe`. Close the app before building (Windows locks the exe).
 - Drive it: start with `--control 7979` (monun-cli reads the token file the app writes), then
   `monun-cli send 7979 <method> '<json>'` (`ui.screenshot`, `ui.click`, `ui.text`,
-  `engine.execute`; see `crates/ui-egui/src/control.rs`).
+  `engine.execute`; see `crates/ui-egui/src/control.rs`). It starts on the start page with no file
+  open (file tabs, `crates/ui-egui/src/file_tabs.rs`): run `file.new` first. `MONUN_NO_PREFS=1` keeps
+  a test run off the user's `ui.json` (recent files) and `prefs.json`.
 - After moving the checkout, run `cargo clean -p xtask`: xtask compiles its own path in.
 - Headless: `monun-cli eval '=SUM(1,2,3)'`,
   `monun-cli run --cmd 'cell.set={"cell":"A1","input":"1"}' --out book.xlsx`.

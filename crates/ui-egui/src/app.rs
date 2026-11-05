@@ -80,6 +80,7 @@ impl SheetApp {
             ui_window: None,
             parked: HashMap::new(),
             native_windows: false,
+            file_tabs: false,
             arrange_windows: None,
         }
     }
@@ -145,8 +146,8 @@ impl SheetApp {
         self.update_title(ctx);
         self.request_hidden_paint(ctx);
         // One window always shows a workbook, unless each workbook has a native window of its own
-        // (`doc_windows` decides what having none left means).
-        if self.session.active().is_none() && !self.native_windows {
+        // (`doc_windows` decides what having none left means) or file tabs show the start page.
+        if self.session.active().is_none() && !self.native_windows && !self.file_tabs {
             self.session.new_workbook();
         }
         self.follow_active_window();
@@ -159,7 +160,15 @@ impl SheetApp {
         if self.native_windows {
             return;
         }
-        let Some(d) = self.session.active() else { return };
+        let Some(d) = self.session.active() else {
+            // The start page: the app's own name.
+            let title = self.ui.language.tr("Monun").to_string();
+            if self.grid.last_title.as_deref() != Some(title.as_str()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+                self.grid.last_title = Some(title);
+            }
+            return;
+        };
         let title = if d.is_dirty() { self.ui.language.tr("{title} — Edited").replace("{title}", &d.display_title()) } else { d.display_title() };
         if self.grid.last_title.as_deref() != Some(title.as_str()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -214,14 +223,22 @@ impl SheetApp {
         if !self.chrome.file_tab {
             self.backstage = None;
         }
+        // With file tabs and no file open, the start page shows: no ribbon, sheet or File view.
+        let start_page = self.file_tabs && self.session.active().is_none();
+        if start_page {
+            self.backstage = None;
+        }
         // Keytips opened the File view (Alt, F): its letters keep working there.
-        if self.backstage.is_none() || self.keytips.prefix().is_some() {
+        if !start_page && (self.backstage.is_none() || self.keytips.prefix().is_some()) {
             self.ribbon_keys(&ctx);
         }
         if self.chrome.title_bar {
             ribbon::title_bar(self, ui);
         }
-        if self.backstage.is_some() {
+        if start_page {
+            crate::file_tabs::bottom_bar(self, ui);
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| crate::file_tabs::start_page(self, ui));
+        } else if self.backstage.is_some() {
             // File tab: the Backstage view replaces everything below the title bar.
             backstage::show(self, ui);
         } else {
@@ -234,7 +251,11 @@ impl SheetApp {
             if self.ui.status_bar {
                 tabs::status_bar(self, ui);
             }
-            tabs::sheet_tabs(self, ui);
+            if self.file_tabs {
+                crate::file_tabs::bottom_bar(self, ui);
+            } else {
+                tabs::sheet_tabs(self, ui);
+            }
             pivot_pane::show(self, ui);
             panes::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {

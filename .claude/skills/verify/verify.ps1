@@ -14,7 +14,7 @@ target\verify\summary.txt); the exit code is 0 when everything passed, 1 when so
 and 2 when the app phase was blocked because the user's own 모눈 is open.
 
 .EXAMPLE
-./.claude/skills/verify/verify.ps1 -Phase app -Setup 'cell.set={"cell":"A1","input":"한글 ABC 123"}'
+./.claude/skills/verify/verify.ps1 -Phase app -Setup 'file.new', 'cell.set={"cell":"A1","input":"한글 ABC 123"}'
 #>
 param(
     [ValidateSet('check', 'test', 'app')]

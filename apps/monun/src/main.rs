@@ -23,12 +23,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use monun_engine::Session;
-use monun_ui_egui::doc_windows::DocWindows;
 use monun_ui_egui::{Services, SheetApp};
 use serde_json::json;
 
-/// The app, its native window per workbook window, and (macOS) the menu bar and Finder events.
-struct App(SheetApp, DocWindows, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>, #[cfg(target_os = "macos")] fmv_macos_events::Inbox);
+/// The app in one window, every open file a tab at its bottom ([`SheetApp::file_tabs`]), and
+/// (macOS) the menu bar and Finder events.
+struct App(SheetApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>, #[cfg(target_os = "macos")] fmv_macos_events::Inbox);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -40,16 +40,15 @@ impl eframe::App for App {
         }
         #[cfg(target_os = "macos")]
         {
-            if self.2.is_none() && std::env::var_os("MONUN_NO_NATIVE_MENU").is_none() {
-                self.2 = Some(native_menu::NativeMenu::install(ctx));
+            if self.1.is_none() && std::env::var_os("MONUN_NO_NATIVE_MENU").is_none() {
+                self.1 = Some(native_menu::NativeMenu::install(ctx));
             }
-            if let Some(m) = &mut self.2 {
-                m.poll(&mut self.0, ctx, self.1.focused_viewport());
+            if let Some(m) = &mut self.1 {
+                m.poll(&mut self.0, ctx, egui::ViewportId::ROOT);
             }
-            apple_events::poll(&self.3, &mut self.0, ctx);
+            apple_events::poll(&self.2, &mut self.0, ctx);
         }
         self.0.logic(ctx);
-        self.1.logic(&mut self.0, ctx);
         if ctx.input(|input| input.viewport().close_requested()) && self.0.printing.busy() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
@@ -65,7 +64,7 @@ impl eframe::App for App {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.1.show(&mut self.0, ui);
+        self.0.ui(ui);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
@@ -351,10 +350,10 @@ fn main() -> eframe::Result<()> {
     {
         log::warn!("sample {s}: {e}");
     }
-    if session.documents().is_empty() {
-        session.new_workbook();
-    }
+    // Like Visual Studio, 모눈 starts on its start page rather than a blank workbook: every file
+    // opened or made is a tab at the bottom of its one window.
     let mut app = SheetApp::new(session, services());
+    app.file_tabs = true;
     app.watch_desktop_theme();
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;
@@ -369,7 +368,7 @@ fn main() -> eframe::Result<()> {
     }
     // Files named on the command line (a double-click on Windows and Linux) open as File › Open
     // opens them: a password-protected one asks for its password, and errors are shown, not
-    // only logged. Each replaces the untouched blank Book1, as a file opened from Finder does.
+    // only logged. Each is a tab of its own.
     for f in &files {
         app.open_path(f);
     }
@@ -385,7 +384,6 @@ fn main() -> eframe::Result<()> {
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
-    let window_builder = viewport.clone();
     // OpenGL through egui's glow renderer: on Windows it needs about 110 MB less memory than wgpu on
     // DirectX 12 and starts faster, and the exe carries no wgpu or shader compiler. Nothing in the
     // app paints with renderer-specific callbacks.
@@ -423,10 +421,8 @@ fn main() -> eframe::Result<()> {
                     Err(e) => log::error!("control channel on port {port}: {e}"),
                 }
             }
-            let windows = DocWindows::new(&mut app, window_builder, DocWindows::platform_quits_with_last_window());
             Ok(Box::new(App(
                 app,
-                windows,
                 #[cfg(target_os = "macos")]
                 None,
                 #[cfg(target_os = "macos")]

@@ -7,7 +7,7 @@ use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
+        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, prefix?} (a new Markdown file, `Doc1.md` or `{prefix}1.md`, saved as .md)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
@@ -32,6 +32,10 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
+    if bool_param(p, "document").unwrap_or(false) {
+        let i = s.new_markdown(str_param(p, "prefix").unwrap_or("Doc"));
+        return Ok(json!({"index": i, "title": s.doc()?.display_title()}));
+    }
     let i = match str_param(p, "sample") {
         Some(name) => {
             let wb = crate::sample::build_with(name, &s.prefs).ok_or_else(|| bad("file.new", format!("unknown sample `{name}`")))?;

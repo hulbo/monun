@@ -48,8 +48,18 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
+        // The start page of file tabs (no file open) has no ribbon, file or undo to offer.
+        let open = app.session.active().is_some();
         ui.horizontal_centered(|ui| {
             ui.add_space(TITLE_LEFT_PAD);
+            if !open {
+                ui.label(egui::RichText::new(app.ui.language.tr("Monun")).font(theme::ui_bold(13.0)).color(t.text));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(8.0);
+                    theme_switch(app, ui, &t);
+                });
+                return;
+            }
             super::tab_strip(app, ui);
             ui.add_space(16.0);
             // AutoSave toggle (saves after each change when the workbook has a file).
@@ -165,16 +175,8 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 if __k.clicked() {
                     app.open_dialog("comments", json!({}));
                 }
-                // Quick light/dark switch (#194); right-click offers System as well. The same
-                // choice lives in File › Display theme and the View tab.
+                theme_switch(app, ui, &t);
                 let lang = app.ui.language;
-                let theme = icon_button(ui, Icon::Appearance, t.text_dim, "Dark Mode", vec2(28.0, 26.0));
-                let dark = ui.ctx().theme() == egui::Theme::Dark;
-                theme.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, dark, lang.tr("Dark Mode")));
-                if theme.clicked() {
-                    act(app, "view.darkMode", json!({}));
-                }
-                theme.context_menu(|ui| theme_choices(app, ui));
                 // Show or hide the ribbon's commands to give the sheet more room (Excel's Ctrl+F1);
                 // the tabs stay, and clicking one shows its commands again. A document tab has no
                 // ribbon to show.
@@ -192,6 +194,19 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
     });
+}
+
+/// Quick light/dark switch (#194); right-click offers System as well. The same choice lives in
+/// File › Display theme and the View tab.
+fn theme_switch(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    let lang = app.ui.language;
+    let theme = icon_button(ui, Icon::Appearance, t.text_dim, "Dark Mode", vec2(28.0, 26.0));
+    let dark = ui.ctx().theme() == egui::Theme::Dark;
+    theme.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, dark, lang.tr("Dark Mode")));
+    if theme.clicked() {
+        act(app, "view.darkMode", json!({}));
+    }
+    theme.context_menu(|ui| theme_choices(app, ui));
 }
 
 #[cfg(test)]

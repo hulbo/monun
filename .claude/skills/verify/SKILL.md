@@ -32,10 +32,12 @@ If that is empty, work it out from the change itself: `git status --short` and `
 ## Setup commands for the app phase
 
 Each `-Setup` item is `method` or `method={json}`; the app runs them in order before the screenshot.
+The app starts on its start page with no file open, so begin with `file.new` (a workbook) or
+`file.new={"document":true}` (a Markdown file) before commands that need one.
 
 | Goal | Setup |
 |---|---|
-| Type into a cell | `cell.set={"cell":"A1","input":"한글 ABC 123"}` |
+| Type into a cell | `file.new`, `cell.set={"cell":"A1","input":"한글 ABC 123"}` |
 | Select, then act on the selection | `selection.set={"cell":"B2"}`, `home.bold` |
 | A formula | `cell.set={"cell":"A2","input":"=NUMBERSTRING(1234,1)"}` |
 | Open a dialog | `ui.dialog={"name":"…"}` |

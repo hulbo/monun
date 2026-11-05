@@ -20,6 +20,7 @@ pub mod doc_view;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_windows;
 pub mod editor;
+pub mod file_tabs;
 mod floating_pictures;
 pub mod fonts;
 pub mod formula_bar;
@@ -339,6 +340,11 @@ pub struct SheetApp {
     /// tests, embedding hosts) one window shows the active workbook window, and its close button
     /// quits.
     pub native_windows: bool,
+    /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
+    /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
+    /// them, and with no file open a start page shows instead of a blank workbook. The desktop app
+    /// turns it on; without it (web, tests, embedding hosts) the sheet tabs show as in Excel.
+    pub file_tabs: bool,
     /// View › Arrange All's layout and windows, waiting for the native windows to move.
     pub arrange_windows: Option<(String, Vec<u64>)>,
 }
