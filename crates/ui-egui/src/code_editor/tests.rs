@@ -65,7 +65,7 @@ fn hostile_input_never_panics_and_spans_stay_on_char_boundaries() {
         "____",
     ];
     for text in inputs {
-        for lang in [Lang::Python, Lang::Latex, Lang::Plain] {
+        for lang in [Lang::Python, Lang::Latex, Lang::Sql, Lang::Plain] {
             let mut last = 0;
             for (r, _) in highlight(text, lang) {
                 assert!(r.start >= last && r.start <= r.end && r.end <= text.len(), "{text:?} {lang:?} {r:?}");

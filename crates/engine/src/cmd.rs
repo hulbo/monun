@@ -102,7 +102,7 @@ pub fn has_doc(s: &Session) -> std::result::Result<(), String> {
 pub fn documents_allowed(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     match s.active() {
-        Some(d) if s.separate_files && d.is_markdown() => Err(crate::docs::ONE_DOCUMENT.into()),
+        Some(d) if s.separate_files && d.is_text_file() => Err(crate::docs::ONE_DOCUMENT.into()),
         _ if s.separate_files => Err(crate::docs::SHEETS_ONLY.into()),
         _ => Ok(()),
     }
@@ -111,7 +111,7 @@ pub fn documents_allowed(s: &Session) -> std::result::Result<(), String> {
 /// files apart ([`Session::separate_files`]).
 pub fn sheets_allowed(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
-    if s.separate_files && s.active().is_some_and(crate::DocState::is_markdown) { Err(crate::docs::ONE_DOCUMENT.into()) } else { Ok(()) }
+    if s.separate_files && s.active().is_some_and(crate::DocState::is_text_file) { Err(crate::docs::ONE_DOCUMENT.into()) } else { Ok(()) }
 }
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;

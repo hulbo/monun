@@ -152,6 +152,17 @@ pub struct Document {
     /// (relative to the file) and the picture of [`Sheet::images`] that shows it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<(String, u32)>,
+    /// A text file's (.sql, .txt) encoding and line breaks as it was read, so it is written back
+    /// the same way; `None` for a document tab, a Markdown file and a new file (UTF-8, `\n`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<TextFile>,
+}
+
+/// How a text file was written: its encoding and whether its lines end in `\r\n`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextFile {
+    pub encoding: crate::TextEncoding,
+    pub crlf: bool,
 }
 
 /// How a document tab shows: its text, its text beside the document, or the document.

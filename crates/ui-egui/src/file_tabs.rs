@@ -7,6 +7,7 @@
 //! `window.close`, which asks about unsaved changes when it is the workbook's last window.
 
 use egui::{Align2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use monun_engine::docs::TextKind;
 use serde_json::json;
 
 use crate::SheetApp;
@@ -30,7 +31,8 @@ struct FileTab {
     window: u64,
     title: String,
     path: Option<String>,
-    markdown: bool,
+    /// What the file holds: `None` for a workbook.
+    kind: Option<TextKind>,
     dirty: bool,
     active: bool,
 }
@@ -95,7 +97,7 @@ fn file_tabs(app: &SheetApp) -> Vec<FileTab> {
                 window: w.id,
                 title: app.session.window_title(w.id)?,
                 path: d.path.clone(),
-                markdown: d.is_markdown(),
+                kind: d.text_kind(),
                 dirty: d.is_dirty(),
                 active: active == Some(w.id),
             })
@@ -134,7 +136,7 @@ pub fn bottom_bar(app: &mut SheetApp, ui: &mut Ui) {
             let (bar_left, bar_width) = (ui.cursor().left(), ui.available_width());
             let tabs = file_tabs(app);
             // A workbook's sheets and scrollbar follow the tabs; a Markdown file has neither.
-            let workbook = app.session.active().filter(|d| !d.is_markdown()).map(|d| d.uid);
+            let workbook = app.session.active().filter(|d| !d.is_text_file()).map(|d| d.uid);
             let grid = workbook.is_some() && !crate::doc_view::is_active(app);
             let sheet_w = if workbook.is_some() { sheet_button_width(app, ui) + 14.0 } else { 0.0 };
             let fixed = BUTTONS_W + sheet_w;
@@ -293,7 +295,7 @@ fn file_tab(app: &SheetApp, ui: &mut Ui, tab: &FileTab, reveal: bool, t: &Tokens
     let mid = r.center().y - 1.0;
     let icon = Rect::from_center_size(pos2(r.left() + 9.0 + 8.0, mid), vec2(15.0, 15.0));
     let ink = if tab.active { t.text } else { t.text_dim };
-    icons::paint(ui.painter(), icon, if tab.markdown { Icon::Document } else { Icon::Sheet }, if tab.active { t.accent } else { t.text_dim });
+    icons::paint(ui.painter(), icon, file_icon(tab.kind), if tab.active { t.accent } else { t.text_dim });
     ui.painter().text(pos2(icon.right() + 6.0, mid), Align2::LEFT_CENTER, &name, font, ink);
     // The close button, or the unsaved dot in its place.
     let x = Rect::from_center_size(pos2(r.right() - 6.0 - 9.0, mid), vec2(18.0, 18.0));
@@ -390,7 +392,16 @@ fn open_files_list(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], t: &Tokens
     }
 }
 
-/// New file (+): a new workbook or Markdown file, or Open….
+/// A file's icon: a sheet for a workbook, a page for Markdown and plain text, a code window for SQL.
+fn file_icon(kind: Option<TextKind>) -> Icon {
+    match kind {
+        None => Icon::Sheet,
+        Some(TextKind::Sql) => Icon::Script,
+        Some(TextKind::Markdown | TextKind::Plain) => Icon::Document,
+    }
+}
+
+/// New file (+): a new workbook, Markdown, SQL or text file, or Open….
 fn new_file_menu(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     let lang = app.ui.language;
     let button = crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, lang.tr("New file"), vec2(26.0, 26.0));
@@ -402,6 +413,12 @@ fn new_file_menu(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         }
         if ui.button(lang.tr("New Markdown Document")).clicked() {
             new_markdown(app);
+        }
+        if ui.button(lang.tr("New SQL File")).clicked() {
+            new_text(app, TextKind::Sql);
+        }
+        if ui.button(lang.tr("New Text File")).clicked() {
+            new_text(app, TextKind::Plain);
         }
         ui.separator();
         if ui.button(lang.tr("Open…")).clicked() {
@@ -417,6 +434,13 @@ fn new_workbook(app: &mut SheetApp) {
 fn new_markdown(app: &mut SheetApp) {
     let prefix = app.ui.language.tr("Doc").to_string();
     app.run_or_alert("file.new", json!({"document": true, "prefix": prefix}));
+}
+
+/// A new SQL or plain text file, `Query1.sql` or `Text1.txt` in the interface's language.
+fn new_text(app: &mut SheetApp, kind: TextKind) {
+    let (prefix, name) = if kind == TextKind::Sql { ("Query", "sql") } else { ("Text", "text") };
+    let prefix = app.ui.language.tr(prefix).to_string();
+    app.run_or_alert("file.new", json!({"document": true, "kind": name, "prefix": prefix}));
 }
 
 /// The All Sheets button's width: its icon, the active sheet's name and the arrow.
@@ -502,8 +526,8 @@ fn rename_field(app: &mut SheetApp, ui: &mut Ui, i: usize, name: &str) {
     }
 }
 
-/// What shows while no file is open: New workbook, New Markdown document, Open… and the recent
-/// files. Ctrl+N and Ctrl+O work here too (no sheet takes the keys).
+/// What shows while no file is open: New workbook, Markdown document, SQL or text file, Open…
+/// and the recent files. Ctrl+N and Ctrl+O work here too (no sheet takes the keys).
 pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
@@ -540,6 +564,12 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     if start_button(ui, Icon::Document, lang.tr("New Markdown Document"), &t).clicked() {
                         new_markdown(app);
+                    }
+                    if start_button(ui, Icon::Script, lang.tr("New SQL File"), &t).clicked() {
+                        new_text(app, TextKind::Sql);
+                    }
+                    if start_button(ui, Icon::Document, lang.tr("New Text File"), &t).clicked() {
+                        new_text(app, TextKind::Plain);
                     }
                     if start_button(ui, Icon::Folder, lang.tr("Open…"), &t).clicked() {
                         app.run_or_alert("file.open", json!({}));
@@ -590,15 +620,18 @@ fn recent_row(ui: &mut Ui, path: &str, width: f32, t: &Tokens) -> egui::Response
     let p = std::path::Path::new(path);
     let name = p.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
     let folder = p.parent().and_then(std::path::Path::to_str).unwrap_or_default().to_string();
-    let markdown =
-        p.extension().and_then(std::ffi::OsStr::to_str).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"));
+    // A workbook, or a text file of a kind by its name.
+    let kind = match monun_engine::io::FileKind::from_path(path) {
+        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text) => Some(TextKind::of_name(path)),
+        _ => None,
+    };
     let (r, resp) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
     if resp.hovered() {
         ui.painter().rect_filled(r, 4.0, t.hover);
     }
     let i = Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0));
-    icons::paint(ui.painter(), i, if markdown { Icon::Document } else { Icon::Sheet }, t.text_dim);
+    icons::paint(ui.painter(), i, file_icon(kind), t.text_dim);
     let font = theme::ui_font(13.0);
     let name_shown = fit(ui, &name, &font, width - 48.0);
     ui.painter().text(pos2(i.right() + 12.0, r.top() + 13.0), Align2::LEFT_CENTER, name_shown, font, t.text);

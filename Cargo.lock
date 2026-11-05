@@ -2851,6 +2851,7 @@ dependencies = [
 name = "monun-engine"
 version = "0.13.0"
 dependencies = [
+ "encoding_rs",
  "image",
  "log",
  "monun-calc",

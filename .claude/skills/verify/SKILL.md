@@ -43,6 +43,7 @@ The app starts on its start page with no file open, so begin with `file.new` (a 
 | Open a dialog | `ui.dialog={"name":"…"}` |
 | Click or type like the user | `ui.click={"x":120,"y":40}`, `ui.text={"text":"abc"}`, `ui.key={"key":"Enter"}` |
 | Switch to the Korean interface | `app.language.set={"language":"ko"}` |
+| A SQL or plain text file | `file.new={"document":true,"kind":"sql"}` (or `"text"`), `doc.setText={"text":"SELECT 1"}`, or `file.open={"path":"…\\x.sql"}` |
 
 To find a command or its parameters, run the app phase with `-KeepOpen`, then
 `target\release\monun-cli.exe send 7979 engine.commands` (all commands with their parameters) or

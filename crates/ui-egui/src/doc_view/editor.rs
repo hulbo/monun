@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{Color32, FontFamily, FontId, Ui};
+use monun_engine::docs::TextKind;
 
 use super::editor_id;
 use crate::SheetApp;
 use crate::clock::now_ms;
+use crate::code_editor::{self, Lang};
 use crate::theme::{self, Tokens};
 
 /// An edit of the formatting buttons and shortcuts.
@@ -129,11 +131,12 @@ const KEEP_LAID: usize = 4;
 /// How many of a workbook's long documents are laid out ahead (see [`super::lay_out_ahead`]).
 pub(super) const AHEAD_DOCS: usize = 2;
 
-/// What an editor layout was made for: the document, the width it wraps at, the font size and
-/// the theme.
+/// What an editor layout was made for: the document, what its text is, the width it wraps at,
+/// the font size and the theme.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Look {
     doc: (u64, usize),
+    kind: TextKind,
     wrap: u32,
     size: u32,
     dark: bool,
@@ -428,28 +431,223 @@ fn font_at(z: f32) -> FontId {
     FontId::new(14.0 * z, FontFamily::Name(theme::MONO.into()))
 }
 
-/// The editor's layout job of `text`: its Markdown marks coloured and `query`'s matches tinted.
-fn job_of(text: &str, font: &FontId, colors: &Colors, wrap: f32, query: &str) -> LayoutJob {
-    let mut job = markdown_job(text, font, colors, wrap);
+/// The editor's layout job of `text`: its Markdown marks or SQL coloured (plain text as it is) and
+/// `query`'s matches tinted. SQL and plain text lines are all as tall (see [`even_rows`]; `wide` is
+/// [`Wide::of`]'s).
+fn job_of(text: &str, (kind, wide): (TextKind, Wide), font: &FontId, colors: &Colors, wrap: f32, query: &str) -> LayoutJob {
+    let mut job = match kind {
+        TextKind::Markdown => markdown_job(text, font, colors, wrap),
+        TextKind::Sql => code_editor::layout_job(text, Lang::Sql, font, colors.text, &colors.syntax, wrap),
+        TextKind::Plain => code_editor::layout_job(text, Lang::Plain, font, colors.text, &colors.syntax, wrap),
+    };
+    if kind != TextKind::Markdown {
+        even_rows(&mut job, code_line_height(font), wide);
+    }
     tint(&mut job, &super::find_all(text, query), super::preview::FOUND);
     job
 }
 
-/// Lays out ahead, for about `budget` ms, the editor's paragraphs of document `doc`'s `text` at
-/// zoom `z`, wrapping at `wrap`. Returns whether they are all laid out.
+/// SQL and plain text lines' height, in font sizes.
+const CODE_LINE_HEIGHT: f32 = 1.45;
+
+/// The height of a SQL or plain text line in `font`.
+fn code_line_height(font: &FontId) -> f32 {
+    (font.size * CODE_LINE_HEIGHT).round()
+}
+
+/// How egui lays out Hangul in code: it draws it in a fallback face on the code's baseline, moving
+/// the section that holds it down by `above` and making its row `grow` taller.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Wide {
+    above: f32,
+    grow: f32,
+}
+
+impl Wide {
+    /// Measured in `font` at the code's line height; nothing for Markdown, which isn't evened.
+    fn of(ctx: &egui::Context, kind: TextKind, font: &FontId) -> Wide {
+        // Without a face that has Hangul there is nothing to even out (and nothing to lay it in).
+        if kind == TextKind::Markdown || !ctx.fonts_mut(|f| f.has_glyph(font, '가')) {
+            return Wide::default();
+        }
+        let format =
+            TextFormat { line_height: Some(code_line_height(font)), valign: egui::Align::TOP, ..TextFormat::simple(font.clone(), Color32::WHITE) };
+        let lay = |s: &str| ctx.fonts_mut(|f| f.layout_job(LayoutJob::single_section(s.to_owned(), format.clone())));
+        let (latin, hangul) = (lay("a"), lay("가"));
+        let y = |g: &egui::Galley| g.rows.first().and_then(|r| r.glyphs.first()).map_or(0.0, |glyph| glyph.pos.y);
+        Wide { above: (y(&hangul) - y(&latin)).max(0.0), grow: (hangul.size().y - latin.size().y).max(0.0) }
+    }
+}
+
+/// Whether a character is drawn in the wide (CJK) fallback face: Hangul, kana, CJK ideographs and
+/// full-width forms.
+fn is_wide(c: char) -> bool {
+    matches!(c as u32, 0x1100..=0x11FF | 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF)
+}
+
+/// Gives every line of a code layout the same `height` and the same baseline, as code editors do,
+/// though egui moves Hangul down and grows its row (see [`Wide`]). The sections are cut into runs
+/// of wide characters and of the rest, within a line. The rest is `height` tall. A run of Hangul
+/// beside other characters is laid out `2 × above` shorter at the top of its row, so that once
+/// moved down and grown it shares their baseline and row; a line of Hangul alone, `grow` shorter.
+fn even_rows(job: &mut LayoutJob, height: f32, wide: Wide) {
+    use egui::text::{ByteIndex, LayoutSection};
+    let sections = std::mem::take(&mut job.sections);
+    // Where each line ends (past its line break), and whether it has anything but wide characters.
+    let mut lines = Vec::new();
+    let mut end = 0;
+    for line in job.text.split_inclusive('\n') {
+        end += line.len();
+        lines.push((end, line.trim_end_matches(['\n', '\r']).chars().any(|c| !is_wide(c))));
+    }
+    let beside = (height - 2.0 * wide.above).max(1.0);
+    let alone = (height - wide.grow).max(1.0);
+    let mut out = Vec::with_capacity(sections.len() + lines.len());
+    let mut at_line = 0;
+    for s in sections {
+        let (start, end) = (s.byte_range.start.0, s.byte_range.end.0);
+        // The section's runs: (start, end, wide).
+        let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+        let mut run: Option<(usize, bool)> = None;
+        for (i, c) in job.text.get(start..end).unwrap_or_default().char_indices() {
+            let (at, w) = (start + i, is_wide(c));
+            let line_starts = i > 0 && job.text.as_bytes().get(at - 1) == Some(&b'\n');
+            match run {
+                Some((from, was)) if was != w || line_starts => {
+                    runs.push((from, at, was));
+                    run = Some((at, w));
+                }
+                Some(_) => {}
+                None => run = Some((at, w)),
+            }
+        }
+        let (from, was) = run.unwrap_or((start, false));
+        runs.push((from, end, was));
+        for (a, b, w) in runs {
+            while lines.get(at_line).is_some_and(|(line_end, _)| *line_end <= a) {
+                at_line += 1;
+            }
+            let others = lines.get(at_line).is_none_or(|(_, others)| *others);
+            let mut format = s.format.clone();
+            format.line_height = Some(match (w, others) {
+                (false, _) => height,
+                (true, true) => beside,
+                (true, false) => alone,
+            });
+            if w && others {
+                format.valign = egui::Align::TOP;
+            }
+            let leading_space = if a == start { s.leading_space } else { 0.0 };
+            out.push(LayoutSection { byte_range: ByteIndex(a)..ByteIndex(b), leading_space, format });
+        }
+    }
+    job.sections = out;
+}
+
+/// Lays out ahead, for about `budget` ms, the editor's paragraphs of document `doc`'s `text` (of
+/// `kind`) at zoom `z`, wrapping at `wrap`. Returns whether they are all laid out.
 pub(super) fn lay_out_ahead(
     layouts: &mut Layouts,
     ctx: &egui::Context,
     doc: (u64, usize),
     text: &str,
-    (z, wrap, query): (f32, f32, &str),
+    (z, wrap, query, kind): (f32, f32, &str, TextKind),
     t: &Tokens,
     budget: f64,
 ) -> bool {
     let font = font_at(z);
     let colors = Colors::of(t);
-    let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
-    layouts.ahead(ctx, look, query, text, || job_of(text, &font, &colors, wrap, query), budget)
+    let look = Look { doc, kind, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+    let code = (kind, Wide::of(ctx, kind, &font));
+    layouts.ahead(ctx, look, query, text, || job_of(text, code, &font, &colors, wrap, query), budget)
+}
+
+/// The room left of the editor's text: its margin, and for SQL and plain text the line numbers'
+/// column (as wide as the most digits the text's lines need, at least three).
+fn text_margin(ui: &Ui, kind: TextKind, text: &str, font: &FontId) -> f32 {
+    if kind == TextKind::Markdown {
+        return MARGIN;
+    }
+    let lines = text.bytes().filter(|&b| b == b'\n').count() + 1;
+    let digits = lines.to_string().len().max(3) as f32;
+    let digit = ui.painter().layout_no_wrap("0".to_owned(), font.clone(), Color32::WHITE).size().x;
+    NUMBERS_LEFT + digits * digit + NUMBERS_GAP
+}
+
+/// The editor's margin around its text.
+const MARGIN: f32 = 14.0;
+/// Room left of the line numbers.
+const NUMBERS_LEFT: f32 = 10.0;
+/// Room between the line numbers and the text.
+const NUMBERS_GAP: f32 = 18.0;
+
+/// Paints the line numbers of the rows in view, right-aligned left of the text, the caret's line
+/// brighter.
+fn line_numbers(ui: &Ui, out: &egui::text_edit::TextEditOutput, font: &FontId, t: &Tokens, focused: bool) {
+    let clip = ui.clip_rect();
+    let caret_y = out.cursor_range.filter(|_| focused).map(|r| out.galley.pos_from_cursor(r.primary).center().y);
+    // The first row of each line in view: its number and its middle.
+    let (mut shown, mut caret_line) = (Vec::new(), None);
+    let (mut line, mut starts) = (0usize, true);
+    for row in &out.galley.rows {
+        let rect = row.rect();
+        if starts {
+            line += 1;
+        }
+        if caret_y.is_some_and(|y| y >= rect.top() && y < rect.bottom()) {
+            caret_line = Some(line);
+        }
+        let (top, bottom) = (out.galley_pos.y + rect.top(), out.galley_pos.y + rect.bottom());
+        if top > clip.bottom() {
+            break;
+        }
+        if starts && bottom >= clip.top() {
+            shown.push((line, (top + bottom) / 2.0));
+        }
+        starts = row.ends_with_newline;
+    }
+    let right = out.galley_pos.x - NUMBERS_GAP + 4.0;
+    for (n, y) in shown {
+        let ink = if caret_line == Some(n) { t.text } else { t.text_dim };
+        ui.painter().text(egui::pos2(right, y), egui::Align2::RIGHT_CENTER, n.to_string(), font.clone(), ink);
+    }
+}
+
+/// After Enter at char `caret` (just past the new line break) in SQL or plain text: the new line
+/// starts as indented as the one above. Returns the caret.
+pub fn keep_indent(text: &mut String, caret: usize) -> Option<usize> {
+    let b = byte_index(text, caret);
+    let above = text.get(..b)?.strip_suffix('\n')?;
+    let start = above.rfind('\n').map_or(0, |i| i + 1);
+    let indent: String = above.get(start..)?.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+    if indent.is_empty() {
+        return None;
+    }
+    text.insert_str(b, &indent);
+    Some(caret + indent.chars().count())
+}
+
+/// Tab or Shift+Tab in SQL or plain text, while the editor has the keyboard: indents or dedents
+/// the lines selected, or puts four spaces at the caret, as code editors do. Returns whether the
+/// text changed.
+fn indent_keys(ctx: &egui::Context, text: &mut String) -> bool {
+    let tab = ctx.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab) {
+            Some(true)
+        } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
+            Some(false)
+        } else {
+            None
+        }
+    });
+    let Some(dedent) = tab else { return false };
+    let mut state = egui::TextEdit::load_state(ctx, editor_id()).unwrap_or_default();
+    let count = text.chars().count();
+    let sel = state.cursor.char_range().map_or((count, count), |r| (r.secondary.index.into(), r.primary.index.into()));
+    let e = code_editor::indent(text, sel, dedent);
+    state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(e.anchor), CCursor::new(e.caret))));
+    state.store(ctx, editor_id());
+    true
 }
 
 /// How long a frame lays out a shown document's paragraphs while its first screen stands in
@@ -461,6 +659,7 @@ const FIRST_SHOW_MS: f64 = 30.0;
 /// Typing waits for the editor.
 fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) {
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let kind = super::text_kind(app);
     let (draft, layouts) = (&app.doc_view.draft, &mut app.doc_view.layouts);
     let Some(dr) = draft.as_ref() else { return };
     let font = font_at(z);
@@ -474,17 +673,18 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
     let start = monun_markdown::line_start(&dr.text, line);
     let end = dr.text.get(start..).and_then(|s| s.match_indices('\n').nth(rows * 2)).map_or(dr.text.len(), |(i, _)| start + i);
     let mut head = dr.text.get(start..end).unwrap_or_default().to_owned();
+    let left = text_margin(ui, kind, &dr.text, &font);
+    let code = (kind, Wide::of(ui.ctx(), kind, &font));
     let mut wrap_at = None;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         wrap_at = Some(wrap);
-        ui.fonts_mut(|f| f.layout_job(job_of(buf.as_str(), &font, &colors, wrap, &query)))
+        ui.fonts_mut(|f| f.layout_job(job_of(buf.as_str(), code, &font, &colors, wrap, &query)))
     };
     egui::ScrollArea::vertical().id_salt("monun.doc_editor_first_screen").auto_shrink([false, false]).show(ui, |ui| {
         egui::TextEdit::multiline(&mut head)
             .id(editor_id().with("first_screen"))
             .font(font.clone())
-            .frame(egui::Frame::NONE.inner_margin(14))
-            .margin(egui::Margin::same(14))
+            .frame(egui::Frame::NONE.inner_margin(margin(left)))
             .desired_width(f32::INFINITY)
             .desired_rows(rows)
             .interactive(false)
@@ -496,8 +696,14 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
         *w = Some(wrap);
     }
     let ctx = ui.ctx().clone();
-    lay_out_ahead(layouts, &ctx, (dr.uid, dr.sheet), &dr.text, (z, wrap, &query), t, FIRST_SHOW_MS);
+    lay_out_ahead(layouts, &ctx, (dr.uid, dr.sheet), &dr.text, (z, wrap, &query, kind), t, FIRST_SHOW_MS);
     ctx.request_repaint();
+}
+
+/// The editor's margins: `left` of the text, the usual elsewhere.
+fn margin(left: f32) -> egui::Margin {
+    let side = |v: f32| v.round().clamp(0.0, 127.0) as i8;
+    egui::Margin { left: side(left), right: side(MARGIN), top: side(MARGIN), bottom: side(MARGIN) }
 }
 
 /// The editor, filling `ui`, in `mode` (Edit or Side by Side). Returns the first line in view.
@@ -512,6 +718,7 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     let goto = app.doc_view.goto_line.take();
     let select = app.doc_view.select.take();
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+    let kind = super::text_kind(app);
     let ctx = ui.ctx().clone();
     if app.doc_view.focus_editor && !ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) {
         app.doc_view.focus_editor = false;
@@ -519,6 +726,10 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     }
     let dr = app.doc_view.draft.as_mut()?;
     let font = font_at(z);
+    let focused = ctx.memory(|m| m.has_focus(editor_id()));
+    if kind != TextKind::Markdown && focused && indent_keys(&ctx, &mut dr.text) {
+        dr.changed_at = Some(now_ms());
+    }
     // A line to go to (the outline, a double-click) or a found match to select.
     let goto = goto.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line))).map(|at| (at, at)).or(select);
     if let Some((a, b)) = goto {
@@ -531,28 +742,33 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     // The line to keep at the top after a zoom (a line to go to wins).
     let anchor = app.doc_view.anchor.take_if(|(d, _)| *d == doc).map(|(_, line)| line).filter(|_| goto.is_none());
     let anchor_at = anchor.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line)));
+    let code = (kind, Wide::of(&ctx, kind, &font));
     let layouts = &mut app.doc_view.layouts;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let text = buf.as_str();
         if let Some(w) = layouts.wraps.get_mut(slot(mode)) {
             *w = Some(wrap);
         }
-        let look = Look { doc, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
-        layouts.layout(ui.ctx(), look, &query, text, || job_of(text, &font, &colors, wrap, &query))
+        let look = Look { doc, kind, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+        layouts.layout(ui.ctx(), look, &query, text, || job_of(text, code, &font, &colors, wrap, &query))
     };
+    let left = text_margin(ui, kind, &dr.text, &font);
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
     // Each document keeps its own place in its text.
     let scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_editor_scroll", doc)).auto_shrink([false, false]).show(ui, |ui| {
         let out = egui::TextEdit::multiline(&mut dr.text)
             .id(editor_id())
             .font(font.clone())
-            .frame(egui::Frame::NONE.inner_margin(14))
-            .margin(egui::Margin::same(14))
+            // The frame's margin is the text's (egui leaves `margin` aside once a frame is set).
+            .frame(egui::Frame::NONE.inner_margin(margin(left)))
             .desired_width(f32::INFINITY)
             .desired_rows(rows)
             .lock_focus(true)
             .layouter(&mut layouter)
             .show(ui);
+        if kind != TextKind::Markdown {
+            line_numbers(ui, &out, &font, t, focused);
+        }
         if let Some((at, _)) = goto {
             let r = out.galley.pos_from_cursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
             ui.scroll_to_rect(r.expand(40.0), Some(egui::Align::Center));
@@ -573,9 +789,11 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none());
     if out.response.changed() {
         dr.changed_at = Some(now_ms());
+        let carried =
+            |text: &mut String, caret: usize| if kind == TextKind::Markdown { continue_list(text, caret) } else { keep_indent(text, caret) };
         if enter
             && let Some(range) = out.cursor_range
-            && let Some(caret) = continue_list(&mut dr.text, range.primary.index.into())
+            && let Some(caret) = carried(&mut dr.text, range.primary.index.into())
         {
             let mut state = out.state.clone();
             state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(caret))));
@@ -618,8 +836,9 @@ pub fn tint(job: &mut LayoutJob, ranges: &[std::ops::Range<usize>], color: Color
     job.sections = out;
 }
 
-/// The colours of the editor's Markdown marks.
+/// The colours of the editor's Markdown marks, and of SQL.
 pub struct Colors {
+    syntax: theme::Syntax,
     text: Color32,
     heading: Color32,
     mark: Color32,
@@ -632,6 +851,7 @@ pub struct Colors {
 impl Colors {
     fn of(t: &Tokens) -> Colors {
         Colors {
+            syntax: t.syntax,
             text: t.text,
             heading: t.syntax.keyword,
             mark: t.syntax.number,
@@ -979,8 +1199,51 @@ mod tests {
     }
 
     #[test]
+    fn code_lines_are_all_as_tall_with_hangul_or_without() {
+        // A comment with Hangul, a line of Hangul alone, an empty line and a plain one.
+        let text = "SELECT 1 /* 주석\n끝맺음\n\nend */";
+        let font = FontId::monospace(14.0);
+        let mut job = code_editor::layout_job(text, Lang::Sql, &font, Color32::BLACK, &Tokens::light().syntax, 100.0);
+        even_rows(&mut job, 20.0, Wide { above: 3.0, grow: 4.0 });
+        assert_eq!(job.text, text);
+        let mut at = 0;
+        let mut seen = Vec::new();
+        for s in &job.sections {
+            let (a, b) = (s.byte_range.start.0, s.byte_range.end.0);
+            assert_eq!(a, at, "the sections cover the text in order");
+            at = b;
+            let piece = &text[a..b];
+            assert!(!piece.trim_end_matches('\n').contains('\n'), "{piece:?}: one line each");
+            let hangul = piece.chars().any(is_wide);
+            assert!(!hangul || piece.chars().all(is_wide), "{piece:?}: Hangul in runs of its own");
+            seen.push((piece.trim_end_matches('\n'), s.format.line_height, s.format.valign));
+        }
+        assert_eq!(at, text.len());
+        let top = egui::Align::TOP;
+        let bottom = egui::Align::BOTTOM;
+        assert!(seen.contains(&("SELECT", Some(20.0), bottom)));
+        assert!(seen.contains(&("주석", Some(14.0), top)), "beside other characters: 2 × above shorter, at the top: {seen:?}");
+        assert!(seen.contains(&("끝맺음", Some(16.0), bottom)), "alone: grow shorter: {seen:?}");
+        assert!(seen.iter().filter(|(p, ..)| !p.chars().any(is_wide)).all(|(_, h, _)| *h == Some(20.0)));
+    }
+
+    #[test]
+    fn enter_in_code_keeps_the_indentation() {
+        let mut t = "SELECT a\n    FROM 표\n".to_owned();
+        assert_eq!(keep_indent(&mut t, 20), Some(24));
+        assert_eq!(t, "SELECT a\n    FROM 표\n    ");
+        let mut t = "\tx\n".to_owned();
+        assert_eq!(keep_indent(&mut t, 3), Some(4));
+        assert_eq!(t, "\tx\n\t");
+        let mut t = "x\n".to_owned();
+        assert_eq!(keep_indent(&mut t, 2), None);
+        assert_eq!(keep_indent(&mut "x".to_owned(), 1), None, "not after a line break");
+    }
+
+    #[test]
     fn the_layout_covers_every_byte() {
         let c = Colors {
+            syntax: Tokens::light().syntax,
             text: Color32::BLACK,
             heading: Color32::RED,
             mark: Color32::BLUE,
@@ -993,6 +1256,9 @@ mod tests {
         for text in ["", "# 제목\n- [ ] 할 일 `x` [a](#b) {{구매목록!D1}} **굵게**\n```\ncode\n```\n> 인용", "[unclosed `tick {{"] {
             let job = markdown_job(text, &font, &c, 100.0);
             assert_eq!(job.text, text);
+            for kind in [TextKind::Markdown, TextKind::Sql, TextKind::Plain] {
+                assert_eq!(job_of(text, (kind, Wide { above: 3.0, grow: 4.0 }), &font, &c, 100.0, "x").text, text, "{kind:?}");
+            }
         }
     }
 }
@@ -1109,8 +1375,8 @@ mod paragraph_tests {
             let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
             let text = long_text(2000);
             let doc = (7, 1);
-            let job = || job_of(&text, &font, &colors, 500.0, "");
-            let look = Look { doc, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
+            let job = || job_of(&text, (TextKind::Markdown, Wide::default()), &font, &colors, 500.0, "");
+            let look = Look { doc, kind: TextKind::Markdown, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
             let mut layouts = Layouts::default();
             assert!(!layouts.ready(doc, &text, 1.0, false));
             let mut slices = 1;
@@ -1130,7 +1396,9 @@ mod paragraph_tests {
             assert_eq!(kept, laid, "every paragraph laid out ahead is used as it is");
             // A short document is ready at once and keeps no paragraphs.
             assert!(layouts.ready((7, 2), "# 짧은 문서\n", 1.0, false));
-            layouts.layout(ui.ctx(), Look { doc: (7, 2), ..look }, "", "# 짧은 문서\n", || job_of("# 짧은 문서\n", &font, &colors, 500.0, ""));
+            layouts.layout(ui.ctx(), Look { doc: (7, 2), ..look }, "", "# 짧은 문서\n", || {
+                job_of("# 짧은 문서\n", (TextKind::Markdown, Wide::default()), &font, &colors, 500.0, "")
+            });
             assert_eq!(layouts.docs.len(), 1);
         });
     }

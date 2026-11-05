@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use monun_core::{CellRef, MAX_ROWS, Value};
-use monun_model::{CellStore, DefinedName, Document, Sheet, Workbook};
+use monun_model::{CellStore, DefinedName, Document, Sheet, TextEncoding, TextFile, Workbook};
 
 /// The hidden sheet-scope name that marks a document tab. `_gc_` names are Monun's own (see
 /// `cmd::stash`).
@@ -34,13 +34,95 @@ pub const NO_CELLS: &str = "A document has no cells. Switch to a worksheet to ed
 pub const SHEETS_ONLY: &str = "A workbook holds sheets only. Make a Markdown file with + › New Markdown Document.";
 
 /// Refused, with workbooks and Markdown files apart, when a sheet or a second document would go
-/// into a Markdown file.
-pub const ONE_DOCUMENT: &str = "A Markdown file holds its document only. Make an Excel workbook with + › New Excel Workbook for sheets.";
+/// into a Markdown or text file.
+pub const ONE_DOCUMENT: &str = "A Markdown or text file holds its text only. Make an Excel workbook with + › New Excel Workbook for sheets.";
 
-/// A Markdown file rather than a workbook: one document tab and nothing else (a `.md` file
-/// opened, or `file.new` with `document`), saved as .md.
-pub fn is_markdown_file(wb: &Workbook) -> bool {
+/// Refused when a workbook would be saved as SQL.
+pub const NOT_TEXT: &str = "Only a text file can be saved as .sql. Save a workbook as .xlsx, or as .txt for its sheet's values.";
+
+/// A text file rather than a workbook: one document tab and nothing else (a `.md`, `.sql` or
+/// `.txt` file opened, or `file.new` with `document`), saved as its text. What the text is
+/// ([`TextKind`]) goes by the file's name.
+pub fn is_text_file(wb: &Workbook) -> bool {
     wb.sheets.len() == 1 && wb.sheets.first().is_some_and(|sh| sh.is_document())
+}
+
+/// What a text file holds, by its name's extension: Markdown (rendered beside its text), SQL
+/// (coloured) or plain text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextKind {
+    Markdown,
+    Sql,
+    Plain,
+}
+
+impl TextKind {
+    /// The kind of the file called `name`: `.md` and `.markdown` are Markdown, `.sql` SQL, the
+    /// rest plain text.
+    pub fn of_name(name: &str) -> TextKind {
+        let ext = std::path::Path::new(name).extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase);
+        match ext.as_deref() {
+            Some("md" | "markdown") => TextKind::Markdown,
+            Some("sql") => TextKind::Sql,
+            _ => TextKind::Plain,
+        }
+    }
+
+    /// The extension a new file of the kind gets.
+    pub fn extension(self) -> &'static str {
+        match self {
+            TextKind::Markdown => "md",
+            TextKind::Sql => "sql",
+            TextKind::Plain => "txt",
+        }
+    }
+
+    /// The kind `file.new` names: `markdown`, `sql` or `text`.
+    pub fn parse(s: &str) -> Option<TextKind> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "markdown" | "md" => Some(TextKind::Markdown),
+            "sql" => Some(TextKind::Sql),
+            "text" | "txt" | "plain" => Some(TextKind::Plain),
+            _ => None,
+        }
+    }
+}
+
+/// A text file's text, line breaks as `\n`, and how it was written: a byte-order mark says UTF-8
+/// (or UTF-16, written back as UTF-8); without one, valid UTF-8 is UTF-8, and other bytes are read
+/// as code page 949 when they read as Korean (as a CSV is).
+pub fn decode_text_file(bytes: &[u8]) -> (String, TextFile) {
+    let (text, encoding) = match std::str::from_utf8(bytes) {
+        Ok(s) if !s.starts_with('\u{feff}') => (s.to_owned(), TextEncoding::Utf8),
+        _ => monun_xlsx::decode_text_with_encoding(bytes),
+    };
+    // The line break most lines end in.
+    let breaks = text.matches('\n').count();
+    let crlf = breaks > 0 && text.matches("\r\n").count() * 2 > breaks;
+    (normalize(&text), TextFile { encoding, crlf })
+}
+
+/// A text file's bytes: its text with the line breaks and in the encoding it was read with
+/// ([`Document::file`]); a new file's in UTF-8 with `\n`.
+pub fn text_file_bytes(doc: &Document) -> Vec<u8> {
+    let file = doc.file.unwrap_or(TextFile { encoding: TextEncoding::Utf8, crlf: false });
+    let text = if file.crlf { doc.text.replace('\n', "\r\n") } else { doc.text.clone() };
+    monun_xlsx::encode_text(text.into_bytes(), file.encoding)
+}
+
+/// A workbook of one document tab holding a text file (.sql, .txt), named after it, that saves
+/// back in the encoding and with the line breaks it came in.
+pub fn text_workbook(name: &str, bytes: &[u8]) -> Workbook {
+    let (text, file) = decode_text_file(bytes);
+    let mut wb = Workbook::new();
+    let tab = name_from_path(name).unwrap_or_else(|| "Text1".into());
+    let mut sheet = Sheet::new_document(tab, text);
+    if let Some(doc) = sheet.document.as_mut() {
+        doc.file = Some(file);
+    }
+    wb.sheets = vec![Arc::new(sheet)];
+    wb.set_active_sheet(0);
+    wb
 }
 
 /// The text of a Markdown file: UTF-8 (a byte-order mark dropped), anything else read as well as
@@ -184,7 +266,7 @@ pub fn write_pictures(sheet: &Sheet, path: &str) -> Result<(), String> {
 ///
 /// A Markdown file has no cells to show: its fields read as they are written, `{{…}}` and all.
 pub fn field_value(wb: &Workbook, expr: &str) -> Result<String, String> {
-    if is_markdown_file(wb) {
+    if is_text_file(wb) {
         return Ok(format!("{{{{{expr}}}}}"));
     }
     let e = expr.trim();
@@ -303,7 +385,7 @@ fn view_of(formula: &str) -> Document {
         text: String::new(),
         mode: words().find_map(monun_model::DocMode::parse),
         fit_width: words().any(|w| w.eq_ignore_ascii_case("fit")),
-        files: Vec::new(),
+        ..Document::default()
     }
 }
 

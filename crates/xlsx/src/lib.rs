@@ -45,7 +45,7 @@ use monun_core::DateSystem;
 use monun_model::Workbook;
 
 pub use crypto::{DecryptError, check_encryption, decrypt};
-pub use csv::{MAX_CSV_BYTES, encode_text, read_csv, write_csv, write_csv_limited};
+pub use csv::{MAX_CSV_BYTES, decode_text_with_encoding, encode_text, read_csv, write_csv, write_csv_limited};
 pub use ods::read_ods;
 pub use package::MAX_PART;
 pub use passthrough::rebase_links;

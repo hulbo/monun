@@ -92,9 +92,9 @@ impl SheetApp {
         r
     }
 
-    /// Keeps how the active Markdown file shows (mode, Fit Width, zoom), by its path.
+    /// Keeps how the active Markdown or text file shows (mode, Fit Width, zoom), by its path.
     pub(crate) fn remember_doc_view(&mut self) {
-        let Some(d) = self.session.active().filter(|d| d.is_markdown()) else { return };
+        let Some(d) = self.session.active().filter(|d| d.is_text_file()) else { return };
         let (Some(path), Some(sh)) = (d.path.clone(), d.wb.active()) else { return };
         let Some(doc) = sh.document.as_ref() else { return };
         let memory =
@@ -104,9 +104,9 @@ impl SheetApp {
         self.ui.doc_views.truncate(crate::DOC_VIEWS_MAX);
     }
 
-    /// Shows a Markdown file just opened as it was last shown.
+    /// Shows a Markdown or text file just opened as it was last shown.
     fn recall_doc_view(&mut self) {
-        let Some(path) = self.session.active().filter(|d| d.is_markdown()).and_then(|d| d.path.clone()) else { return };
+        let Some(path) = self.session.active().filter(|d| d.is_text_file()).and_then(|d| d.path.clone()) else { return };
         let Some(v) = self.ui.doc_views.iter().find(|v| v.path == path).cloned() else { return };
         let mut view = json!({"fitWidth": v.fit_width});
         if !v.mode.is_empty() {
@@ -353,8 +353,8 @@ impl SheetApp {
             }
             "saveAs" => {
                 let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
-                // A Markdown file is saved as one; a workbook as .xlsx.
-                let ext = if self.session.active().is_some_and(monun_engine::DocState::is_markdown) { "md" } else { "xlsx" };
+                // A text file is saved as its kind (.md, .sql, .txt); a workbook as .xlsx.
+                let ext = self.session.active().and_then(monun_engine::DocState::text_kind).map_or("xlsx", |k| k.extension());
                 if let Some(pick) = &self.services.pick_save {
                     if let Some(path) = pick(&suggested) {
                         let path = if std::path::Path::new(&path).extension().is_none() { format!("{path}.{ext}") } else { path };

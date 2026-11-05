@@ -36,8 +36,9 @@ const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
 /// The pages of document tab `sh`, as drawings; with `fit` (or the document's own Fit Width) its
-/// tables and diagrams are as wide as the page.
-pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, fit: bool) -> Vec<Vec<Op>> {
+/// tables and diagrams are as wide as the page. With `code` (a SQL or plain text file) its text
+/// prints as it is, in a monospace font, rather than as Markdown.
+pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, (fit, code): (bool, bool)) -> Vec<Vec<Op>> {
     let Some(doc) = &sh.document else { return Vec::new() };
     let [l, r, t, b, ..] = lay.margins;
     let mut flow = Flow {
@@ -51,6 +52,11 @@ pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, fit: bool) -> 
         bottom: (lay.page_h - b).max(t + 72.0),
         fit: fit || doc.fit_width,
     };
+    if code {
+        flow.code(&doc.text, 0.0, false);
+        flow.pages.truncate(MAX_PAGES);
+        return flow.pages;
+    }
     let blocks = monun_markdown::parse(&doc.text);
     for block in &blocks {
         if flow.pages.len() >= MAX_PAGES {
@@ -177,7 +183,7 @@ impl Flow<'_> {
                 if lang == "mermaid" && self.diagram(text, indent) {
                     self.y += 6.0;
                 } else {
-                    self.code(text, indent);
+                    self.code(text, indent, true);
                     self.y += 6.0;
                 }
             }
@@ -338,7 +344,9 @@ impl Flow<'_> {
         }
     }
 
-    fn code(&mut self, text: &str, indent: f32) {
+    /// Code, line for line in a monospace font, long lines cut; `shade` puts it on a grey band (a
+    /// code block in a document, not a SQL or text file's own text).
+    fn code(&mut self, text: &str, indent: f32, shade: bool) {
         let max = (self.width - indent - 12.0).max(24.0);
         let lead = CODE * 1.35;
         for raw in text.trim_end_matches('\n').split('\n') {
@@ -347,7 +355,9 @@ impl Flow<'_> {
             let chunks = if piece.width() > max { cut(&piece, max) } else { vec![piece] };
             for chunk in chunks {
                 self.need(lead);
-                self.push(Op::Fill { x: self.left + indent, y: self.y, w: self.width - indent, h: lead, color: SHADE });
+                if shade {
+                    self.push(Op::Fill { x: self.left + indent, y: self.y, w: self.width - indent, h: lead, color: SHADE });
+                }
                 self.push(Op::Text {
                     x: self.left + indent + 6.0,
                     y: self.y + CODE * 1.0,

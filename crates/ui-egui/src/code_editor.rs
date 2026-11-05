@@ -1,7 +1,10 @@
 //! A small code editor: monospace text with syntax colours, Tab to indent, Enter that keeps the
 //! indentation, and a scroll area that follows the caret. It colours Python (for code in cells,
-//! where `xl()` reads the sheet) and LaTeX (for equation source); reached as
-//! `widgets::code_editor`. The tokenizer and the key edits are pure functions, tested below.
+//! where `xl()` reads the sheet), LaTeX (for equation source) and SQL (for .sql files, in the
+//! document editor, see [`sql`]); reached as `widgets::code_editor`. The tokenizer and the key
+//! edits are pure functions, tested below.
+
+mod sql;
 
 use std::ops::Range;
 
@@ -15,6 +18,7 @@ use crate::theme::{self, Syntax, Tokens};
 pub enum Lang {
     Python,
     Latex,
+    Sql,
     Plain,
 }
 
@@ -74,6 +78,7 @@ pub fn highlight(text: &str, lang: Lang) -> Vec<(Range<usize>, Token)> {
     match lang {
         Lang::Python => python(text),
         Lang::Latex => latex(text),
+        Lang::Sql => sql::sql(text),
         Lang::Plain => Vec::new(),
     }
 }
@@ -207,21 +212,30 @@ pub fn font() -> FontId {
     FontId::new(12.5, FontFamily::Name(theme::MONO.into()))
 }
 
-/// A layout job for `text` with syntax colours.
+/// A layout job for `text` with syntax colours. It covers every byte of `text`, with no empty
+/// section but the one of an empty text.
 pub fn layout_job(text: &str, lang: Lang, font: &FontId, plain: egui::Color32, syntax: &Syntax, wrap_width: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
+    let put = |job: &mut egui::text::LayoutJob, s: &str, color: egui::Color32| {
+        if !s.is_empty() {
+            job.append(s, 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+    };
     let mut pos = 0usize;
     for (range, token) in highlight(text, lang) {
         if range.start < pos {
             continue;
         }
         if let (Some(before), Some(span)) = (text.get(pos..range.start), text.get(range.clone())) {
-            job.append(before, 0.0, egui::TextFormat::simple(font.clone(), plain));
-            job.append(span, 0.0, egui::TextFormat::simple(font.clone(), color(syntax, token)));
+            put(&mut job, before, plain);
+            put(&mut job, span, color(syntax, token));
             pos = range.end;
         }
     }
-    job.append(text.get(pos..).unwrap_or(""), 0.0, egui::TextFormat::simple(font.clone(), plain));
+    put(&mut job, text.get(pos..).unwrap_or(""), plain);
+    if job.sections.is_empty() {
+        job.append("", 0.0, egui::TextFormat::simple(font.clone(), plain));
+    }
     job.wrap.max_width = wrap_width;
     job
 }

@@ -234,13 +234,15 @@ fn services() -> Services {
         paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Spreadsheets and documents", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md"])
+                .add_filter("Spreadsheets and documents", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql"])
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
                 .add_filter("Excel 97-2003 Workbook (import)", &["xls"])
                 .add_filter("Excel Binary Workbook (data import)", &["xlsb"])
                 .add_filter("OpenDocument Spreadsheet (data import)", &["ods"])
                 .add_filter("CSV", &["csv"])
                 .add_filter("Markdown document", &["md", "markdown"])
+                .add_filter("SQL file", &["sql"])
+                .add_filter("Text document", &["txt"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
@@ -254,12 +256,14 @@ fn services() -> Services {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
             // The suggested name's type (an export asks for .pdf, .csv or .html) comes first.
-            const TYPES: [(&str, &str); 5] = [
+            const TYPES: [(&str, &str); 7] = [
                 ("Excel Workbook (.xlsx)", "xlsx"),
                 ("CSV (.csv)", "csv"),
                 ("Web Page (.html)", "html"),
                 ("PDF (.pdf)", "pdf"),
                 ("Markdown (.md)", "md"),
+                ("SQL (.sql)", "sql"),
+                ("Text (.txt)", "txt"),
             ];
             let ext = path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).filter(|e| TYPES.iter().any(|(_, x)| x == e));
             let ext = ext.unwrap_or_else(|| "xlsx".to_string());

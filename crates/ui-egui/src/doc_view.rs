@@ -1,4 +1,6 @@
-//! Document tabs (`Sheet::document`): Markdown shown in place of the grid.
+//! Document tabs (`Sheet::document`): Markdown shown in place of the grid, and text files of
+//! their own (.md, .sql, .txt). A SQL or plain text file shows its text only, SQL coloured, with
+//! line numbers.
 //!
 //! View mode shows the rendered document; Edit mode puts the text on the left and the rendered
 //! document beside it, with a divider to drag. What is typed stays in a draft that goes to the
@@ -13,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Key, Modifiers, Rect, Sense, Stroke, Ui, pos2, vec2};
+use monun_engine::docs::TextKind;
 use monun_markdown::Block;
 use serde_json::json;
 
@@ -21,7 +24,7 @@ use crate::clock::now_ms;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
-pub use editor::{Format, continue_list, format};
+pub use editor::{Format, continue_list, format, keep_indent};
 
 /// How long typing must pause before the draft goes to the workbook (ms).
 const IDLE_MS: f64 = 1500.0;
@@ -185,7 +188,13 @@ fn field_values(app: &mut SheetApp, blocks: &Arc<Vec<Block>>) -> Arc<Fields> {
 /// The active file is a Markdown file of its own: no cells for a field to show, and its text alone
 /// is saved (no pictures).
 fn markdown_file(app: &SheetApp) -> bool {
-    app.session.active().is_some_and(monun_engine::DocState::is_markdown)
+    app.session.active().is_some_and(monun_engine::DocState::is_text_file)
+}
+
+/// What the active document's text is: a text file's kind by its name, Markdown for a workbook's
+/// document tab.
+pub(crate) fn text_kind(app: &SheetApp) -> TextKind {
+    app.session.active().and_then(monun_engine::DocState::text_kind).unwrap_or(TextKind::Markdown)
 }
 
 /// The document editor's widget id.
@@ -263,11 +272,12 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
     }
     let query = state.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let t = Tokens::get(ctx);
+    let kind = d.text_kind().unwrap_or(TextKind::Markdown);
     let (mut long, mut other) = (0, None);
     for (i, sh) in (0..).map_while(|i| d.wb.sheet(i).map(|sh| (i, sh))) {
         let Some(doc) = sh.document.as_ref() else { continue };
         let key = (d.uid, i);
-        let mode = doc.mode.or_else(|| state.modes.get(&key).copied()).unwrap_or(Mode::View);
+        let mode = if kind == TextKind::Markdown { doc.mode.or_else(|| state.modes.get(&key).copied()).unwrap_or(Mode::View) } else { Mode::Edit };
         if mode == Mode::View || !editor::is_long(&doc.text) {
             continue;
         }
@@ -277,8 +287,9 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
                 // Its first screen is laying it out (see `editor::show`).
                 return;
             }
+            // Markdown shows in its other mode too; the rest has none.
             let mode = if mode == Mode::Split { Mode::Edit } else { Mode::Split };
-            other = (!state.laid_other.contains(&key)).then_some((key, mode, z, doc.text.as_str()));
+            other = (kind == TextKind::Markdown && !state.laid_other.contains(&key)).then_some((key, mode, z, doc.text.as_str()));
             continue;
         }
         long += 1;
@@ -290,7 +301,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
             continue;
         }
         let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
-        if editor::lay_out_ahead(&mut state.layouts, ctx, key, &doc.text, (z, wrap, &query), &t, AHEAD_MS) {
+        if editor::lay_out_ahead(&mut state.layouts, ctx, key, &doc.text, (z, wrap, &query, kind), &t, AHEAD_MS) {
             state.laid_ahead.insert(key);
         }
         ctx.request_repaint();
@@ -298,7 +309,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
     }
     let Some((key, mode, z, text)) = other else { return };
     let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
-    if editor::lay_out_ahead(&mut state.layouts, ctx, key, text, (z, wrap, &query), &t, AHEAD_MS) {
+    if editor::lay_out_ahead(&mut state.layouts, ctx, key, text, (z, wrap, &query, kind), &t, AHEAD_MS) {
         state.laid_other.insert(key);
     }
     ctx.request_repaint();
@@ -512,7 +523,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     // The page follows the theme (the grid's stays white): the document's ink is the theme's.
     ui.painter().rect_filled(ui.max_rect(), 0.0, if t.dark { t.window } else { t.grid_bg });
     let (chosen, _) = chosen_view(app);
-    let mode = app.doc_view.mode(uid, sheet, chosen, &text);
+    let kind = text_kind(app);
+    // SQL and plain text show their text only.
+    let mode = if kind == TextKind::Markdown { app.doc_view.mode(uid, sheet, chosen, &text) } else { Mode::Edit };
     // A new zoom (Ctrl+wheel, the status bar) keeps the line at the top where it is.
     let doc = (uid, sheet);
     if app.doc_view.shown_zoom.is_some_and(|(d, z)| d == doc && z != zoom)
@@ -526,13 +539,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     if started && mode != Mode::View && text.is_empty() {
         app.doc_view.focus_editor = true;
     }
-    keyboard(app, ui, mode);
+    keyboard(app, ui, mode, kind);
     let mode = toolbar(app, ui, (uid, sheet), mode, &t);
     if app.doc_view.find.is_some() {
         find_bar(app, ui, mode, &t);
     }
     let area = ui.available_rect_before_wrap();
-    let body = if app.doc_view.outline {
+    let body = if app.doc_view.outline && kind == TextKind::Markdown {
         let side = Rect::from_min_max(area.min, pos2(area.left() + (area.width() * 0.25).clamp(140.0, 260.0), area.bottom()));
         outline(app, ui, side, mode, &t);
         Rect::from_min_max(pos2(side.right(), area.top()), area.max)
@@ -733,7 +746,7 @@ fn idle_commit(app: &mut SheetApp, ctx: &egui::Context) {
 
 /// The workbook shortcuts a document tab keeps (the grid, which has the rest, isn't drawn).
 /// Undo and redo are the editor's own while it has focus.
-fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
+fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode, kind: TextKind) {
     let ctx = ui.ctx().clone();
     if app.dialog.is_some() || app.message.is_some() || app.grid.tab_menu.is_some() || app.grid.renaming_tab.is_some() {
         return;
@@ -784,6 +797,10 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode) {
     // Ctrl+V with a picture and no text on the clipboard (a screenshot, a copied image) puts the
     // picture in the document: at the caret in Edit mode, at the end in View mode. Not while
     // another field (Find) has the focus.
+    // Markdown only: SQL and plain text have no pictures or formatting.
+    if kind != TextKind::Markdown {
+        return;
+    }
     let mut pasted = None;
     let elsewhere = ctx.text_edit_focused() && ctx.memory(|m| m.focused()) != Some(editor_id());
     ctx.input_mut(|i| {
@@ -858,6 +875,13 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
         ui.painter().rect_filled(sep, 0.0, t.separator);
         ui.add_space(6.0);
     };
+    let kind = text_kind(app);
+    if kind != TextKind::Markdown {
+        text_file_items(app, ui, kind, t);
+        separator(ui);
+        find_button(app, ui);
+        return Mode::Edit;
+    }
     let modes = [
         (Mode::Edit, Icon::Pen, "Edit", "Edit the text"),
         (Mode::Split, Icon::SideBySide, "Side by Side", "Edit the text beside the document"),
@@ -910,12 +934,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
     if fit_width.on_hover_text(lang.tr("Show tables and diagrams as wide as the page")).clicked() {
         app.run_or_alert("doc.view", json!({"sheet": sheet, "fitWidth": !fit}));
     }
-    let find = ui.add(
-        egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),
-    );
-    if find.on_hover_text(lang.tr("Find and replace in the document (Ctrl+F, Ctrl+H)")).clicked() {
-        app.doc_view.find.get_or_insert_with(Find::default).focus = true;
-    }
+    find_button(app, ui);
     if mode != Mode::View {
         separator(ui);
         // A Markdown file has no cells for Cell value to show.
@@ -966,6 +985,39 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
         }
     }
     mode
+}
+
+/// Find (Ctrl+F): opens the find bar.
+fn find_button(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let find = ui.add(
+        egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),
+    );
+    if find.on_hover_text(lang.tr("Find and replace in the document (Ctrl+F, Ctrl+H)")).clicked() {
+        app.doc_view.find.get_or_insert_with(Find::default).focus = true;
+    }
+}
+
+/// What a SQL or plain text file is, as code editors' status bars say it: the language, the
+/// encoding and the line breaks it saves with.
+fn text_file_items(app: &SheetApp, ui: &mut Ui, kind: TextKind, t: &Tokens) {
+    let lang = app.ui.language;
+    let file = app.session.active().and_then(|d| d.wb.active()).and_then(|sh| sh.document.as_ref()).and_then(|doc| doc.file);
+    let encoding = match file.map(|f| f.encoding) {
+        None | Some(monun_engine::model::TextEncoding::Utf8) => "UTF-8",
+        Some(monun_engine::model::TextEncoding::Utf8Bom) => "UTF-8 BOM",
+        Some(monun_engine::model::TextEncoding::Cp949) => "EUC-KR (CP949)",
+    };
+    let breaks = if file.is_some_and(|f| f.crlf) { "CRLF" } else { "LF" };
+    let name = if kind == TextKind::Sql { "SQL" } else { lang.tr("Plain Text") };
+    let label = |ui: &mut Ui, text: &str, tip: &str, ink| {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(text).font(theme::ui_font(13.0)).color(ink)).on_hover_text(lang.tr(tip));
+        ui.add_space(6.0);
+    };
+    label(ui, name, "The file's language, by its name (.sql, .txt)", t.text);
+    label(ui, encoding, "The file's encoding: it is saved in it as it was opened", t.text_dim);
+    label(ui, breaks, "The line breaks the file is saved with: CRLF (Windows) or LF", t.text_dim);
 }
 
 /// View mode: the rendered document, centred.

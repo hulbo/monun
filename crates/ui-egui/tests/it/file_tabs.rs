@@ -45,7 +45,7 @@ fn new_files_open_as_tabs_and_a_click_switches_between_them() {
     h.get_by_label("New Markdown Document").click();
     h.run_steps(4);
     let d = h.state().session.active().expect("a Markdown file");
-    assert!(d.is_markdown(), "one document tab and nothing else");
+    assert!(d.is_text_file(), "one document tab and nothing else");
     assert_eq!(d.display_title(), "Doc1.md");
     assert_eq!(tab_labels(&h), ["Doc1.md"]);
     assert!(h.query_by_label("All sheets").is_none(), "a Markdown file has no sheets to list");
@@ -56,16 +56,16 @@ fn new_files_open_as_tabs_and_a_click_switches_between_them() {
     h.get_by_label("New Excel Workbook").click();
     h.run_steps(4);
     assert_eq!(tab_labels(&h), ["Doc1.md", "Book1"]);
-    assert!(!h.state().session.active().unwrap().is_markdown(), "the new workbook is in front");
+    assert!(!h.state().session.active().unwrap().is_text_file(), "the new workbook is in front");
     assert!(h.query_by_label("All sheets").is_some(), "its sheets are listed beside the tabs");
     assert!(h.query_by_label("New document (Markdown)").is_none(), "a workbook adds sheets only");
 
     h.get_by_label("Doc1.md").click();
     h.run_steps(4);
-    assert!(h.state().session.active().unwrap().is_markdown(), "a click on a tab shows its file");
+    assert!(h.state().session.active().unwrap().is_text_file(), "a click on a tab shows its file");
     h.get_by_label("Book1").click();
     h.run_steps(4);
-    assert!(!h.state().session.active().unwrap().is_markdown());
+    assert!(!h.state().session.active().unwrap().is_text_file());
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn close_other_tabs_keeps_the_one_clicked() {
     h.get_by_label("Close Other Tabs").click();
     h.run_steps(4);
     assert_eq!(tab_labels(&h), ["Doc1.md"]);
-    assert!(h.state().session.active().unwrap().is_markdown());
+    assert!(h.state().session.active().unwrap().is_text_file());
 }
 
 #[test]
@@ -153,10 +153,10 @@ fn a_markdown_file_keeps_its_one_document() {
     let mut h = harness(s);
     for (id, params) in [("home.insertSheet", json!({})), ("doc.insert", json!({})), ("sheet.move", json!({"sheet": 0, "to": 1, "copy": true}))] {
         let refused = h.state_mut().run(id, params).expect_err(id);
-        assert!(refused.contains("Markdown file holds its document only"), "{id}: {refused}");
+        assert!(refused.contains("Markdown or text file holds its text only"), "{id}: {refused}");
     }
     let d = h.state().session.active().unwrap();
-    assert!(d.is_markdown());
+    assert!(d.is_text_file());
     assert_eq!(monun_engine::docs::field_value(&d.wb, "=1+2").as_deref(), Ok("{{=1+2}}"), "a field reads as written: there are no cells");
     // How the file shows is not part of its .md text, so it stays as saved.
     let saved = h.state_mut().run("file.saveAs", json!({"path": std::env::temp_dir().join("monun-file-tabs-test.md").to_string_lossy()}));
@@ -232,6 +232,48 @@ fn a_tab_dragged_along_the_others_moves_there() {
     });
     h.run_steps(3);
     assert_eq!(tab_labels(&h), ["Doc1.md", "Book2", "Book1"], "Book1 goes where it was dropped");
+}
+
+#[test]
+fn sql_and_text_files_show_their_text_as_code_editors_do() {
+    use monun_engine::docs::TextKind;
+    let mut h = harness(Session::new());
+    assert!(h.query_by_label("New SQL File").is_some() && h.query_by_label("New Text File").is_some(), "the start page offers both");
+    h.get_by_label("New SQL File").click();
+    h.run_steps(4);
+    let d = h.state().session.active().expect("a SQL file");
+    assert_eq!((d.display_title(), d.text_kind()), ("Query1.sql".to_owned(), Some(TextKind::Sql)));
+    assert_eq!(tab_labels(&h), ["Query1.sql"]);
+    assert!(h.query_by_label("SQL").is_some() && h.query_by_label("LF").is_some(), "the tool bar says what it is and how it saves");
+    assert!(h.query_by_label("Side by Side").is_none() && h.query_by_label("Contents").is_none(), "its text only, no document");
+    // An empty file opens ready to type: Enter keeps the indentation, Tab indents.
+    h.input_mut().events.push(egui::Event::Text("SELECT *\n  FROM t".into()));
+    h.run_steps(3);
+    key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    key(&mut h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.input_mut().events.push(egui::Event::Text("WHERE".into()));
+    h.run_steps(3);
+    assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, "SELECT *\n  FROM t\n      WHERE");
+
+    // + beside the tabs: a plain text file.
+    h.get_by_label("New file").click();
+    h.run_steps(3);
+    h.get_by_label("New Text File").click();
+    h.run_steps(4);
+    assert_eq!(tab_labels(&h), ["Query1.sql (unsaved changes)", "Text1.txt"]);
+    assert_eq!(h.state().session.active().unwrap().text_kind(), Some(TextKind::Plain));
+    assert!(h.query_by_label("Plain Text").is_some());
+
+    // A file with Windows line breaks says so, and saves them.
+    let path = std::env::temp_dir().join(format!("monun-file-tabs-{}.sql", std::process::id()));
+    std::fs::write(&path, "select 1\r\n").unwrap();
+    h.state_mut().run("file.open", json!({"path": path.to_string_lossy()})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("CRLF").is_some());
+    h.state_mut().run("doc.setText", json!({"text": "select 2\n"})).unwrap();
+    h.state_mut().run("file.save", json!({})).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"select 2\r\n");
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

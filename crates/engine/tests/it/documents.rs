@@ -165,6 +165,55 @@ fn a_markdown_file_opens_as_a_document_and_saves_back() {
 }
 
 #[test]
+fn sql_and_text_files_open_as_text_and_save_back_as_they_came() {
+    use monun_engine::docs::TextKind;
+    // Windows line breaks and code page 949 (an older Korean file) come back as they were.
+    let sql = "-- 사용자 목록\r\nSELECT 이름 FROM 사용자;\r\n";
+    let (cp949, _, _) = encoding_rs::EUC_KR.encode(sql);
+    let (wb, _) = io::open_bytes("목록.sql", &cp949).unwrap();
+    assert_eq!(wb.sheets.len(), 1);
+    let doc = wb.sheet(0).unwrap().document.as_ref().unwrap();
+    assert_eq!(doc.text, "-- 사용자 목록\nSELECT 이름 FROM 사용자;\n", "line breaks are \\n in the editor");
+    assert_eq!(io::save_bytes(&wb, "목록.sql").unwrap(), cp949.to_vec());
+    // UTF-8 with a byte-order mark keeps it; plain UTF-8 and \n stay so.
+    for bytes in ["\u{feff}메모\r\n둘째 줄".as_bytes(), "메모\n둘째 줄\n".as_bytes(), b"".as_slice()] {
+        let (wb, _) = io::open_bytes("메모.txt", bytes).unwrap();
+        assert!(wb.sheet(0).unwrap().is_document(), "a .txt is text, not tab-separated cells");
+        assert_eq!(io::save_bytes(&wb, "메모.txt").unwrap(), bytes);
+    }
+    // A workbook goes to .txt as its sheet's values separated by tabs, as in Excel, and never to .sql.
+    let mut s = session();
+    s.execute("cell.set", json!({"cell": "A1", "input": "a"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "1"})).unwrap();
+    let wb = s.active().unwrap().wb.clone();
+    assert_eq!(io::save_bytes(&wb, "값.txt").unwrap(), b"\xEF\xBB\xBFa\t1\r\n");
+    assert!(io::save_bytes(&wb, "값.sql").unwrap_err().to_string().contains("Only a text file"));
+    // In a session: new files of each kind, and Save of an opened .sql that leaves it clean.
+    let r = s.execute("file.new", json!({"document": true, "kind": "sql"})).unwrap();
+    assert_eq!(r["title"], "Query1.sql");
+    assert_eq!(s.active().unwrap().text_kind(), Some(TextKind::Sql));
+    let r = s.execute("file.new", json!({"document": true, "kind": "text", "prefix": "텍스트"})).unwrap();
+    assert_eq!(r["title"], "텍스트1.txt");
+    assert_eq!(s.active().unwrap().text_kind(), Some(TextKind::Plain));
+    assert!(s.execute("file.new", json!({"document": true, "kind": "python"})).is_err());
+    let dir = temp_dir("sql");
+    let path = dir.join("조회.sql");
+    std::fs::write(&path, "SELECT 1\r\n").unwrap();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    assert_eq!(s.active().unwrap().text_kind(), Some(TextKind::Sql));
+    s.execute("doc.setText", json!({"text": "SELECT 1\nFROM DUAL\n"})).unwrap();
+    s.execute("file.save", json!({})).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"SELECT 1\r\nFROM DUAL\r\n");
+    assert!(!s.active().unwrap().is_dirty());
+    // Saved under another name, it is that kind of file.
+    let as_text = dir.join("조회.txt");
+    s.execute("file.save", json!({"path": as_text.to_str().unwrap()})).unwrap();
+    assert_eq!(s.active().unwrap().text_kind(), Some(TextKind::Plain));
+    assert!(s.execute("doc.picture", json!({"base64": "AA=="})).is_err(), "pictures go beside Markdown files only");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn documents_import_and_export_markdown_files() {
     let dir = temp_dir("io");
     let src = dir.join("계획.md");
@@ -230,6 +279,17 @@ fn a_document_prints_as_text_pages() {
     // Printing every sheet takes the document's pages too.
     let (_, all) = pdf_of(&mut s, json!({"sheets": "all"}));
     assert!(all >= pages, "{all} pages for all sheets, {pages} for the document");
+}
+
+#[test]
+fn a_sql_file_prints_its_text_line_for_line() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"document": true, "kind": "sql"})).unwrap();
+    s.execute("doc.setText", json!({"text": "# not a heading\nSELECT *\n  FROM t -- *all*\n"})).unwrap();
+    let (pdf, _) = pdf_of(&mut s, json!({}));
+    for needle in ["(# not a heading)", "(SELECT *)", "(  FROM t -- *all*)"] {
+        assert!(contains(&pdf, needle), "{needle} is printed as written, not as Markdown");
+    }
 }
 
 #[test]

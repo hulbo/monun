@@ -97,8 +97,12 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
     // Document tabs print as text pages of their own, laid out first so the page count is known.
-    let documents: Vec<Option<Vec<Vec<document::Op>>>> =
-        layouts.iter().map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay, fit_width))).collect();
+    // A SQL or plain text file prints as its text, line for line.
+    let code = crate::docs::is_text_file(wb) && crate::docs::TextKind::of_name(file) != crate::docs::TextKind::Markdown;
+    let documents: Vec<Option<Vec<Vec<document::Op>>>> = layouts
+        .iter()
+        .map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay, (fit_width, code))))
+        .collect();
     let total: usize = layouts.iter().zip(&documents).map(|(l, d)| d.as_ref().map_or(l.pages.len(), Vec::len)).sum();
     let (date, time) = hf_date_time(wb);
     let mut page_no = 0usize;

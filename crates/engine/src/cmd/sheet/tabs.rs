@@ -12,7 +12,7 @@ pub(crate) fn insert_tab(s: &mut Session, p: &Json, document: Option<String>) ->
     }
     // Workbooks and Markdown files apart: sheets only in a workbook, nothing more in a Markdown file.
     if s.separate_files {
-        if s.doc()?.is_markdown() {
+        if s.doc()?.is_text_file() {
             return Err(EngineError::Other(crate::docs::ONE_DOCUMENT.into()));
         }
         if document.is_some() {
@@ -189,7 +189,7 @@ pub(super) fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     // A copy is a new tab: none in a Markdown file, and no document in a workbook, with the two apart.
     if copy && s.separate_files {
         let d = s.doc()?;
-        if d.is_markdown() {
+        if d.is_text_file() {
             return Err(EngineError::Other(crate::docs::ONE_DOCUMENT.into()));
         }
         if d.wb.sheet(i).is_some_and(Sheet::is_document) {

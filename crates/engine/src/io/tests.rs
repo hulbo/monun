@@ -388,8 +388,8 @@ fn csv_save_of_a_workbook_not_read_from_csv_uses_commas() {
     let (reopened, _) = open_bytes("book.xlsx", &save_bytes(&from_csv, "book.xlsx").unwrap()).unwrap();
     assert_eq!(reopened.csv_delimiter, None);
     assert!(String::from_utf8(save_bytes(&reopened, "again.csv").unwrap()).unwrap().starts_with("\u{feff}1,511,184,"));
-    // A .tsv/.txt saved as .csv gets commas; as .tsv it keeps tabs.
-    let (tsv, _) = open_bytes("list.txt", b"a\tb\r\n").unwrap();
+    // A .tsv saved as .csv gets commas; as .tsv it keeps tabs.
+    let (tsv, _) = open_bytes("list.tsv", b"a\tb\r\n").unwrap();
     assert_eq!(save_bytes(&tsv, "list.csv").unwrap(), b"a,b\r\n");
     assert_eq!(save_bytes(&tsv, "list.tsv").unwrap(), b"a\tb\r\n");
 }

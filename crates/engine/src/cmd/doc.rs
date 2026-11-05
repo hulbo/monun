@@ -84,7 +84,7 @@ fn file_name(name: &str) -> String {
 /// A picture for a Markdown file (see `doc.picture`'s params).
 fn picture(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
-    if !d.is_markdown() {
+    if d.text_kind() != Some(crate::docs::TextKind::Markdown) {
         return Err(bad("doc.picture", "a picture goes beside a Markdown file; a document tab in a workbook takes insert.picture"));
     }
     let data = match (str_param(p, "path"), str_param(p, "base64")) {
@@ -174,7 +174,7 @@ fn view(s: &mut Session, p: &Json) -> Result<Json> {
     let (mode, fit) = (mode.or(doc.mode), fit.unwrap_or(doc.fit_width));
     if (mode, fit) != (doc.mode, doc.fit_width) {
         // A Markdown file keeps its text only, so how it shows leaves it as saved.
-        let saved = d.is_markdown() && !d.is_dirty();
+        let saved = d.is_text_file() && !d.is_dirty();
         let wb = std::sync::Arc::make_mut(&mut d.wb);
         if let Some(doc) = wb.sheet_mut(sheet).and_then(|sh| sh.document.as_mut()) {
             doc.mode = mode;

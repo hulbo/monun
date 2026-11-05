@@ -373,10 +373,15 @@ impl DocState {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| self.title.clone())
     }
-    /// A Markdown file rather than a workbook: one document tab and nothing else (a `.md` file
-    /// opened, or `file.new` with `document`), saved as .md.
-    pub fn is_markdown(&self) -> bool {
-        docs::is_markdown_file(&self.wb)
+    /// A text file rather than a workbook: one document tab and nothing else (a `.md`, `.sql` or
+    /// `.txt` file opened, or `file.new` with `document`), saved as its text.
+    pub fn is_text_file(&self) -> bool {
+        docs::is_text_file(&self.wb)
+    }
+    /// What a text file holds, by its name (Save As another extension changes it); `None` for a
+    /// workbook.
+    pub fn text_kind(&self) -> Option<docs::TextKind> {
+        self.is_text_file().then(|| docs::TextKind::of_name(&self.display_title()))
     }
 }
 
@@ -545,7 +550,7 @@ pub struct Session {
     /// [`cmd::format::approx_text_width`].
     pub text_width: Option<TextWidth>,
     /// Workbooks and Markdown files are files apart (the desktop's file tabs): a workbook takes
-    /// sheets only, no document tab, and a Markdown file ([`DocState::is_markdown`]) keeps its one
+    /// sheets only, no document tab, and a Markdown file ([`DocState::is_text_file`]) keeps its one
     /// document, no sheet. Off, a workbook holds document tabs beside its sheets.
     pub separate_files: bool,
 }
@@ -650,10 +655,21 @@ impl Session {
     /// A new empty Markdown file titled `{prefix}N.md` (`Doc1.md`), one document tab, saved as
     /// .md: what a `.md` file opened is, before it has a file.
     pub fn new_markdown(&mut self, prefix: &str) -> usize {
+        self.new_text_file(docs::TextKind::Markdown, prefix)
+    }
+    /// A new empty text file of `kind` titled `{prefix}N.{ext}` (`Doc1.md`, `Query1.sql`,
+    /// `Text1.txt`): what such a file opened is, before it has a file.
+    pub fn new_text_file(&mut self, kind: docs::TextKind, prefix: &str) -> usize {
+        let fallback = match kind {
+            docs::TextKind::Markdown => "Doc",
+            docs::TextKind::Sql => "Query",
+            docs::TextKind::Plain => "Text",
+        };
         let prefix = prefix.trim();
-        let prefix = if prefix.is_empty() { "Doc" } else { prefix };
-        let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("{prefix}{n}.md") && d.path.is_none())).unwrap_or(1);
-        let title = format!("{prefix}{n}.md");
+        let prefix = if prefix.is_empty() { fallback } else { prefix };
+        let ext = kind.extension();
+        let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("{prefix}{n}.{ext}") && d.path.is_none())).unwrap_or(1);
+        let title = format!("{prefix}{n}.{ext}");
         let wb = docs::markdown_workbook(&title, b"");
         self.add_document(DocState::new(wb, None, title, Trust::Local))
     }

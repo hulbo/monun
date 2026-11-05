@@ -22,6 +22,10 @@ pub enum FileKind {
     /// A Markdown document: opens as a workbook holding it as a document tab; saving writes the
     /// active document tab's text.
     Markdown,
+    /// A text file (.sql, .txt): opens as a workbook holding it as a document tab, and saves back
+    /// as it came (its encoding and line breaks). A workbook saved as .txt is its sheet's values
+    /// separated by tabs, as Excel's Text (Tab delimited).
+    Text,
 }
 
 impl FileKind {
@@ -33,7 +37,8 @@ impl FileKind {
             "xlsb" => FileKind::Xlsb,
             "ods" => FileKind::Ods,
             "csv" => FileKind::Csv,
-            "tsv" | "tab" | "txt" => FileKind::Tsv,
+            "tsv" | "tab" => FileKind::Tsv,
+            "txt" | "sql" => FileKind::Text,
             "json" | "scjson" => FileKind::Json,
             "html" | "htm" => FileKind::Html,
             "md" | "markdown" => FileKind::Markdown,
@@ -174,6 +179,7 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
     }
     match kind {
         Some(FileKind::Markdown) => Ok((crate::docs::markdown_workbook(name, bytes), vec![])),
+        Some(FileKind::Text) => Ok((crate::docs::text_workbook(name, bytes), vec![])),
         Some(FileKind::Json) => {
             let mut wb: Workbook = serde_json::from_slice(bytes).map_err(|e| EngineError::Other(format!("not a Monun JSON workbook: {e}")))?;
             wb.styles.rebuild_index();
@@ -248,13 +254,24 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
     // a typo like `.cvs` would otherwise produce a file no other app recognises.
     let Some(kind) = FileKind::from_path(path) else {
         let name = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path);
-        return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json, .html or .md.")));
+        return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json, .html, .md, .sql or .txt.")));
     };
     save_bytes_as(wb, path, kind)
 }
 
 /// Encodes a workbook as `kind`, whatever `path`'s extension says.
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
+    // A text file writes its text; a workbook goes to .txt as its sheet's values, never to .sql.
+    let kind = match kind {
+        FileKind::Text => match wb.sheets.first().and_then(|sh| sh.document.as_ref()).filter(|_| crate::docs::is_text_file(wb)) {
+            Some(doc) => return Ok(crate::docs::text_file_bytes(doc)),
+            None if crate::docs::TextKind::of_name(path) == crate::docs::TextKind::Sql => {
+                return Err(EngineError::Other(crate::docs::NOT_TEXT.into()));
+            }
+            None => FileKind::Tsv,
+        },
+        kind => kind,
+    };
     // Document tabs travel as worksheets of lines in every format but JSON, which keeps them,
     // Markdown, which writes one, and a web page, which shows one as the tab does.
     let lines = if matches!(kind, FileKind::Json | FileKind::Markdown | FileKind::Html) { None } else { crate::docs::with_cells(wb) };
@@ -277,7 +294,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Ods => Err(EngineError::Other("ODS is supported for data import only. Save as .xlsx or another supported export format.".into())),
         // A workbook read from CSV keeps the separator it was read with (a `;` file stays `;`).
         FileKind::Csv => wb.sheet(sheet).map(|sh| csv(wb, sh, wb.csv_delimiter.unwrap_or(b','))).transpose().map(Option::unwrap_or_default),
-        FileKind::Tsv => wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t')).transpose().map(Option::unwrap_or_default),
+        FileKind::Tsv | FileKind::Text => wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t')).transpose().map(Option::unwrap_or_default),
         FileKind::Json => crate::macros::json_bytes(wb),
         FileKind::Html => to_html(wb, sheet).map(String::into_bytes),
         FileKind::Markdown => match wb.sheet(sheet).and_then(|sh| sh.document.as_ref()) {

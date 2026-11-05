@@ -7,7 +7,7 @@ use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, prefix?} (a new Markdown file, `Doc1.md` or `{prefix}1.md`, saved as .md)", always, new_workbook),
+        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql` or plain text `Text1.txt`, or `{prefix}1.md` and so on)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
@@ -33,7 +33,11 @@ pub fn specs() -> Vec<CommandSpec> {
 
 fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "document").unwrap_or(false) {
-        let i = s.new_markdown(str_param(p, "prefix").unwrap_or("Doc"));
+        let kind = match str_param(p, "kind") {
+            Some(k) => crate::docs::TextKind::parse(k).ok_or_else(|| bad("file.new", format!("`kind` must be markdown, sql or text, not `{k}`")))?,
+            None => crate::docs::TextKind::Markdown,
+        };
+        let i = s.new_text_file(kind, str_param(p, "prefix").unwrap_or(""));
         return Ok(json!({"index": i, "title": s.doc()?.display_title()}));
     }
     let i = match str_param(p, "sample") {
@@ -141,10 +145,9 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         crate::docs::write_pictures(sh, &path).map_err(crate::EngineError::Other)?;
     }
     // Only a full-fidelity format clears the dirty flag and becomes the document's file: Markdown
-    // is one for a workbook that is a single document tab (a .md file opened).
-    let single_document = d.wb.sheets.len() == 1 && d.wb.sheets.first().is_some_and(|sh| sh.is_document());
-    if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) || (kind == Some(crate::io::FileKind::Markdown) && single_document)
-    {
+    // and text are for a workbook that is a single document tab (a .md, .sql or .txt file opened).
+    let text = crate::docs::is_text_file(&d.wb) && matches!(kind, Some(crate::io::FileKind::Markdown | crate::io::FileKind::Text));
+    if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) || text {
         // The new file is the workbook's own now, so `CELL("filename")` reports it (#1489). Set
         // before the `saved` snapshot, or the workbook would read as dirty the moment it was
         // saved; and only when it changes, so an ordinary Save does not clone the workbook.
