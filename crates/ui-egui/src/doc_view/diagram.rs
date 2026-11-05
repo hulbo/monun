@@ -1,7 +1,7 @@
 //! Mermaid blocks in the rendered document. Each is drawn on a worker thread
 //! (`monun_markdown::diagram`) at the pixel size it shows at, so its lines and labels stay sharp,
-//! and kept as a texture by its source, scale and theme; a click shows it enlarged. Without the
-//! `diagrams` feature (the web build) a Mermaid block shows as code.
+//! and kept as a texture by its source, scale and theme; a click opens it in a window of its own
+//! ([`zoom_window`]). Without the `diagrams` feature (the web build) a Mermaid block shows as code.
 
 use std::collections::HashMap;
 
@@ -28,10 +28,6 @@ fn thousandths(scale: f32) -> u32 {
 #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
 const MAX_GROW: f32 = 2.0;
 
-/// The enlarged view's size, against the diagram's own.
-#[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
-const ZOOM: f32 = 1.5;
-
 #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
 enum State {
     Pending,
@@ -55,7 +51,24 @@ pub struct Cache {
     sizes: HashMap<(u64, bool), egui::Vec2>,
     #[cfg(feature = "diagrams")]
     channel: Option<(std::sync::mpsc::Sender<Done>, std::sync::mpsc::Receiver<Done>)>,
-    zoomed: Option<Key>,
+    zoomed: Option<Zoomed>,
+}
+
+/// The diagram shown in a window of its own.
+#[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
+struct Zoomed {
+    source: u64,
+    dark: bool,
+    text: String,
+    /// Points per SVG unit as zoomed; `None` while it fits the window.
+    zoom: Option<f32>,
+    /// The window's first size and place (points), worked out when it opens.
+    size: egui::Vec2,
+    place: Option<egui::Pos2>,
+    /// A scroll position to take next frame (a zoom keeps the point under the pointer; a drag).
+    scroll: Option<egui::Vec2>,
+    /// Where the diagram showed last frame and how far it was scrolled.
+    last: Option<(egui::Rect, egui::Vec2)>,
 }
 
 #[cfg(feature = "diagrams")]
@@ -135,9 +148,9 @@ pub fn show(ui: &mut Ui, cache: &mut Cache, source: &str, z: f32, t: &Tokens, la
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
             }
-            let resp = resp.on_hover_text(lang.tr("Click to enlarge"));
+            let resp = resp.on_hover_text(lang.tr("Click to open in its own window"));
             if resp.clicked() {
-                cache.zoom(&ctx, hash, dark, z, source);
+                cache.open(&ctx, hash, dark, source);
             }
             resp
         }
@@ -170,13 +183,17 @@ impl Cache {
         self.entries.iter().any(|(k, e)| k.source == source && k.dark == dark && matches!(e.state, State::Pending))
     }
 
-    /// Shows the diagram enlarged, drawn for that size.
-    fn zoom(&mut self, ctx: &egui::Context, source: u64, dark: bool, z: f32, text: &str) {
-        let key = Key { source, scale: thousandths(z * ctx.pixels_per_point() * ZOOM), dark };
-        if !self.entries.contains_key(&key) {
-            self.start(ctx, key, text.to_owned());
-        }
-        self.zoomed = Some(key);
+    /// Opens the diagram's window (or shows another diagram in it): sized for the diagram at its
+    /// own size, within most of the screen, over the middle of the main window.
+    fn open(&mut self, ctx: &egui::Context, source: u64, dark: bool, text: &str) {
+        let own = self.sizes.get(&(source, dark)).copied().unwrap_or(egui::vec2(640.0, 400.0));
+        let (monitor, outer) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect));
+        let screen = monitor.unwrap_or_else(|| ctx.content_rect().size());
+        let least = egui::vec2(560.0, 380.0);
+        // The diagram, its margins and the tool bar.
+        let size = (own + egui::vec2(48.0, 90.0)).max(least).min((screen * 0.85).max(least));
+        let place = outer.map(|r| (r.center() - size / 2.0).max(egui::pos2(0.0, 0.0)));
+        self.zoomed = Some(Zoomed { source, dark, text: text.to_owned(), zoom: None, size, place, scroll: None, last: None });
     }
 
     /// Starts drawing `source` on a worker thread.
@@ -219,46 +236,207 @@ impl Cache {
 
     fn forget_unused(&mut self, frame: u64) {
         if self.entries.len() >= KEEP {
-            let zoomed = self.zoomed;
-            self.entries.retain(|k, e| matches!(e.state, State::Pending) || Some(*k) == zoomed || frame.saturating_sub(e.used) < 2);
+            self.entries.retain(|_, e| matches!(e.state, State::Pending) || frame.saturating_sub(e.used) < 2);
         }
     }
 }
 
-/// The enlarged diagram, in a window of its own, after a click on it.
-pub fn zoom_window(ctx: &egui::Context, cache: &mut Cache, lang: Language) {
-    let Some(key) = cache.zoomed else { return };
-    #[cfg(feature = "diagrams")]
-    cache.receive(ctx);
-    // Being drawn at the enlarged size: a spinner until it is in.
-    let texture = match cache.entries.get(&key).map(|e| &e.state) {
-        Some(State::Ready(texture)) => Some(texture.clone()),
-        Some(State::Pending) => None,
-        _ => {
-            cache.zoomed = None;
-            return;
-        }
-    };
-    let size = texture.as_ref().map_or(egui::vec2(320.0, 200.0), |t| t.size_vec2() / ctx.pixels_per_point());
-    let mut open = true;
-    let screen = ctx.content_rect();
-    egui::Window::new(lang.tr("Diagram"))
-        .id(egui::Id::unique("monun.diagram_zoom"))
-        .open(&mut open)
-        .resizable(true)
-        .collapsible(false)
-        .default_size(size.min(screen.size() * 0.85))
-        .show(ctx, |ui| {
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| match &texture {
-                Some(texture) => {
-                    ui.add(egui::Image::new((texture.id(), size)));
-                }
-                None => {
-                    ui.spinner();
-                }
-            });
-        });
-    if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+/// The diagram's own window, after a click on it: a window of the system's (moved, resized and
+/// maximized as any other), the whole diagram fitted in it at first. Ctrl+wheel, the − and +
+/// buttons and Ctrl+−, Ctrl++ zoom; a drag moves it about; a double-click or Ctrl+0 fits it again.
+/// Esc or the window's close button closes it.
+#[cfg(not(feature = "diagrams"))]
+pub fn zoom_window(_ctx: &egui::Context, _cache: &mut Cache, _lang: Language, _icon: Option<std::sync::Arc<egui::IconData>>) {}
+
+/// See the other `zoom_window`.
+#[cfg(feature = "diagrams")]
+pub fn zoom_window(ctx: &egui::Context, cache: &mut Cache, lang: Language, icon: Option<std::sync::Arc<egui::IconData>>) {
+    let Some(z) = cache.zoomed.as_ref() else { return };
+    let mut builder = egui::ViewportBuilder::default()
+        .with_title(lang.tr("Diagram"))
+        .with_inner_size(z.size)
+        .with_min_inner_size([360.0, 260.0])
+        .with_resizable(true);
+    if let Some(place) = z.place {
+        builder = builder.with_position(place);
+    }
+    if let Some(icon) = icon {
+        builder = builder.with_icon(icon);
+    }
+    let id = egui::ViewportId::from_hash_of("monun.diagram_window");
+    let close = ctx.show_viewport_immediate(id, builder, |ui, _class| window_ui(ui, cache, lang));
+    if close {
         cache.zoomed = None;
     }
+}
+
+/// The diagram window's zoom: how small and large it goes (points per SVG unit), and the most a
+/// small diagram is enlarged to fit the window.
+#[cfg(feature = "diagrams")]
+const ZOOM_MIN: f32 = 0.1;
+#[cfg(feature = "diagrams")]
+const ZOOM_MAX: f32 = 6.0;
+#[cfg(feature = "diagrams")]
+const FIT_MAX: f32 = 2.0;
+/// One step of the zoom buttons and keys.
+#[cfg(feature = "diagrams")]
+const ZOOM_STEP: f32 = 1.25;
+
+/// What the window's tool bar and keys ask of the zoom.
+#[cfg(feature = "diagrams")]
+enum ZoomTo {
+    Fit,
+    By(f32),
+    Exactly(f32),
+}
+
+/// The diagram window's content. Returns whether it is to close.
+#[cfg(feature = "diagrams")]
+fn window_ui(ui: &mut Ui, cache: &mut Cache, lang: Language) -> bool {
+    use egui::{Key as K, Modifiers, Sense, pos2, vec2};
+    let ctx = ui.ctx().clone();
+    cache.receive(&ctx);
+    let t = Tokens::get(&ctx);
+    if ctx.input(|i| i.viewport().close_requested() || i.key_pressed(K::Escape)) {
+        return true;
+    }
+    let Some(z) = cache.zoomed.as_ref() else { return true };
+    let (source, dark) = (z.source, z.dark);
+    let own = cache.sizes.get(&(source, dark)).copied().filter(|s| s.x > 0.0 && s.y > 0.0).unwrap_or(vec2(640.0, 400.0));
+    let page = ui.max_rect();
+    ui.painter().rect_filled(page, 0.0, if t.dark { t.window } else { t.grid_bg });
+
+    // The tool bar: − zoom +, Fit to Window, 100%, and how to move about.
+    let bar = egui::Rect::from_min_size(page.min, vec2(page.width(), 36.0));
+    ui.painter().rect_filled(bar, 0.0, t.ribbon);
+    ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], egui::Stroke::new(1.0, t.ribbon_border));
+    let canvas = egui::Rect::from_min_max(pos2(page.left(), bar.bottom()), page.max);
+    let fit = ((canvas.width() - 32.0) / own.x).min((canvas.height() - 32.0) / own.y).clamp(ZOOM_MIN, FIT_MAX);
+    let zoom = z.zoom.unwrap_or(fit);
+    let fitting = z.zoom.is_none();
+    let mut to = None;
+    let mut bar_ui =
+        ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    if bar_ui.button("−").on_hover_text(format!("{} (Ctrl+−)", lang.tr("Zoom Out"))).clicked() {
+        to = Some(ZoomTo::By(1.0 / ZOOM_STEP));
+    }
+    bar_ui.add(egui::Label::new(egui::RichText::new(format!("{:.0}%", zoom * 100.0)).font(crate::theme::ui_font(12.5))).selectable(false));
+    if bar_ui.button("+").on_hover_text(format!("{} (Ctrl++)", lang.tr("Zoom In"))).clicked() {
+        to = Some(ZoomTo::By(ZOOM_STEP));
+    }
+    bar_ui.add_space(6.0);
+    if bar_ui.add(egui::Button::selectable(fitting, lang.tr("Fit to Window"))).on_hover_text("Ctrl+0").clicked() {
+        to = Some(ZoomTo::Fit);
+    }
+    if bar_ui.button("100%").clicked() {
+        to = Some(ZoomTo::Exactly(1.0));
+    }
+    bar_ui.add_space(10.0);
+    let hint =
+        egui::RichText::new(lang.tr("Ctrl+wheel to zoom, drag to move, double-click to fit")).font(crate::theme::ui_font(11.5)).color(t.text_dim);
+    bar_ui.add(egui::Label::new(hint).truncate());
+    let keys = ctx.input_mut(|i| {
+        if i.consume_key(Modifiers::COMMAND, K::Plus) || i.consume_key(Modifiers::COMMAND, K::Equals) {
+            Some(ZoomTo::By(ZOOM_STEP))
+        } else if i.consume_key(Modifiers::COMMAND, K::Minus) {
+            Some(ZoomTo::By(1.0 / ZOOM_STEP))
+        } else if i.consume_key(Modifiers::COMMAND, K::Num0) {
+            Some(ZoomTo::Fit)
+        } else {
+            None
+        }
+    });
+    to = to.or(keys);
+    // Ctrl+wheel (and a pinch) over the diagram zooms about the pointer.
+    let (wheel, pointer) = ctx.input(|i| (i.zoom_delta(), i.pointer.hover_pos()));
+    let over = pointer.filter(|p| canvas.contains(*p));
+    if (wheel - 1.0).abs() > f32::EPSILON && over.is_some() {
+        to = Some(ZoomTo::By(wheel));
+    }
+    if let Some(to) = to
+        && let Some(z) = cache.zoomed.as_mut()
+    {
+        let new = match to {
+            ZoomTo::Fit => None,
+            ZoomTo::By(f) => Some((zoom * f).clamp(ZOOM_MIN, ZOOM_MAX)),
+            ZoomTo::Exactly(v) => Some(v),
+        };
+        // The point under the pointer (or the middle) stays where it is.
+        if let Some((inner, offset)) = z.last {
+            let after = new.unwrap_or(fit);
+            let anchor = over.unwrap_or(inner.center());
+            let at = anchor - inner.min;
+            z.scroll = Some(((at + offset) * (after / zoom) - at).max(vec2(0.0, 0.0)));
+        }
+        z.zoom = new;
+        ctx.request_repaint();
+    }
+    let zoom = cache.zoomed.as_ref().and_then(|z| z.zoom).unwrap_or(fit);
+
+    // The drawing at this zoom, drawn for it once it is in (the nearest one stretched meanwhile).
+    let ppp = ctx.pixels_per_point();
+    let key = Key { source, scale: thousandths(zoom * ppp), dark };
+    if !cache.entries.contains_key(&key) && !cache.drawing(source, dark) {
+        let text = cache.zoomed.as_ref().map(|z| z.text.clone()).unwrap_or_default();
+        cache.start(&ctx, key, text);
+    }
+    let frame = ctx.cumulative_frame_nr();
+    let ready = |k: &Key, e: &Entry| k.source == source && k.dark == dark && matches!(e.state, State::Ready(_));
+    let shown = match cache.entries.get(&key) {
+        Some(e) if matches!(e.state, State::Ready(_)) => Some(key),
+        _ => cache.entries.iter().filter(|(k, e)| ready(k, e)).min_by_key(|(k, _)| k.scale.abs_diff(key.scale)).map(|(k, _)| *k),
+    };
+    for k in [Some(key), shown].into_iter().flatten() {
+        if let Some(e) = cache.entries.get_mut(&k) {
+            e.used = frame;
+        }
+    }
+    let texture = shown.and_then(|k| cache.entries.get(&k)).and_then(|e| match &e.state {
+        State::Ready(texture) => Some(texture.clone()),
+        _ => None,
+    });
+    let scroll = cache.zoomed.as_mut().and_then(|z| z.scroll.take());
+    let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas));
+    let wheel_and_bars = egui::scroll_area::ScrollSource { scroll_bar: true, drag: egui::scroll_area::DragScroll::Never, mouse_wheel: true };
+    let mut area = egui::ScrollArea::both().id_salt("monun.diagram_window").auto_shrink([false, false]).scroll_source(wheel_and_bars);
+    if let Some(offset) = scroll {
+        area = area.scroll_offset(offset);
+    }
+    let mut fit_again = false;
+    let mut pan = None;
+    let out = area.show(&mut canvas_ui, |ui| {
+        let size = own * zoom;
+        let room = ui.available_size();
+        let pad = ((room - size) / 2.0).max(vec2(16.0, 16.0));
+        let (rect, resp) = ui.allocate_exact_size(size + pad * 2.0, Sense::click_and_drag());
+        let image = egui::Rect::from_min_size(rect.min + pad, size);
+        match &texture {
+            Some(texture) => {
+                ui.painter().image(texture.id(), image, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+            }
+            None => {
+                ui.put(egui::Rect::from_center_size(image.center(), vec2(24.0, 24.0)), egui::Spinner::new());
+            }
+        }
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, lang.tr("Diagram")));
+        if resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            pan = Some(resp.drag_delta());
+        } else if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        fit_again = resp.double_clicked();
+    });
+    if let Some(z) = cache.zoomed.as_mut() {
+        z.last = Some((out.inner_rect, out.state.clamped_offset()));
+        if let Some(delta) = pan {
+            z.scroll = Some((out.state.clamped_offset() - delta).max(vec2(0.0, 0.0)));
+            ctx.request_repaint();
+        }
+        if fit_again {
+            z.zoom = None;
+            z.scroll = Some(vec2(0.0, 0.0));
+        }
+    }
+    false
 }

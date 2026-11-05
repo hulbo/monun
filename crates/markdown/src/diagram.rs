@@ -98,8 +98,113 @@ fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_rend
     if flowchart {
         layered::relayout(&graph, &mut layout);
     }
-    let svg = mermaid_rs_renderer::render_svg(&layout, &options.theme, &config);
+    let svg = cylinders(&mermaid_rs_renderer::render_svg(&layout, &options.theme, &config));
     Ok(if flowchart { without_label_borders(&svg) } else { svg })
+}
+
+/// The SVG with each cylinder (`[(…)]`, a database) drawn as Mermaid draws one. The renderer
+/// writes a cylinder as a top ellipse, a rectangle and a bottom ellipse, each with its full
+/// outline: a line across the top, a straight bottom and the bottom's back arc all showed. Here it
+/// is one outline (the top's back arc, the sides, the bottom's front arc) with the top's front arc
+/// over it, and its label (centred on the whole shape) moved down below the top where they met.
+fn cylinders(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(at) = rest.find("<ellipse ") {
+        let (before, from) = rest.split_at(at);
+        out.push_str(before);
+        match cylinder_at(from) {
+            Some((drawing, used)) => {
+                out.push_str(&drawing);
+                rest = from.get(used..).unwrap_or_default();
+            }
+            None => {
+                let end = from.find("/>").map_or(from.len(), |e| e + 2);
+                out.push_str(from.get(..end).unwrap_or(from));
+                rest = from.get(end..).unwrap_or_default();
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The tag opening `s` (after any white space) when it starts with `open`, and the bytes up to its
+/// end.
+fn tag_at<'a>(s: &'a str, open: &str) -> Option<(&'a str, usize)> {
+    let lead = s.len() - s.trim_start().len();
+    let t = s.get(lead..)?;
+    if !t.starts_with(open) {
+        return None;
+    }
+    let end = t.find("/>")? + 2;
+    Some((t.get(..end)?, lead + end))
+}
+
+/// An attribute's value in a tag.
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let at = tag.find(&key)? + key.len();
+    let rest = tag.get(at..)?;
+    rest.get(..rest.find('"')?)
+}
+
+/// The cylinder starting `s`, when its three tags are one: what to write in their place, and the
+/// bytes they took.
+fn cylinder_at(s: &str) -> Option<(String, usize)> {
+    let (top, a) = tag_at(s, "<ellipse ")?;
+    let (body, b) = tag_at(s.get(a..)?, "<rect ")?;
+    let (bottom, c) = tag_at(s.get(a + b..)?, "<ellipse ")?;
+    let num = |t: &str, k: &str| attr(t, k).and_then(|v| v.parse::<f32>().ok());
+    let (cx, cy, rx, ry) = (num(top, "cx")?, num(top, "cy")?, num(top, "rx")?, num(top, "ry")?);
+    let (x, y, w, h) = (num(body, "x")?, num(body, "y")?, num(body, "width")?, num(body, "height")?);
+    let near = |p: f32, q: f32| (p - q).abs() < 0.05;
+    let one = near(x, cx - rx) && near(w, 2.0 * rx) && near(y, cy) && near(num(bottom, "cx")?, cx) && near(num(bottom, "cy")?, cy + h);
+    if !one || attr(bottom, "fill") != Some("none") {
+        return None;
+    }
+    // The top's fill, and its stroke as written after it.
+    let fill = attr(top, "fill")?;
+    let after_fill = top.find(" fill=\"")?;
+    let strokes = top.get(after_fill..)?.splitn(3, '"').nth(2)?.trim_end_matches("/>").trim();
+    let (left, right, bottom_y) = (cx - rx, cx + rx, cy + h);
+    let mut drawing = format!(
+        "<path d=\"M {left:.2} {cy:.2} A {rx:.2} {ry:.2} 0 0 1 {right:.2} {cy:.2} L {right:.2} {bottom_y:.2} A {rx:.2} {ry:.2} 0 0 1 {left:.2} {bottom_y:.2} Z\" fill=\"{fill}\" {strokes}/>\
+         <path d=\"M {left:.2} {cy:.2} A {rx:.2} {ry:.2} 0 0 0 {right:.2} {cy:.2}\" fill=\"none\" {strokes}/>"
+    );
+    let mut used = a + b + c;
+    if let Some((label, taken)) = s.get(used..).and_then(|rest| cylinder_label(rest, (cx, cy, ry, h))) {
+        drawing.push_str(&label);
+        used += taken;
+    }
+    Some((drawing, used))
+}
+
+/// A cylinder's label (the `<text>` that follows it, centred on it) moved down to clear the top's
+/// front arc, as far as the bottom's leaves room: its opening tag rewritten, and the bytes it took.
+/// `None` when it needs no move.
+fn cylinder_label(rest: &str, (cx, cy, ry, h): (f32, f32, f32, f32)) -> Option<(String, usize)> {
+    let lead = rest.len() - rest.trim_start().len();
+    let t = rest.get(lead..)?;
+    if !t.starts_with("<text ") {
+        return None;
+    }
+    let open = t.get(..=t.find('>')?)?;
+    let num = |k: &str| attr(open, k).and_then(|v| v.parse::<f32>().ok());
+    if (num("x")? - cx).abs() > 0.05 {
+        return None;
+    }
+    let (y, size) = (num("y")?, num("font-size").unwrap_or(14.0));
+    let lines = t.find("</text>").and_then(|e| t.get(..e)).map_or(1, |inner| inner.matches("<tspan").count().max(1));
+    // The first line's top and the last line's bottom, at the renderer's 1.5 line spacing.
+    let first_top = y - 0.85 * size;
+    let last_bottom = y + (lines as f32 - 1.0) * size * 1.5 + 0.3 * size;
+    let shift = (cy + ry + 3.0 - first_top).min(cy + h + ry - 3.0 - last_bottom);
+    if shift <= 0.0 {
+        return None;
+    }
+    let old = format!(" y=\"{}\"", attr(open, "y")?);
+    Some((open.replacen(&old, &format!(" y=\"{:.2}\"", y + shift), 1), lead + open.len()))
 }
 
 /// The room either side of a flowchart box's text.
@@ -215,6 +320,25 @@ mod tests {
         assert!(!svg.contains("&quot;보내기") && !svg.contains("\"보내기"), "without the quotes Mermaid writes it in");
         assert!(svg.contains("data-label-kind=\"center\""), "on a background");
         assert!(!svg.contains("stroke-opacity=\"0.45\""), "with no frame");
+    }
+
+    #[test]
+    fn a_cylinder_is_one_outline_with_its_top_in_front() {
+        let drawn = svg("flowchart LR\n    A[(원장)] --> B[끝]", false).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!drawn.contains("<ellipse"), "no ellipse of its own, nor its full bottom");
+        assert_eq!(drawn.matches(" A ").count(), 3, "the top's two arcs and the bottom's front one");
+        // A label of three lines starts below the top.
+        let drawn = svg("flowchart LR\n    A[(\"하나<br>둘<br>셋\")] --> B[끝]", false).unwrap_or_else(|e| panic!("{e}"));
+        let num = |tag: &str, k: &str| attr(tag, k).and_then(|v| v.parse::<f32>().ok()).unwrap_or_default();
+        let arc = drawn.find(" A ").unwrap_or_default();
+        let path = drawn.get(..arc).and_then(|head| head.rfind("<path")).and_then(|i| drawn.get(i..)).unwrap_or_default();
+        let text = drawn.find("<text ").and_then(|i| drawn.get(i..)).unwrap_or_default();
+        let words: Vec<f32> = path.split_whitespace().map(|v| v.parse().unwrap_or(f32::NAN)).collect();
+        let (cy, ry) = (words.get(3).copied().unwrap_or_default(), words.get(6).copied().unwrap_or_default());
+        assert!(num(text, "y") - 0.85 * num(text, "font-size") >= cy + ry, "{cy} {ry}: {text:.80}");
+        // Anything else stays as written.
+        let other = "<svg><ellipse cx=\"1\" cy=\"1\" rx=\"1\" ry=\"1\"/><rect x=\"0\" y=\"0\" width=\"5\" height=\"5\"/></svg>";
+        assert_eq!(cylinders(other), other);
     }
 
     #[test]

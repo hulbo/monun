@@ -405,6 +405,8 @@ fn main() -> eframe::Result<()> {
     // opened or made is a tab at the bottom of its one window.
     let mut app = SheetApp::new(session, services());
     app.use_file_tabs();
+    // A diagram's own window carries the app's icon too.
+    app.window_icon = icon().map(std::sync::Arc::new);
     app.watch_desktop_theme();
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;

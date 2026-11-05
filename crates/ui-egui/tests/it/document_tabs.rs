@@ -103,10 +103,21 @@ fn wait_for(h: &mut Harness, label: &str) -> bool {
 fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
     let mut h = with_document("```mermaid\nflowchart TD\n  A[start] --> B[end]\n```\n");
     assert!(wait_for(&mut h, "Diagram"), "the flowchart is drawn");
-    // A click shows it enlarged.
+    // A click opens its own window, the whole diagram fitted in it.
     h.get_by_label("Diagram").click();
     h.run_steps(3);
-    assert!(h.query_all_by_label("Diagram").count() >= 2, "the enlarged diagram's window opened");
+    assert!(h.query_all_by_label("Diagram").count() >= 2, "the diagram's window opened");
+    use egui_kittest::kittest::NodeT as _;
+    let fit = h.get_by_label("Fit to Window");
+    assert!(fit.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True), "fitted at first");
+    // Zoomed in, it no longer fits; Ctrl+0 fits it again; Esc closes the window.
+    h.get_by_label("+").click();
+    h.run_steps(3);
+    assert!(h.get_by_label("Fit to Window").accesskit_node().toggled() != Some(egui::accesskit::Toggled::True));
+    press(&mut h, Key::Num0, Modifiers::COMMAND);
+    assert!(h.get_by_label("Fit to Window").accesskit_node().toggled() == Some(egui::accesskit::Toggled::True));
+    press(&mut h, Key::Escape, Modifiers::NONE);
+    assert!(h.query_by_label("Fit to Window").is_none(), "Esc closes it");
 
     let mut h = with_document("```mermaid\nnot a diagram\n```\n");
     assert!(wait_for(&mut h, "This diagram has an error:"));

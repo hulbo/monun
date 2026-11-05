@@ -81,6 +81,7 @@ impl SheetApp {
             ui_window: None,
             parked: HashMap::new(),
             native_windows: false,
+            window_icon: None,
             file_tabs: false,
             groups_frozen: false,
             arrange_windows: None,

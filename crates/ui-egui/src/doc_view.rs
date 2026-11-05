@@ -620,7 +620,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     if let Some((d, line)) = app.doc_view.top {
         app.doc_view.tops.insert(d, line);
     }
-    diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language);
+    diagram::zoom_window(ui.ctx(), &mut app.doc_view.diagrams, app.ui.language, app.window_icon.clone());
     idle_commit(app, ui.ctx());
 }
 

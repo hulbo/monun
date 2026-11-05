@@ -378,6 +378,8 @@ pub struct SheetApp {
     /// tests, embedding hosts) one window shows the active workbook window, and its close button
     /// quits.
     pub native_windows: bool,
+    /// The app's icon, for windows it opens of its own (a diagram's).
+    pub window_icon: Option<std::sync::Arc<egui::IconData>>,
     /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
     /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
     /// them, and with no file open a start page shows instead of a blank workbook. The desktop app
