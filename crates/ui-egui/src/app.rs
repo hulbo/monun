@@ -253,6 +253,8 @@ impl SheetApp {
         }
         if start_page {
             crate::file_tabs::bottom_bar(self, ui);
+            // The group panel, to go to a group's files from here.
+            panes::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| crate::file_tabs::start_page(self, ui));
         } else if self.backstage.is_some() {
             // File tab: the Backstage view replaces everything below the title bar.

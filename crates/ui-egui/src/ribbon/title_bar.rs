@@ -1,5 +1,6 @@
 use super::controls::{act, control_keytip};
 use super::{Color32, Icon, Sense, SheetApp, Stroke, StrokeKind, Tokens, Ui, icon_button, json, pos2, small_button, theme, theme_choices, vec2};
+use crate::widgets::toggle_icon_button;
 
 /// macOS draws the window into the title bar (`with_fullsize_content_view`) and AppKit paints the
 /// traffic lights itself, centred in its standard 28 pt title-bar band. Moving them would take
@@ -61,6 +62,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                     if app.file_tabs {
                         ui.add_space(6.0);
                         crate::groups::button(app, ui, &t);
+                        group_panel_button(app, ui, ch);
                     }
                 });
                 return;
@@ -149,13 +151,18 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 // Copy keep what Share offered.
                 if app.file_tabs {
                     crate::groups::button(app, ui, &t);
+                    group_panel_button(app, ui, ch);
                 } else {
                     share(app, ui);
                 }
-                let __k = icon_button(ui, Icon::Comment, t.text_dim, "Comments", vec2(28.0, ch));
-                control_keytip(app, ui, &__k, "comments");
-                if __k.clicked() {
-                    app.open_dialog("comments", json!({}));
+                // Memos are for workbooks and Markdown files: a SQL or text file has no button.
+                if crate::panes::memo_allowed(app) {
+                    let shown = crate::panes::memos_shown(app);
+                    let __k = toggle_icon_button(ui, Icon::Comment, shown, "Comments", vec2(28.0, ch));
+                    control_keytip(app, ui, &__k, "comments");
+                    if __k.clicked() {
+                        crate::panes::toggle_memos(app);
+                    }
                 }
                 theme_switch(app, ui, &t);
                 let lang = app.ui.language;
@@ -232,5 +239,14 @@ mod title_bar_tests {
         let margin = (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
         let lights_end = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT;
         assert_eq!(MAC_CONTENT_LEFT - lights_end, margin);
+    }
+}
+
+/// The group panel's button beside the group button: shows and hides the panel as the memo
+/// button does the memo panel.
+fn group_panel_button(app: &mut SheetApp, ui: &mut Ui, height: f32) {
+    let shown = crate::panes::groups_shown(app);
+    if toggle_icon_button(ui, Icon::SheetList, shown, "Group panel", vec2(28.0, height)).clicked() {
+        crate::panes::toggle_groups(app);
     }
 }

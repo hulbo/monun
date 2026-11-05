@@ -1,4 +1,6 @@
-//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart.
+//! Right-hand task panes: Comments (the memo panel), Groups, Watch Window, Selection Pane, Format
+//! Chart. One shows at a time. The memo panel is for workbooks and Markdown; while a SQL or plain
+//! text file is in front it stays hidden.
 
 use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
@@ -9,13 +11,27 @@ use crate::theme::{self, Tokens};
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     // The Comments pane is engine state (`review.showComments`, so agents can drive it); the other
     // panes are UI state. One pane shows at a time: opening another one closes Comments.
+    // The group panel is the interface's, for every window (`UiState::group_panel`); the memo
+    // panel wins over it when both are asked for.
     if app.grid.pane.as_deref() == Some("comments") {
         app.grid.pane = None;
         app.run_or_alert("review.showComments", json!({"on": true}));
     } else if app.grid.pane.is_some() && app.session.comments_pane {
         app.run_or_alert("review.showComments", json!({"on": false}));
     }
-    let Some(pane) = app.grid.pane.clone().or_else(|| app.session.comments_pane.then(|| "comments".to_string())) else { return };
+    if app.grid.pane.is_some() {
+        app.ui.group_panel = false;
+    }
+    let shown = app
+        .grid
+        .pane
+        .clone()
+        .or_else(|| if app.session.comments_pane { Some("comments".to_string()) } else { app.ui.group_panel.then(|| "group".to_string()) });
+    let Some(pane) = shown else { return };
+    // With no file open (the start page) only the group panel has anything to show.
+    if (pane == "comments" && !memo_allowed(app)) || (app.session.active().is_none() && pane != "group") {
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     // Capped at half the window so a pane can never cover the sheet, whatever its content asks for.
     let max = (ui.available_width() / 2.0).max(300.0);
@@ -24,6 +40,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let title = match pane.as_str() {
                 "comments" => "Comments",
+                "group" => "Groups",
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
@@ -32,22 +49,70 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             ui.label(egui::RichText::new(app.ui.language.tr(title)).font(theme::ui_bold(15.0)));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if crate::widgets::icon_button(ui, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
-                    if pane == "comments" {
-                        app.run_or_alert("review.showComments", json!({"on": false}));
+                    match pane.as_str() {
+                        "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
+                        "group" => app.ui.group_panel = false,
+                        _ => app.grid.pane = None,
                     }
-                    app.grid.pane = None;
                 }
             });
         });
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
+            // A document's memos are its own; a sheet's are its cells' comments.
+            "comments" if crate::doc_view::is_active(app) => document_memos(app, ui),
             "comments" => comments(app, ui),
+            "group" => crate::groups::panel(app, ui),
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
             "formatChart" => format_chart(app, ui),
             _ => {}
         });
     });
+}
+
+/// Whether the memo panel and its button are offered for the file in front: a workbook or a
+/// Markdown file, not a SQL or plain text file (nor the start page).
+pub(crate) fn memo_allowed(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(|d| matches!(d.text_kind(), None | Some(monun_engine::docs::TextKind::Markdown)))
+}
+
+/// Whether the memo panel shows (its button is on).
+pub(crate) fn memos_shown(app: &SheetApp) -> bool {
+    app.session.comments_pane && app.grid.pane.is_none()
+}
+
+/// Whether the group panel shows (its button is on).
+pub(crate) fn groups_shown(app: &SheetApp) -> bool {
+    app.ui.group_panel && !app.session.comments_pane && app.grid.pane.is_none()
+}
+
+/// Shows or hides the memo panel (the title bar's memo button), closing any other pane.
+pub(crate) fn toggle_memos(app: &mut SheetApp) {
+    let on = !memos_shown(app);
+    if on {
+        app.grid.pane = None;
+        app.ui.group_panel = false;
+    }
+    app.run_or_alert("review.showComments", json!({"on": on}));
+}
+
+/// Shows or hides the group panel (the title bar's group panel button), closing any other pane.
+pub(crate) fn toggle_groups(app: &mut SheetApp) {
+    let on = !groups_shown(app);
+    if on {
+        app.grid.pane = None;
+        if app.session.comments_pane {
+            app.run_or_alert("review.showComments", json!({"on": false}));
+        }
+    }
+    app.ui.group_panel = on;
+}
+
+/// A document's memos (a Markdown file, or a document tab of a workbook).
+fn document_memos(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    ui.label(egui::RichText::new(lang.tr("No memos in this document yet.")).italics());
 }
 
 /// Lists comments and replies, links each to its cell, and runs delete/resolve/reopen/reply commands.

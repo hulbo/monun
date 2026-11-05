@@ -106,6 +106,8 @@ pub struct UiState {
     /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name.
     pub groups: Vec<groups::FileGroup>,
     pub group: String,
+    /// The group panel ([`groups::panel`]) shows on the right, whichever file is in front.
+    pub group_panel: bool,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
     pub doc_views: Vec<DocViewMemory>,
 }
@@ -158,6 +160,7 @@ impl Default for UiState {
             groups: vec![],
             group: String::new(),
             doc_views: vec![],
+            group_panel: false,
         }
     }
 }

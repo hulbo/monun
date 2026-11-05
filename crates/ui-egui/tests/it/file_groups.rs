@@ -175,3 +175,84 @@ fn groups_can_be_renamed_and_deleted() {
     assert!(dir.join("a.xlsx").exists(), "the group's files stay where they are");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Whether the toggle `label` (a title bar panel button) shows as on.
+fn toggled(h: &egui_kittest::Harness<'static, SheetApp>, label: &str) -> Option<bool> {
+    use egui_kittest::kittest::NodeT as _;
+    h.query_by_role_and_label(egui::accesskit::Role::CheckBox, label).map(|n| n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True))
+}
+
+#[test]
+fn the_memo_and_group_panels_show_and_hide_from_the_title_bar() {
+    let dir = folder("panels");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    // The Markdown file is in front: its memos, in a document's words.
+    assert_eq!(toggled(&h, "Comments"), Some(false));
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Comments").click();
+    h.run_steps(3);
+    assert_eq!(toggled(&h, "Comments"), Some(true));
+    assert!(h.query_by_label("No memos in this document yet.").is_some());
+    assert!(h.query_by_label("No comments on this sheet yet. Select a cell and choose New Comment.").is_none(), "no words for cells");
+    // The same button hides it.
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Comments").click();
+    h.run_steps(3);
+    assert_eq!(toggled(&h, "Comments"), Some(false));
+    assert!(h.query_by_label("No memos in this document yet.").is_none());
+
+    // The group panel takes its place, and goes the same way.
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Comments").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    assert_eq!((toggled(&h, "Group panel"), toggled(&h, "Comments")), (Some(true), Some(false)), "one panel at a time");
+    assert!(h.query_by_label("New Group…").is_some(), "the groups");
+    assert_eq!(h.query_all_by_label("b.md").count(), 2, "and their files, beside the file tab");
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("New Group…").is_none());
+
+    // A SQL file has no memos, and no memo button.
+    std::fs::write(dir.join("c.sql"), "SELECT 1\n").unwrap();
+    h.state_mut().run("file.open", json!({"path": path(&dir, "c.sql")})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::CheckBox, "Comments").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_file_of_another_group_in_the_group_panel_opens_that_group_with_it_in_front() {
+    let dir = folder("panel-open");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    h.run_steps(3);
+    assert!(open_names(&h).is_empty());
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // Default group is folded: its arrow shows its files.
+    assert!(h.query_by_label("a.xlsx").is_none());
+    h.get_by_label("Default group").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.group, "Default group", "a click on another group goes to it");
+    assert_eq!(open_names(&h), ["a.xlsx", "b.md"]);
+    // Back in SFR002, a file of Default group from the panel: Default group opens with it in front.
+    groups::switch(h.state_mut(), Target::Group("SFR002".into()));
+    h.run_steps(3);
+    let arrow = h.get_by_label("Default group").rect().left_center() + egui::vec2(10.0, 0.0);
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerMoved(arrow));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: arrow,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().ui.group, "SFR002", "its arrow only shows its files");
+    h.get_by_label("a.xlsx").click();
+    h.run_steps(4);
+    assert_eq!(h.state().ui.group, "Default group");
+    assert_eq!(h.state().session.active().map(|d| d.display_title()).as_deref(), Some("a.xlsx"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

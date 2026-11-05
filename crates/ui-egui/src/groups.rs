@@ -288,6 +288,130 @@ fn menu(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
+/// What a click in the group panel asks for, done once the panel is drawn.
+enum PanelAction {
+    /// Go to this group.
+    Switch(String),
+    /// Show or hide a group's files.
+    Fold(String),
+    /// Show this file: its tab in the group in use, or its group's files with it in front.
+    Open { group: String, path: String },
+    /// Open a group dialog (New, Rename, Delete).
+    Dialog(&'static str, Json),
+}
+
+/// The group panel (the right-hand pane beside the files, with file tabs): every group with its
+/// files, the group in use marked and its files shown. A click on a group goes to it, and on a file
+/// shows it, going to its group first when that isn't the group in use. New Group is at the top; a
+/// group's right-click menu renames or deletes it. The title bar's group button keeps its menu.
+pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let t = Tokens::get(ui.ctx());
+    let current = current(app);
+    let groups = app.ui.groups.clone();
+    let open_tab = app.session.active().and_then(|d| d.path.clone());
+    let dirty: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).filter_map(|d| d.path.clone()).collect();
+    let mut action = None;
+    if ui.button(lang.tr("New Group…")).clicked() {
+        action = Some(PanelAction::Dialog("newGroup", json!({})));
+    }
+    ui.add_space(6.0);
+    let width = ui.available_width();
+    for g in &groups {
+        let on = g.name == current;
+        let fold_id = egui::Id::unique(("monun.group_panel.open", &g.name));
+        let open = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(on);
+        // The group's row: the arrow folds it, the rest goes to it.
+        let (r, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &g.name));
+        if on {
+            ui.painter().rect_filled(r, 4.0, t.pressed);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, 4.0, t.hover);
+        }
+        let arrow = Rect::from_center_size(pos2(r.left() + 10.0, r.center().y), vec2(10.0, 10.0));
+        icons::paint(ui.painter(), arrow, if open { Icon::Chevron } else { Icon::Right }, t.text_dim);
+        let folder = Rect::from_center_size(pos2(arrow.right() + 12.0, r.center().y), vec2(14.0, 14.0));
+        icons::paint(ui.painter(), folder, Icon::Folder, if on { t.accent } else { t.text_dim });
+        let count = lang.tr("{n} files").replace("{n}", &g.files.len().to_string());
+        let small = theme::ui_font(11.5);
+        let count_w = ui.painter().layout_no_wrap(count.clone(), small.clone(), t.text_dim).size().x;
+        ui.painter().text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, &count, small, t.text_dim);
+        let font = if on { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
+        let name = crate::file_tabs::fit(ui, &g.name, &font, (r.right() - folder.right() - count_w - 20.0).max(20.0));
+        ui.painter().text(pos2(folder.right() + 6.0, r.center().y), Align2::LEFT_CENTER, name, font, t.text);
+        let on_arrow = resp.interact_pointer_pos().is_some_and(|p| p.x < folder.left());
+        if resp.clicked() {
+            action = Some(if on || on_arrow { PanelAction::Fold(g.name.clone()) } else { PanelAction::Switch(g.name.clone()) });
+        }
+        let resp = resp.on_hover_text(if on { lang.tr("The group in use") } else { lang.tr("Go to this group: its files open, these close") });
+        resp.context_menu(|ui| {
+            if !on && ui.button(lang.tr("Go to This Group")).clicked() {
+                action = Some(PanelAction::Switch(g.name.clone()));
+            }
+            if ui.button(lang.tr("Rename Group…")).clicked() {
+                action = Some(PanelAction::Dialog("renameGroup", json!({"name": g.name})));
+            }
+            if !on && ui.button(lang.tr("Delete Group…")).clicked() {
+                action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
+            }
+        });
+        if !open {
+            continue;
+        }
+        if g.files.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(40.0);
+                ui.label(egui::RichText::new(lang.tr("No files")).font(theme::ui_font(12.0)).color(t.text_dim).italics());
+            });
+        }
+        for path in &g.files {
+            let name = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
+            let front = on && open_tab.as_deref() == Some(path.as_str());
+            let (r, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, &name));
+            if front || resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            let icon = Rect::from_center_size(pos2(r.left() + 46.0, r.center().y), vec2(14.0, 14.0));
+            icons::paint(ui.painter(), icon, crate::file_tabs::path_icon(path), if front { t.accent } else { t.text_dim });
+            let font = theme::ui_font(12.5);
+            let unsaved = on && dirty.contains(path);
+            let shown = crate::file_tabs::fit(ui, &name, &font, (r.right() - icon.right() - 24.0).max(20.0));
+            let ink = if on { t.text } else { t.text_dim };
+            ui.painter().text(pos2(icon.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, ink);
+            if unsaved {
+                ui.painter().circle_filled(pos2(r.right() - 10.0, r.center().y), 3.0, t.text_dim);
+            }
+            if resp.on_hover_text(path).clicked() {
+                action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
+            }
+        }
+        ui.add_space(4.0);
+    }
+    match action {
+        Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
+        Some(PanelAction::Fold(name)) => {
+            let fold_id = egui::Id::unique(("monun.group_panel.open", &name));
+            let open = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(name == current);
+            ui.data_mut(|d| d.insert_temp(fold_id, !open));
+        }
+        Some(PanelAction::Open { group, path }) if group == current => {
+            app.open_path(&path);
+            app.follow_active_window();
+        }
+        Some(PanelAction::Open { group, path }) => {
+            // Its group's files open with it in front.
+            if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
+                g.active = Some(path);
+            }
+            switch(app, Target::Group(group));
+        }
+        Some(PanelAction::Dialog(name, params)) => app.open_dialog(name, params),
+        None => {}
+    }
+}
+
 /// The group dialogs: New Group, Rename Group, Delete Group, and the unsaved files a switch asks
 /// about.
 pub(crate) fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut bool) {

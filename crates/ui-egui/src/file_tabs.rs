@@ -393,6 +393,15 @@ fn open_files_list(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], t: &Tokens
 }
 
 /// A file's icon: a sheet for a workbook, a page for Markdown and plain text, a code window for SQL.
+/// The icon of the file at `path`: a workbook's, or a text file's of the kind its name says.
+pub(crate) fn path_icon(path: &str) -> Icon {
+    let kind = match monun_engine::io::FileKind::from_path(path) {
+        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text) => Some(TextKind::of_name(path)),
+        _ => None,
+    };
+    file_icon(kind)
+}
+
 fn file_icon(kind: Option<TextKind>) -> Icon {
     match kind {
         None => Icon::Sheet,
@@ -620,18 +629,13 @@ fn recent_row(ui: &mut Ui, path: &str, width: f32, t: &Tokens) -> egui::Response
     let p = std::path::Path::new(path);
     let name = p.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
     let folder = p.parent().and_then(std::path::Path::to_str).unwrap_or_default().to_string();
-    // A workbook, or a text file of a kind by its name.
-    let kind = match monun_engine::io::FileKind::from_path(path) {
-        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text) => Some(TextKind::of_name(path)),
-        _ => None,
-    };
     let (r, resp) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
     if resp.hovered() {
         ui.painter().rect_filled(r, 4.0, t.hover);
     }
     let i = Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0));
-    icons::paint(ui.painter(), i, file_icon(kind), t.text_dim);
+    icons::paint(ui.painter(), i, path_icon(path), t.text_dim);
     let font = theme::ui_font(13.0);
     let name_shown = fit(ui, &name, &font, width - 48.0);
     ui.painter().text(pos2(i.right() + 12.0, r.top() + 13.0), Align2::LEFT_CENTER, name_shown, font, t.text);

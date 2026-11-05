@@ -68,6 +68,22 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, color: Color32, tip: &str, size: egu
     resp.on_hover_text(tip_text(ui, tip))
 }
 
+/// An icon button that shows and hides something (a side panel): drawn pressed while `on`, and
+/// read by screen readers (and tests) as a check box labelled `tip`.
+pub fn toggle_icon_button(ui: &mut Ui, icon: Icon, on: bool, tip: &str, size: egui::Vec2) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let t = Tokens::get(ui.ctx());
+    if on || resp.is_pointer_button_down_on() {
+        ui.painter().rect_filled(rect, 4.0, t.pressed);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, t.hover);
+    }
+    icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, if on { t.accent } else { t.text_dim });
+    let label = tip_text(ui, tip);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &label));
+    resp.on_hover_text(label)
+}
+
 /// A button for a character the interface inserts (the Symbol gallery). When the current font set
 /// has no glyph for it, the code-drawn icon with the same meaning is painted instead of a tofu
 /// box. Only the button's appearance changes: clicking still inserts the exact requested character.
