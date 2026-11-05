@@ -81,6 +81,7 @@ impl SheetApp {
             parked: HashMap::new(),
             native_windows: false,
             file_tabs: false,
+            groups_frozen: false,
             arrange_windows: None,
         }
     }
@@ -159,6 +160,10 @@ impl SheetApp {
             self.session.new_workbook();
         }
         self.follow_active_window();
+        // The group in use follows its tabs.
+        if self.file_tabs {
+            crate::groups::sync(self);
+        }
     }
 
     /// Window title, next to the close/autosave state: `ViewportCommand::Title` is valid outside a

@@ -5,6 +5,7 @@ type OpenUrl = Box<dyn Fn(&str)>;
 type CopyHtml = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 type Download = Box<dyn Fn(&str, &[u8])>;
 type PrintPdf = Box<dyn Fn(&[u8])>;
+type SaveUi = Box<dyn Fn(&crate::UiState)>;
 
 /// Host services the platform shell provides (file pickers, opening URLs).
 #[derive(Default)]
@@ -41,6 +42,9 @@ pub struct Services {
     /// Web: hand PDF bytes to the browser's print flow directly (no download,
     /// no intermediate file) — opens the system print dialog on that PDF.
     pub print: Option<PrintPdf>,
+    /// Desktop: write the interface preferences now, not only at exit (a file group was made,
+    /// switched to, renamed or deleted).
+    pub save_ui: Option<SaveUi>,
 }
 
 /// Shared queue of files read asynchronously (browser file picker, drag and drop).

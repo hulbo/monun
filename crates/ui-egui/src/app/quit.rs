@@ -23,6 +23,8 @@ impl SheetApp {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        // The files closed while asking stay in the group in use.
+        self.groups_frozen = true;
         match self.dialog.as_mut() {
             // Already asking about a workbook (File › Close): answering it now goes on to quit.
             Some(d) if d.name() == "saveChanges" => {
@@ -84,6 +86,8 @@ impl SheetApp {
     /// about each unsaved workbook in its window; Cancel on any of them stops the quit. A draft its
     /// workbook refuses stops the quit too, with its window in front and the reason shown.
     pub fn request_quit(&mut self, ctx: &egui::Context) {
+        // The files closed while asking stay in the group in use.
+        self.groups_frozen = true;
         while let Some(window) = self.parked_window_with_draft() {
             self.enter_window(window);
             if self.settle_drafts().is_err() {

@@ -29,6 +29,7 @@ mod dialog_move;
 mod document_tabs;
 mod drag_cursor;
 mod error_checking_menu;
+mod file_groups;
 mod file_menu;
 mod file_tabs;
 mod fill_handle_double_click;

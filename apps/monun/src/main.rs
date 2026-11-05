@@ -68,7 +68,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
-        save_prefs(&self.0);
+        if persists() {
+            save_prefs(&self.0);
+        }
         // A clean exit: the save questions are answered, so the recovery copies go.
         self.0.finish_recovery();
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
@@ -101,6 +103,24 @@ fn config_dir() -> Option<std::path::PathBuf> {
 /// them, and keep no log file.
 fn prefs_enabled() -> bool {
     std::env::var_os("MONUN_NO_PREFS").is_none()
+}
+
+/// A run a script drives (`--control`): it reads the preferences but never writes them, so a
+/// test run leaves the user's file groups, recent files and settings as they were.
+static CONTROLLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// This run writes the preferences (`ui.json`, `prefs.json`): it has them and no script drives it.
+fn persists() -> bool {
+    prefs_enabled() && !CONTROLLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Writes `ui.json` (the interface preferences, file groups included) now.
+fn save_ui(ui: &monun_ui_egui::UiState) {
+    let Some(dir) = config_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(b) = serde_json::to_vec_pretty(ui) {
+        let _ = std::fs::write(dir.join("ui.json"), b);
+    }
 }
 
 /// Where the log files live: `logs` in the settings folder, next to `ui.json` (see `logging`).
@@ -160,10 +180,7 @@ fn save_prefs(app: &SheetApp) {
         return;
     }
     let Some(dir) = config_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(b) = serde_json::to_vec_pretty(&app.ui) {
-        let _ = std::fs::write(dir.join("ui.json"), b);
-    }
+    save_ui(&app.ui);
     if let Ok(b) = serde_json::to_vec_pretty(&app.session.prefs) {
         let _ = std::fs::write(dir.join("prefs.json"), b);
     }
@@ -357,7 +374,12 @@ fn main() -> eframe::Result<()> {
     app.watch_desktop_theme();
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;
+    CONTROLLED.store(control_port.is_some(), std::sync::atomic::Ordering::Relaxed);
     load_prefs(&mut app);
+    // File groups are written as soon as they change, so a crash keeps them.
+    if persists() {
+        app.services.save_ui = Some(Box::new(save_ui));
+    }
     // AutoRecover, and the unsaved work of a run that crashed. Not for agents' runs (`--control`,
     // no prefs), which must never pick up or leave the user's recovery copies.
     if prefs_enabled()
@@ -365,6 +387,11 @@ fn main() -> eframe::Result<()> {
         && let Some(dir) = config_dir()
     {
         app.start_recovery(&dir.join("recovery"));
+    }
+    // The files of the group in use open as they were left (not in a test run: its files are the
+    // user's own).
+    if persists() {
+        monun_ui_egui::groups::restore(&mut app);
     }
     // Files named on the command line (a double-click on Windows and Linux) open as File › Open
     // opens them: a password-protected one asks for its password, and errors are shown, not

@@ -45,7 +45,8 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   `monun-cli send 7979 <method> '<json>'` (`ui.screenshot`, `ui.click`, `ui.text`,
   `engine.execute`; see `crates/ui-egui/src/control.rs`). It starts on the start page with no file
   open (file tabs, `crates/ui-egui/src/file_tabs.rs`): run `file.new` first. `MONUN_NO_PREFS=1` keeps
-  a test run off the user's `ui.json` (recent files) and `prefs.json`.
+  a test run off the user's `ui.json` and `prefs.json` entirely; a `--control` run reads them but never
+  writes them, and doesn't reopen the user's file group (`crates/ui-egui/src/groups.rs`).
 - After moving the checkout, run `cargo clean -p xtask`: xtask compiles its own path in.
 - Headless: `monun-cli eval '=SUM(1,2,3)'`,
   `monun-cli run --cmd 'cell.set={"cell":"A1","input":"1"}' --out book.xlsx`.

@@ -26,6 +26,7 @@ pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
 pub mod grid;
+pub mod groups;
 pub mod i18n;
 pub mod icons;
 pub mod keymap;
@@ -102,6 +103,9 @@ pub struct UiState {
     /// [`INTERFACE_SCALE_MIN`]..=[`INTERFACE_SCALE_MAX`]; a malformed saved value reads as 100.
     #[serde(deserialize_with = "lenient_interface_scale")]
     pub interface_scale: u16,
+    /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name.
+    pub groups: Vec<groups::FileGroup>,
+    pub group: String,
 }
 
 pub const INTERFACE_SCALE_MIN: u16 = 75;
@@ -134,6 +138,8 @@ impl Default for UiState {
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
+            groups: vec![],
+            group: String::new(),
         }
     }
 }
@@ -345,6 +351,9 @@ pub struct SheetApp {
     /// them, and with no file open a start page shows instead of a blank workbook. The desktop app
     /// turns it on; without it (web, tests, embedding hosts) the sheet tabs show as in Excel.
     pub file_tabs: bool,
+    /// Quitting is asking about unsaved files: the group in use keeps the files it closes
+    /// ([`groups::sync`]).
+    pub(crate) groups_frozen: bool,
     /// View › Arrange All's layout and windows, waiting for the native windows to move.
     pub arrange_windows: Option<(String, Vec<u64>)>,
 }

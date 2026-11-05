@@ -1004,6 +1004,10 @@ impl Dialog {
             "saveCopy" => Dialog::custom("saveCopy", "Save a Copy", json!({"format": p("format")})),
             "saveChanges" => Dialog::custom("saveChanges", "Save Changes?", json!({"title": p("title"), "quit": p("quit")})),
             "deleteSheet" => Dialog::custom("deleteSheet", "Delete Sheet", json!({"sheet": p("sheet"), "name": p("name")})),
+            "newGroup" => Dialog::custom("newGroup", "New Group", json!({"name": "", "take": false})),
+            "renameGroup" => Dialog::custom("renameGroup", "Rename Group", json!({"name": p("name"), "was": p("name")})),
+            "deleteGroup" => Dialog::custom("deleteGroup", "Delete Group", json!({"name": p("name")})),
+            "switchGroup" => Dialog::custom("switchGroup", "Switch Group", json!({"target": p("target"), "new": p("new"), "files": p("files")})),
             "start" => Dialog::custom("start", "Monun", json!({})),
             "comments" => {
                 app.grid.pane = None;

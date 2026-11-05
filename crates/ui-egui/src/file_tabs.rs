@@ -64,7 +64,7 @@ fn file_tabs(app: &SheetApp) -> Vec<FileTab> {
 }
 
 /// `text` as wide as `max` at most, its end replaced with "…" when it is wider.
-fn fit(ui: &Ui, text: &str, font: &egui::FontId, max: f32) -> String {
+pub(crate) fn fit(ui: &Ui, text: &str, font: &egui::FontId, max: f32) -> String {
     let width = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x;
     if width(text) <= max {
         return text.to_string();
