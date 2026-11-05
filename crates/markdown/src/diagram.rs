@@ -5,7 +5,9 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, OnceLock};
 
-use mermaid_rs_renderer::{RenderOptions, Theme};
+use mermaid_rs_renderer::{DiagramKind, RenderOptions, Theme};
+
+mod layered;
 use resvg::{tiny_skia, usvg};
 
 /// The largest side of a drawn diagram, in pixels.
@@ -66,11 +68,76 @@ pub fn svg(source: &str, dark: bool) -> Result<String, String> {
         options.theme.cluster_border = "#94A3B8".to_owned();
     }
     options.theme.font_family = font_family().to_owned();
-    match std::panic::catch_unwind(AssertUnwindSafe(|| mermaid_rs_renderer::render_strict(source, options))) {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| draw(source, &options))) {
         Ok(Ok(svg)) => Ok(svg),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("The diagram could not be drawn.".to_owned()),
     }
+}
+
+/// The renderer's own steps (parse, lay out, write SVG), a flowchart laid out as Mermaid lays it
+/// out ([`layered`]): `|"text"|` without its quotes, and each label on its arrow over a plain
+/// background.
+fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_renderer::ParseError> {
+    let mut graph = mermaid_rs_renderer::parse_mermaid_strict(source)?.graph;
+    let flowchart = graph.kind == DiagramKind::Flowchart;
+    if flowchart {
+        for edge in &mut graph.edges {
+            for label in [&mut edge.label, &mut edge.start_label, &mut edge.end_label].into_iter().flatten() {
+                *label = unquote(label);
+            }
+        }
+    }
+    // A flowchart's boxes hug their text as Mermaid's do (its padding is 15; the renderer's 30 made
+    // wide drawings, small once fitted to the page).
+    let mut config = options.layout.clone();
+    if flowchart {
+        config.node_padding_x = FLOWCHART_PADDING_X;
+    }
+    let mut layout = mermaid_rs_renderer::compute_layout(&graph, &options.theme, &config);
+    if flowchart {
+        layered::relayout(&graph, &mut layout);
+    }
+    let svg = mermaid_rs_renderer::render_svg(&layout, &options.theme, &config);
+    Ok(if flowchart { without_label_borders(&svg) } else { svg })
+}
+
+/// The room either side of a flowchart box's text.
+const FLOWCHART_PADDING_X: f32 = 20.0;
+
+/// A label written `"text"` (Mermaid's quoted label, which may hold any character) as its text.
+fn unquote(label: &str) -> String {
+    let t = label.trim();
+    match t.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        Some(inner) => inner.to_owned(),
+        None => label.to_owned(),
+    }
+}
+
+/// The SVG with the arrow labels' backgrounds kept and their outlines taken away: Mermaid's labels
+/// sit on their arrows without a frame.
+fn without_label_borders(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(at) = rest.find("<rect data-edge-id=") {
+        let (before, tag_on) = rest.split_at(at);
+        out.push_str(before);
+        let end = tag_on.find("/>").map_or(tag_on.len(), |e| e + 2);
+        let (tag, after) = tag_on.split_at(end);
+        match tag.find("stroke-opacity=\"") {
+            Some(o) => {
+                let value = o + "stroke-opacity=\"".len();
+                let close = tag.get(value..).and_then(|v| v.find('"')).map_or(value, |c| value + c);
+                out.push_str(tag.get(..value).unwrap_or(tag));
+                out.push('0');
+                out.push_str(tag.get(close..).unwrap_or_default());
+            }
+            None => out.push_str(tag),
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Draws a Mermaid diagram.
@@ -139,6 +206,15 @@ mod tests {
     fn the_dark_theme_draws_too() {
         let dark = render("flowchart LR\n  가 --> 나", Options { dark: true, scale: 1.0 }).unwrap_or_else(|e| panic!("{e}"));
         assert!(dark.rgba.chunks(4).any(|px| px[3] > 0));
+    }
+
+    #[test]
+    fn a_quoted_arrow_label_shows_without_its_quotes_or_a_frame() {
+        let svg = svg("flowchart LR\n    A[가] -->|\"보내기 · 받기\"| B[나]", false).unwrap_or_else(|e| panic!("{e}"));
+        assert!(svg.contains("보내기 · 받기"), "the label is drawn");
+        assert!(!svg.contains("&quot;보내기") && !svg.contains("\"보내기"), "without the quotes Mermaid writes it in");
+        assert!(svg.contains("data-label-kind=\"center\""), "on a background");
+        assert!(!svg.contains("stroke-opacity=\"0.45\""), "with no frame");
     }
 
     #[test]
