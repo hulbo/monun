@@ -238,6 +238,9 @@ impl SheetApp {
         }
         // With file tabs and no file open, the start page shows: no ribbon, sheet or File view.
         let start_page = self.file_tabs && self.session.active().is_none();
+        if self.file_tabs {
+            crate::file_tabs::keys(self, &ctx);
+        }
         if start_page {
             self.backstage = None;
         }

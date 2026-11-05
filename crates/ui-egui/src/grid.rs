@@ -325,6 +325,9 @@ pub(crate) fn update_zoom_glide(app: &mut SheetApp, ui: &egui::Ui, place: (u64, 
         let share = egui::emath::exponential_smooth_factor(0.9, 0.1, ui.input(|i| i.stable_dt).min(0.1));
         let z = if glides { zoom_glide_step(shown, to, share) } else { to };
         let _ = app.session.run("view.zoom", json!({"percent": z}));
+        if z == to {
+            app.remember_doc_view();
+        }
         zooming.glide = (z != to).then_some((to, z));
         ui.ctx().request_repaint();
     }

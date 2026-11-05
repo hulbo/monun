@@ -106,7 +106,24 @@ pub struct UiState {
     /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name.
     pub groups: Vec<groups::FileGroup>,
     pub group: String,
+    /// How Markdown files were last shown, most recent first (their .md keeps the text only).
+    pub doc_views: Vec<DocViewMemory>,
 }
+
+/// How a Markdown file was last shown: Edit, Side by Side or View, Fit Width and the zoom. Its .md
+/// keeps the text only, so 모눈 remembers the rest by the file's path.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DocViewMemory {
+    pub path: String,
+    /// `edit`, `split` or `view`; empty when never chosen.
+    pub mode: String,
+    pub fit_width: bool,
+    pub zoom: u16,
+}
+
+/// The most Markdown files whose view is remembered.
+pub const DOC_VIEWS_MAX: usize = 200;
 
 pub const INTERFACE_SCALE_MIN: u16 = 75;
 pub const INTERFACE_SCALE_MAX: u16 = 200;
@@ -140,6 +157,7 @@ impl Default for UiState {
             interface_scale: 100,
             groups: vec![],
             group: String::new(),
+            doc_views: vec![],
         }
     }
 }

@@ -151,6 +151,15 @@ impl Session {
         }
     }
 
+    /// Moves window `id` to place `to` in [`Session::windows`] (a file tab dragged along the
+    /// others); `to` counts the other windows. Unknown ids are ignored.
+    pub fn move_window(&mut self, id: u64, to: usize) {
+        let Some(from) = self.windows.iter().position(|w| w.id == id) else { return };
+        let w = self.windows.remove(from);
+        let to = to.min(self.windows.len());
+        self.windows.insert(to, w);
+    }
+
     pub(crate) fn push_window(&mut self, doc_uid: u64) -> u64 {
         self.next_window = self.next_window.saturating_add(1);
         let id = self.next_window;

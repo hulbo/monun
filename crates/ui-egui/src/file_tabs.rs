@@ -41,6 +41,46 @@ enum TabAction {
     Close(u64),
     CloseOthers(u64),
     CloseAll,
+    /// A tab dragged to another place: the window and its place among the others.
+    Move(u64, usize),
+}
+
+/// What a tab did this frame: a click's action, where it is, and whether it is being dragged or
+/// was just dropped.
+struct TabOut {
+    action: Option<TabAction>,
+    rect: Rect,
+    dragging: bool,
+    dropped: bool,
+}
+
+/// Ctrl+Tab and Ctrl+Shift+Tab show the next and previous file (in tab order, round the end),
+/// and Ctrl+F4 closes the one in front, as in Visual Studio and Excel. Taken before anything else
+/// sees them, so the document editor never types a tab for Ctrl+Tab.
+pub(crate) fn keys(app: &mut SheetApp, ctx: &egui::Context) {
+    if app.dialog.is_some() || app.backstage.is_some() {
+        return;
+    }
+    let (back, next, close) = ctx.input_mut(|i| {
+        let back = i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Tab);
+        let next = i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab);
+        (back, next, i.consume_key(egui::Modifiers::CTRL, egui::Key::F4))
+    });
+    let windows: Vec<u64> = app.session.windows().iter().map(|w| w.id).collect();
+    let at = app.session.active_window().and_then(|a| windows.iter().position(|w| *w == a));
+    if let Some(at) = at
+        && (back || next)
+        && windows.len() > 1
+    {
+        let n = windows.len();
+        let to = if next { (at + 1) % n } else { (at + n - 1) % n };
+        if let Some(w) = windows.get(to) {
+            app.run_or_alert("window.activate", json!({"window": w}));
+        }
+    }
+    if close && let Some(w) = app.session.active_window() {
+        app.run_or_alert("window.close", json!({"window": w}));
+    }
 }
 
 /// The tabs, one per window in the order they were opened.
@@ -172,10 +212,22 @@ fn strip(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], max_w: f32, t: &Toke
                 }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
+                    let mut rects: Vec<(u64, Rect)> = Vec::with_capacity(tabs.len());
+                    let mut dragged = None;
                     for tab in tabs {
-                        if let Some(a) = file_tab(app, ui, tab, reveal, t) {
-                            action = Some(a);
+                        let out = file_tab(app, ui, tab, reveal, t);
+                        rects.push((tab.window, out.rect));
+                        if out.action.is_some() {
+                            action = out.action;
                         }
+                        if out.dragging || out.dropped {
+                            dragged = Some((tab.window, out.dropped));
+                        }
+                    }
+                    if let Some((window, dropped)) = dragged
+                        && let Some(moved) = drag_to(ui, &rects, window, dropped, t)
+                    {
+                        action = Some(moved);
                     }
                 });
             });
@@ -183,16 +235,41 @@ fn strip(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], max_w: f32, t: &Toke
     action
 }
 
+/// A tab being dragged along the others: a line marks where it would go, and the drop moves it
+/// there.
+fn drag_to(ui: &Ui, rects: &[(u64, Rect)], window: u64, dropped: bool, t: &Tokens) -> Option<TabAction> {
+    let x = ui.input(|i| i.pointer.interact_pos())?.x;
+    let from = rects.iter().position(|(w, _)| *w == window)?;
+    let others: Vec<Rect> = rects.iter().filter(|(w, _)| *w != window).map(|(_, r)| *r).collect();
+    let to = others.iter().filter(|r| r.center().x < x).count();
+    if to == from {
+        return None;
+    }
+    if dropped {
+        return Some(TabAction::Move(window, to));
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    let at = match others.get(to) {
+        Some(r) => r.left(),
+        None => others.last().map_or(x, |r| r.right()),
+    };
+    let y = others.first().map_or(egui::Rangef::new(0.0, 0.0), |r| r.y_range());
+    ui.painter().vline(at, y.shrink(3.0), Stroke::new(2.0, t.accent));
+    None
+}
+
 /// One file tab: its file's icon, name and a close button (a dot while it has unsaved changes and
 /// the pointer is elsewhere). A click shows the file, the middle button or ✕ closes it, and the
 /// right button offers Close, Close Others, Close All and Copy Full Path.
-fn file_tab(app: &SheetApp, ui: &mut Ui, tab: &FileTab, reveal: bool, t: &Tokens) -> Option<TabAction> {
+fn file_tab(app: &SheetApp, ui: &mut Ui, tab: &FileTab, reveal: bool, t: &Tokens) -> TabOut {
     let lang = app.ui.language;
     let font = theme::ui_font(13.0);
     let name = fit(ui, &tab.title, &font, NAME_MAX_W);
     let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
     let w = 10.0 + 16.0 + 6.0 + tw + 6.0 + 18.0 + 6.0;
-    let (r, resp) = ui.allocate_exact_size(vec2(w, BAR_H - 2.0), Sense::click());
+    // Dragged along the strip, a tab takes another place.
+    let (r, resp) = ui.allocate_exact_size(vec2(w, BAR_H - 2.0), Sense::click_and_drag());
+    let (rect, dragging, dropped) = (r, resp.dragged(), resp.drag_stopped());
     if tab.active && reveal {
         resp.scroll_to_me(None);
     }
@@ -260,7 +337,7 @@ fn file_tab(app: &SheetApp, ui: &mut Ui, tab: &FileTab, reveal: bool, t: &Tokens
             }
         }
     });
-    action
+    TabOut { action, rect, dragging, dropped }
 }
 
 /// Does what a tab click asked for. Closing several tabs stops at the first one whose file asks
@@ -271,6 +348,7 @@ fn act(app: &mut SheetApp, action: TabAction) {
         TabAction::Close(w) => app.run_or_alert("window.close", json!({"window": w})),
         TabAction::CloseOthers(keep) => close_each(app, Some(keep)),
         TabAction::CloseAll => close_each(app, None),
+        TabAction::Move(w, to) => app.session.move_window(w, to),
     }
 }
 

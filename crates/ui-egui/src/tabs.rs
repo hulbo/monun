@@ -525,6 +525,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     ui.ctx().accesskit_node_builder(slider.id, |node| node.set_label(app.ui.language.tr("Zoom")));
                     if slider.changed() {
                         let _ = app.session.run("view.zoom", json!({"percent": z.round()}));
+                        app.remember_doc_view();
                     }
                     if crate::widgets::icon_button(ui, Icon::Minus, t.text_dim, "Zoom Out", vec2(18.0, 18.0)).clicked() {
                         let z = ((zoom as f32 / 10.0).ceil() * 10.0 - 10.0).max(10.0);

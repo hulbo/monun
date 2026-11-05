@@ -54,6 +54,14 @@ impl SheetApp {
         }
         let before = self.session.active_window();
         let r = self.session.run(id, params);
+        // A Markdown file's view lives outside its .md: kept by path, and given back on open.
+        if r.is_ok() {
+            match id {
+                "doc.view" | "view.zoom" | "view.zoom100" => self.remember_doc_view(),
+                "file.open" => self.recall_doc_view(),
+                _ => {}
+            }
+        }
         if id.starts_with("file.") && self.session.active_window() != before {
             // File › New or Open from the Backstage view: the window it was in goes back to its sheet.
             self.backstage = None;
@@ -82,6 +90,32 @@ impl SheetApp {
             self.deliver_pdf(r);
         }
         r
+    }
+
+    /// Keeps how the active Markdown file shows (mode, Fit Width, zoom), by its path.
+    pub(crate) fn remember_doc_view(&mut self) {
+        let Some(d) = self.session.active().filter(|d| d.is_markdown()) else { return };
+        let (Some(path), Some(sh)) = (d.path.clone(), d.wb.active()) else { return };
+        let Some(doc) = sh.document.as_ref() else { return };
+        let memory =
+            crate::DocViewMemory { path, mode: doc.mode.map(|m| m.name().to_string()).unwrap_or_default(), fit_width: doc.fit_width, zoom: sh.zoom };
+        self.ui.doc_views.retain(|v| v.path != memory.path);
+        self.ui.doc_views.insert(0, memory);
+        self.ui.doc_views.truncate(crate::DOC_VIEWS_MAX);
+    }
+
+    /// Shows a Markdown file just opened as it was last shown.
+    fn recall_doc_view(&mut self) {
+        let Some(path) = self.session.active().filter(|d| d.is_markdown()).and_then(|d| d.path.clone()) else { return };
+        let Some(v) = self.ui.doc_views.iter().find(|v| v.path == path).cloned() else { return };
+        let mut view = json!({"fitWidth": v.fit_width});
+        if !v.mode.is_empty() {
+            view["mode"] = json!(v.mode);
+        }
+        let _ = self.session.run("doc.view", view);
+        if v.zoom != 100 && (10..=400).contains(&v.zoom) {
+            let _ = self.session.run("view.zoom", json!({"percent": v.zoom}));
+        }
     }
 
     pub fn run_or_alert(&mut self, id: &str, params: Json) {

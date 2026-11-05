@@ -170,3 +170,91 @@ fn a_markdown_file_keeps_its_one_document() {
     assert!(h.query_by_label("Cell value").is_none(), "but not Cell value: there are no cells");
     let _ = std::fs::remove_file(std::env::temp_dir().join("monun-file-tabs-test.md"));
 }
+
+fn key(h: &mut egui_kittest::Harness<'static, SheetApp>, key: egui::Key, modifiers: egui::Modifiers) {
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
+    }
+    h.run_steps(3);
+}
+
+fn active_title(h: &egui_kittest::Harness<'static, SheetApp>) -> String {
+    h.state().session.active().map(|d| d.display_title()).unwrap_or_default()
+}
+
+#[test]
+fn ctrl_tab_goes_round_the_tabs_and_ctrl_f4_closes_one() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.new_markdown("Doc");
+    s.new_workbook();
+    let mut h = harness(s);
+    let ctrl = egui::Modifiers::CTRL | egui::Modifiers::COMMAND;
+    assert_eq!(active_title(&h), "Book2");
+    key(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(active_title(&h), "Book1", "Ctrl+Tab goes on, round the end");
+    key(&mut h, egui::Key::Tab, ctrl);
+    assert_eq!(active_title(&h), "Doc1.md");
+    key(&mut h, egui::Key::Tab, ctrl | egui::Modifiers::SHIFT);
+    assert_eq!(active_title(&h), "Book1", "Ctrl+Shift+Tab goes back");
+    key(&mut h, egui::Key::F4, ctrl);
+    assert_eq!(tab_labels(&h), ["Doc1.md", "Book2"], "Ctrl+F4 closes the tab in front");
+}
+
+#[test]
+fn a_tab_dragged_along_the_others_moves_there() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.new_markdown("Doc");
+    s.new_workbook();
+    let mut h = harness(s);
+    assert_eq!(tab_labels(&h), ["Book1", "Doc1.md", "Book2"]);
+    let from = h.get_by_label("Book1").rect().center();
+    let to = h.get_by_label("Book2").rect().right_center() + egui::vec2(-4.0, 0.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(from));
+    h.run_steps(1);
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(1);
+    for i in 1..=8 {
+        h.input_mut().events.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+        h.run_steps(1);
+    }
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert_eq!(tab_labels(&h), ["Doc1.md", "Book2", "Book1"], "Book1 goes where it was dropped");
+}
+
+#[test]
+fn a_markdown_file_opens_again_as_it_was_shown() {
+    let path = std::env::temp_dir().join(format!("monun-doc-view-{}.md", std::process::id()));
+    std::fs::write(&path, "# Notes\n").unwrap();
+    let path = path.to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": path})).unwrap();
+    h.state_mut().run("doc.view", json!({"mode": "edit", "fitWidth": true})).unwrap();
+    h.state_mut().run("view.zoom", json!({"percent": 130})).unwrap();
+    h.run_steps(3);
+    assert!(!h.state().session.active().unwrap().is_dirty(), "how it shows leaves the file as saved");
+    h.state_mut().run("file.close", json!({})).unwrap();
+    h.run_steps(3);
+    h.state_mut().run("file.open", json!({"path": path})).unwrap();
+    h.run_steps(3);
+    let d = h.state().session.active().unwrap();
+    let sh = d.wb.active().unwrap();
+    let doc = sh.document.as_ref().unwrap();
+    assert_eq!(doc.mode.map(|m| m.name()), Some("edit"), "the mode it had");
+    assert!(doc.fit_width, "Fit Width as it was");
+    assert_eq!(sh.zoom, 130, "and the zoom");
+    assert!(!d.is_dirty());
+    let _ = std::fs::remove_file(&path);
+}
