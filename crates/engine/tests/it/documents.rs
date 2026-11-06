@@ -214,6 +214,34 @@ fn sql_and_text_files_open_as_text_and_save_back_as_they_came() {
 }
 
 #[test]
+fn a_text_file_changed_by_another_program_reads_again() {
+    let dir = temp_dir("reload");
+    let path = dir.join("설계.md");
+    std::fs::write(&path, "# 처음\n").unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    s.execute("doc.view", json!({"mode": "view", "fitWidth": true})).unwrap();
+    assert!(!s.active().unwrap().changed_on_disk(), "as it was read");
+    // Another program writes it.
+    std::fs::write(&path, "# 고친 뒤\n\n새 문단.\n").unwrap();
+    assert!(s.active().unwrap().changed_on_disk());
+    s.execute("file.reload", json!({})).unwrap();
+    let d = s.active().unwrap();
+    let doc = d.wb.sheet(0).unwrap().document.as_ref().unwrap();
+    assert_eq!(doc.text, "# 고친 뒤\n\n새 문단.\n");
+    assert_eq!((doc.mode.map(|m| m.name()), doc.fit_width), (Some("view"), true), "it shows as it did");
+    assert!(!d.is_dirty() && !d.changed_on_disk() && d.undo.is_empty());
+    // Its own Save is no change of another program's.
+    s.execute("doc.setText", json!({"text": "# 여기서\n"})).unwrap();
+    s.execute("file.save", json!({})).unwrap();
+    assert!(!s.active().unwrap().changed_on_disk());
+    // A workbook isn't read again.
+    s.execute("file.new", json!({})).unwrap();
+    assert!(s.execute("file.reload", json!({})).unwrap_err().to_string().contains("Only a Markdown, SQL or text file"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn documents_import_and_export_markdown_files() {
     let dir = temp_dir("io");
     let src = dir.join("계획.md");

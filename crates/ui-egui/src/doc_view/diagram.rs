@@ -45,12 +45,14 @@ struct Entry {
 /// The drawings so far, and the one shown enlarged.
 #[derive(Default)]
 pub struct Cache {
+    #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
     entries: HashMap<Key, Entry>,
     /// Each diagram's own size in SVG units, by source and theme, once it has been drawn.
     #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
     sizes: HashMap<(u64, bool), egui::Vec2>,
     #[cfg(feature = "diagrams")]
     channel: Option<(std::sync::mpsc::Sender<Done>, std::sync::mpsc::Receiver<Done>)>,
+    #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
     zoomed: Option<Zoomed>,
 }
 

@@ -225,6 +225,9 @@ pub struct DocState {
     /// The references `edit.goTo` with `record: true` went to in this document, newest first,
     /// without names, each area written with its sheet (`Sheet1!B14:C22,Sheet1!F19:G30`).
     pub go_to_recent: Vec<String>,
+    /// The file's time and size on disk when this document last read or wrote it: another
+    /// program's change shows as a difference ([`DocState::changed_on_disk`]).
+    pub disk: Option<io::DiskStamp>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -329,6 +332,7 @@ impl DocState {
             touched: None,
             edits: None,
             go_to_recent: vec![],
+            disk: None,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -377,6 +381,14 @@ impl DocState {
     /// `.txt` file opened, or `file.new` with `document`), saved as its text.
     pub fn is_text_file(&self) -> bool {
         docs::is_text_file(&self.wb)
+    }
+    /// Whether another program changed the document's file since this document last read or wrote
+    /// it (its time or size on disk differ). A file gone from disk is no change.
+    pub fn changed_on_disk(&self) -> bool {
+        match (&self.path, &self.disk) {
+            (Some(path), Some(stamp)) => io::disk_stamp(path).is_some_and(|now| now != *stamp),
+            _ => false,
+        }
     }
     /// What a text file holds, by its name (Save As another extension changes it); `None` for a
     /// workbook.
@@ -585,6 +597,10 @@ impl Session {
     }
     pub fn active_mut(&mut self) -> Option<&mut DocState> {
         self.docs.get_mut(self.active)
+    }
+    /// The open document `uid`.
+    pub fn document_mut(&mut self, uid: u64) -> Option<&mut DocState> {
+        self.docs.iter_mut().find(|d| d.uid == uid)
     }
     pub fn doc(&self) -> Result<&DocState> {
         self.active().ok_or(EngineError::NoDocument)

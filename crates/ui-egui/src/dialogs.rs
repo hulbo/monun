@@ -1009,6 +1009,16 @@ impl Dialog {
             "deleteGroup" => Dialog::custom("deleteGroup", "Delete Group", json!({"name": p("name")})),
             "switchGroup" => Dialog::custom("switchGroup", "Switch Group", json!({"target": p("target"), "new": p("new"), "files": p("files")})),
             "start" => Dialog::custom("start", "Monun", json!({})),
+            // The bar's Reload: the file in front, as another program left it.
+            "reloadFile" => {
+                if let Err(e) = app.settle_drafts() {
+                    app.alert(e);
+                }
+                app.doc_view.draft = None;
+                app.run_or_alert("file.reload", json!({}));
+                app.notice = None;
+                return None;
+            }
             "comments" => {
                 app.grid.pane = None;
                 app.ui.group_panel = false;

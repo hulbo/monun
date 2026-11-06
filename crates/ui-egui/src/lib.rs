@@ -380,6 +380,10 @@ pub struct SheetApp {
     pub native_windows: bool,
     /// The app's icon, for windows it opens of its own (a diagram's).
     pub window_icon: Option<std::sync::Arc<egui::IconData>>,
+    /// When the open text files were last checked for another program's changes (monotonic ms),
+    /// and the changes already told of, by document, that wait for an answer.
+    pub(crate) files_checked: f64,
+    pub(crate) changes_told: std::collections::HashMap<u64, Option<monun_engine::io::DiskStamp>>,
     /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
     /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
     /// them, and with no file open a start page shows instead of a blank workbook. The desktop app

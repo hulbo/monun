@@ -27,6 +27,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "window.activate", "Switch Window", ["Window"], None, "{window} | {doc} | {index} (a window id, a workbook id, or the workbook's position in the list)", has_doc, activate_window),
         cmd!(noundo "window.close", "Close Window", ["Window"], None, "{window?, doc?, force?: bool} → {closed, document}: closes a window (the active one by default); its workbook closes with its last window, asking first when it has unsaved changes unless `force`", has_doc, close_window),
+        cmd!(
+            noundo "file.reload",
+            "Reload from File",
+            [],
+            None,
+            "{document?: uid} → {document, path}: reads a Markdown, SQL or text file again from its file, as another program left it; how it shows stays, its undo history goes",
+            has_doc,
+            reload
+        ),
         cmd!(query "window.list", "Windows", ["Window"], None, "{} → [{window, doc, index, title, dirty, active, hidden}]", always, |s, _| Ok(s.window_list())),
     ]
 }
@@ -94,7 +103,9 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         s.close_document(0);
     }
     // Someone else may have made the file: its active content asks before it runs.
+    let disk = path.as_deref().and_then(crate::io::disk_stamp);
     let mut doc = DocState::new(wb, path, title, crate::Trust::FromFile);
+    doc.disk = disk;
     if crate::io::FileKind::from_path(&name).is_none() && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Xlsx {
         doc.content_kind = Some(crate::io::FileKind::Xlsx);
     }
@@ -157,8 +168,45 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         }
         d.saved = d.wb.clone();
         d.path = Some(path.clone());
+        d.disk = crate::io::disk_stamp(&path);
     }
     Ok(json!({"path": path, "bytes": bytes.len()}))
+}
+
+/// Refused when a workbook would be read again from its file.
+pub const RELOAD_TEXT_ONLY: &str = "Only a Markdown, SQL or text file is read again from its file.";
+
+/// Reads a Markdown, SQL or text file again from its file, as another program left it (see
+/// `file.reload`'s params).
+fn reload(s: &mut Session, p: &Json) -> Result<Json> {
+    let uid = match p.get("document").and_then(Json::as_u64) {
+        Some(uid) => uid,
+        None => s.doc()?.uid,
+    };
+    let d = s.documents().iter().find(|d| d.uid == uid).ok_or_else(|| bad("document", format!("no open document {uid}")))?;
+    if !d.is_text_file() {
+        return Err(crate::EngineError::Other(RELOAD_TEXT_ONLY.into()));
+    }
+    let path = d.path.clone().ok_or_else(|| bad("file.reload", "the file has not been saved yet"))?;
+    let bytes = crate::io::read_file(&path)?;
+    let (mut wb, _) = crate::io::open_bytes(&path, &bytes)?;
+    // How it shows stays: its mode, Fit Width and zoom.
+    if let (Some(old), Some(new)) = (d.wb.sheet(0), wb.sheet_mut(0)) {
+        new.zoom = old.zoom;
+        if let (Some(was), Some(now)) = (old.document.as_ref(), new.document.as_mut()) {
+            now.mode = was.mode;
+            now.fit_width = was.fit_width;
+        }
+    }
+    let disk = crate::io::disk_stamp(&path);
+    let d = s.document_mut(uid).ok_or(crate::EngineError::NoDocument)?;
+    d.wb = std::sync::Arc::new(wb);
+    d.saved = d.wb.clone();
+    d.undo.clear();
+    d.redo.clear();
+    d.revision += 1;
+    d.disk = disk;
+    Ok(json!({"document": uid, "path": path}))
 }
 
 fn save_as(s: &mut Session, p: &Json) -> Result<Json> {

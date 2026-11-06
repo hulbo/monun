@@ -82,6 +82,8 @@ impl SheetApp {
             parked: HashMap::new(),
             native_windows: false,
             window_icon: None,
+            files_checked: f64::NEG_INFINITY,
+            changes_told: Default::default(),
             file_tabs: false,
             groups_frozen: false,
             arrange_windows: None,
@@ -152,6 +154,7 @@ impl SheetApp {
         self.poll_async_opens();
         let saves = now_ms();
         self.autosave(ctx);
+        self.watch_files(ctx);
         self.auto_recover(ctx);
         self.perf.save_ms = now_ms() - saves;
         self.update_title(ctx);

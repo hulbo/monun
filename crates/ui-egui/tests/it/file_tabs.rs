@@ -448,3 +448,31 @@ fn a_markdown_file_opens_again_where_it_was_being_read_with_contents_as_left() {
     assert!(shown.abs_diff(read) <= 4, "opens at line {shown}, was read at {read}");
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_markdown_file_changed_by_another_program_shows_as_it_is_now() {
+    let path = std::env::temp_dir().join(format!("monun-reload-{}.md", std::process::id()));
+    std::fs::write(&path, "# Before\n\nOld paragraph.\n").unwrap();
+    let path_s = path.to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": path_s})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Old paragraph.").is_some());
+    // Another program writes it: with nothing changed here, it is read again.
+    std::fs::write(&path, "# After\n\nNew paragraph from elsewhere.\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    h.run_steps(4);
+    assert!(h.query_by_label("New paragraph from elsewhere.").is_some(), "the change shows");
+    assert!(!h.state().session.active().unwrap().is_dirty());
+    // With a change made here, it asks first.
+    h.state_mut().run("doc.setText", json!({"text": "# Mine\n"})).unwrap();
+    std::fs::write(&path, "# Theirs\n\nTheir paragraph.\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    h.run_steps(4);
+    assert!(h.query_by_label("Their paragraph.").is_none(), "nothing is lost without asking");
+    h.get_by_label("Reload").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Their paragraph.").is_some());
+    assert!(!h.state().session.active().unwrap().is_dirty());
+    let _ = std::fs::remove_file(&path);
+}

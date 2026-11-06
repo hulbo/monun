@@ -248,6 +248,27 @@ fn rename_first_sheet(wb: &mut Workbook, path: &str) {
     }
 }
 
+/// When a file was last written and how long it is, as the file system says: what tells that
+/// another program changed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiskStamp {
+    pub modified: Option<std::time::SystemTime>,
+    pub len: u64,
+}
+
+/// The file at `path`'s [`DiskStamp`]; `None` when it can't be read (gone, or no file system).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn disk_stamp(path: &str) -> Option<DiskStamp> {
+    let m = std::fs::metadata(path).ok()?;
+    Some(DiskStamp { modified: m.modified().ok(), len: m.len() })
+}
+
+/// The browser has no files to stamp.
+#[cfg(target_arch = "wasm32")]
+pub fn disk_stamp(_path: &str) -> Option<DiskStamp> {
+    None
+}
+
 /// Encodes a workbook in the format chosen by `path`'s extension.
 pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
     // An unknown or missing extension is refused rather than written as an XLSX under that name:

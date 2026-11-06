@@ -1846,6 +1846,13 @@ const MORE: &[(&str, &str)] = &[
     ("Click to enlarge", "눌러서 크게 보기"),
     ("Click to open in its own window", "눌러서 새 창으로 크게 보기"),
     ("Fit to Window", "창에 맞춤"),
+    ("Reload", "다시 불러오기"),
+    ("Reload from File", "파일에서 다시 불러오기"),
+    ("“{name}” was changed elsewhere and is shown as it is now.", "“{name}” — 다른 곳에서 바뀌어 최신 내용으로 다시 불러왔습니다."),
+    (
+        "“{name}” was changed by another program. Reload it to see that, and lose the changes made here?",
+        "“{name}” — 다른 프로그램에서 파일이 바뀌었습니다. 다시 불러오면 최신 내용이 보이고, 여기서 고친 내용은 사라집니다.",
+    ),
     ("Ctrl+wheel to zoom, drag to move, double-click to fit", "Ctrl+휠: 확대·축소, 끌기: 이동, 두 번 클릭: 창에 맞춤"),
     ("Drawing the diagram…", "흐름도를 그리는 중…"),
     ("This diagram has an error:", "흐름도에 오류가 있습니다:"),

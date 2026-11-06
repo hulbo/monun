@@ -119,9 +119,58 @@ impl SheetApp {
         }
     }
 
+    /// Shows what another program wrote to an open Markdown, SQL or text file (an editor, Claude):
+    /// checked about every second while one is open. A file with no change of its own here is
+    /// read again; one with unsaved changes asks first, in the bar under the ribbon, rather than
+    /// lose either.
+    pub(super) fn watch_files(&mut self, ctx: &egui::Context) {
+        let open: Vec<(u64, bool)> =
+            self.session.documents().iter().filter(|d| d.is_text_file() && d.path.is_some()).map(|d| (d.uid, d.is_dirty())).collect();
+        if open.is_empty() {
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(FILE_CHECK_MS as u64));
+        let now = crate::monotonic_ms();
+        if now - self.files_checked < FILE_CHECK_MS {
+            return;
+        }
+        self.files_checked = now;
+        let front = self.session.active().map(|d| d.uid);
+        for (uid, dirty) in open {
+            let Some(d) = self.session.documents().iter().find(|d| d.uid == uid) else { continue };
+            if !d.changed_on_disk() {
+                self.changes_told.remove(&uid);
+                continue;
+            }
+            // Typing not yet in the workbook counts as a change of its own.
+            let typing = self.doc_view.draft.as_ref().is_some_and(|dr| dr.uid == uid && dr.is_dirty());
+            if !dirty && !typing {
+                let name = d.display_title();
+                if self.run("file.reload", json!({"document": uid})).is_ok() {
+                    let note = self.ui.language.tr("“{name}” was changed elsewhere and is shown as it is now.").replace("{name}", &name);
+                    self.toast = Some((note, crate::monotonic_ms()));
+                }
+                continue;
+            }
+            // Asked once per change, while the file is in front.
+            let stamp = d.path.as_deref().and_then(monun_engine::io::disk_stamp);
+            if front == Some(uid) && self.changes_told.get(&uid) != Some(&stamp) {
+                self.changes_told.insert(uid, stamp);
+                let lang = self.ui.language;
+                let text = lang
+                    .tr("“{name}” was changed by another program. Reload it to see that, and lose the changes made here?")
+                    .replace("{name}", &d.display_title());
+                self.notice = Some(Notice { text, kind: NoticeKind::Warning, action: Some((lang.tr("Reload").to_string(), "reloadFile".into())) });
+            }
+        }
+    }
+
     /// Flip AutoSave (title-bar switch / Options ▸ Save). Persisted with the other UI
     /// preferences, so it stays as the user left it across restarts (#1901).
     pub fn toggle_autosave(&mut self) {
         self.ui.autosave = !self.ui.autosave;
     }
 }
+
+/// How often open text files are checked for another program's changes (ms).
+const FILE_CHECK_MS: f64 = 1000.0;
