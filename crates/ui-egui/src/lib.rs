@@ -107,8 +107,13 @@ pub struct UiState {
     /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name.
     pub groups: Vec<groups::FileGroup>,
     pub group: String,
-    /// The group panel ([`groups::panel`]) shows on the right, whichever file is in front.
+    /// The group panel ([`groups::panel`]) shows, whichever file is in front.
     pub group_panel: bool,
+    /// The memo and group panels float over the files as a layer, in `side_corner`, rather than
+    /// take a column of their own (on the left with `side_left`, else on the right).
+    pub side_layer: bool,
+    pub side_corner: panes::Corner,
+    pub side_left: bool,
     /// The memos on Markdown files' paragraphs ([`memos`]), by the files' paths.
     pub memos: Vec<memos::DocMemo>,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
@@ -168,6 +173,9 @@ impl Default for UiState {
             group: String::new(),
             doc_views: vec![],
             group_panel: false,
+            side_layer: false,
+            side_corner: panes::Corner::TopRight,
+            side_left: false,
             memos: vec![],
             doc_outline: false,
         }
@@ -384,6 +392,8 @@ pub struct SheetApp {
     /// and the changes already told of, by document, that wait for an answer.
     pub(crate) files_checked: f64,
     pub(crate) changes_told: std::collections::HashMap<u64, Option<monun_engine::io::DiskStamp>>,
+    /// How far the memo or group panel's title has been dragged, while it is.
+    pub(crate) side_drag: Option<egui::Vec2>,
     /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
     /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
     /// them, and with no file open a start page shows instead of a blank workbook. The desktop app

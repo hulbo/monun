@@ -293,3 +293,50 @@ fn the_memo_panel_lists_the_groups_other_files_and_goes_to_them() {
     assert_eq!(h.state().memos.picked, Some(1), "with its memo picked");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn drag(h: &mut egui_kittest::Harness<'static, SheetApp>, from: egui::Pos2, to: egui::Pos2) {
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    h.input_mut().events.extend([egui::Event::PointerMoved(from), button(from, true)]);
+    h.step();
+    for i in 1..=8 {
+        h.input_mut().events.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+        h.step();
+    }
+    h.input_mut().events.push(button(to, false));
+    h.run_steps(3);
+}
+
+fn heading(h: &egui_kittest::Harness<'static, SheetApp>, label: &str) -> egui::Rect {
+    h.get_by_role_and_label(egui::accesskit::Role::Heading, label).rect()
+}
+
+#[test]
+fn the_side_panels_title_meets_the_document_tool_bar_and_moves_by_it() {
+    let dir = folder("side");
+    let mut h = harness(&[path(&dir, "b.md")]);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // Its title strip is the document tool bar's height, side by side with it.
+    let title = heading(&h, "Groups");
+    let tool = h.get_by_label("Find").rect();
+    assert!((title.center().y - tool.center().y).abs() < 1.5 && (title.height() - 36.0).abs() < 0.5, "{title:?} beside {tool:?}");
+    assert!(title.left() > 800.0, "on the right at first");
+    // Dragged by its title to the left, it is a column on the left.
+    drag(&mut h, title.center(), egui::pos2(60.0, title.center().y));
+    assert!(h.state().ui.side_left);
+    assert!(heading(&h, "Groups").left() < 400.0);
+    // As a layer it floats over the document, in the corner chosen.
+    h.get_by_label("Panel options").click();
+    h.run_steps(2);
+    h.get_by_label("Float as a layer").click();
+    h.run_steps(3);
+    assert!(h.state().ui.side_layer);
+    let layer = heading(&h, "Groups");
+    assert!(layer.left() < 400.0, "top left, as its column was: {layer:?}");
+    // Dragged to the bottom right, it settles there.
+    drag(&mut h, layer.center(), egui::pos2(1150.0, 700.0));
+    assert_eq!(h.state().ui.side_corner, monun_ui_egui::panes::Corner::BottomRight);
+    let moved = heading(&h, "Groups");
+    assert!(moved.right() > 1000.0 && moved.top() > 300.0, "{moved:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

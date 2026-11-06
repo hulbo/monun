@@ -1,6 +1,8 @@
-//! Right-hand task panes: Comments (the memo panel), Groups, Watch Window, Selection Pane, Format
-//! Chart. One shows at a time. The memo panel is for workbooks and Markdown; while a SQL or plain
-//! text file is in front it stays hidden.
+//! Task panes: Comments (the memo panel), Groups, Watch Window, Selection Pane, Format Chart. One
+//! shows at a time, on the right; the memo and group panels go where they are put, a column on
+//! the right or left or a layer over the files in a corner (their title dragged, or their options).
+//! The memo panel is for workbooks and Markdown; while a SQL or plain text file is in front it
+//! stays hidden.
 
 use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
@@ -33,41 +35,232 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         return;
     }
     let t = Tokens::get(ui.ctx());
+    // The memo and group panels go where they are put: a column on either side, or a layer over
+    // the files in a corner. The others are a column on the right.
+    let movable = matches!(pane.as_str(), "comments" | "group");
+    if movable && app.ui.side_layer {
+        layer(app, ui, &pane, &t);
+        return;
+    }
     // Capped at half the window so a pane can never cover the sheet, whatever its content asks for.
     let max = (ui.available_width() / 2.0).max(300.0);
-    let panel = egui::Panel::right("task_pane").default_size(300.0).max_size(max).resizable(true);
-    panel.frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(10)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            let title = match pane.as_str() {
-                "comments" => "Comments",
-                "group" => "Groups",
-                "watch" => "Watch Window",
-                "selection" => "Selection",
-                "formatChart" => "Format Chart Area",
-                _ => "",
-            };
-            ui.label(egui::RichText::new(app.ui.language.tr(title)).font(theme::ui_bold(15.0)));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::widgets::icon_button(ui, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
-                    match pane.as_str() {
-                        "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
-                        "group" => app.ui.group_panel = false,
-                        _ => app.grid.pane = None,
-                    }
-                }
-            });
-        });
-        ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
-            // The file in front's memos (a sheet's: its cells' comments), then the group's others.
-            "comments" => crate::memos::panel(app, ui),
-            "group" => crate::groups::panel(app, ui),
-            "watch" => watch(app, ui),
-            "selection" => selection(app, ui),
-            "formatChart" => format_chart(app, ui),
-            _ => {}
-        });
+    let panel = if movable && app.ui.side_left { egui::Panel::left("task_pane") } else { egui::Panel::right("task_pane") };
+    let panel = panel.default_size(300.0).max_size(max).resizable(true);
+    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
+    let mut title = None;
+    panel.frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(margin)).show(ui, |ui| {
+        title = Some(header(app, ui, &pane, &t, movable));
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical().show(ui, |ui| content(app, ui, &pane));
     });
+    if let Some(title) = title.filter(|_| movable) {
+        let window = ui.ctx().content_rect();
+        moved(app, ui.ctx(), &title, window, false);
+    }
+}
+
+/// What a pane shows under its title.
+fn content(app: &mut SheetApp, ui: &mut Ui, pane: &str) {
+    match pane {
+        // The file in front's memos (a sheet's: its cells' comments), then the group's others.
+        "comments" => crate::memos::panel(app, ui),
+        "group" => crate::groups::panel(app, ui),
+        "watch" => watch(app, ui),
+        "selection" => selection(app, ui),
+        "formatChart" => format_chart(app, ui),
+        _ => {}
+    }
+}
+
+/// A pane's title strip's height: a document's tool bar's, so their lines meet.
+const HEADER_H: f32 = 36.0;
+/// A layer's width, and how far it keeps from the edges of the files' area.
+const LAYER_W: f32 = 300.0;
+const LAYER_INSET: f32 = 12.0;
+
+/// A corner of the files' area, where the memo or group panel floats as a layer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Corner {
+    #[default]
+    TopRight,
+    BottomRight,
+    TopLeft,
+    BottomLeft,
+}
+
+impl Corner {
+    const ALL: [(Corner, &'static str); 4] =
+        [(Corner::TopRight, "Top right"), (Corner::BottomRight, "Bottom right"), (Corner::TopLeft, "Top left"), (Corner::BottomLeft, "Bottom left")];
+
+    /// The corner of `area` nearest `p`.
+    fn nearest(area: egui::Rect, p: egui::Pos2) -> Corner {
+        match (p.x < area.center().x, p.y < area.center().y) {
+            (false, true) => Corner::TopRight,
+            (false, false) => Corner::BottomRight,
+            (true, true) => Corner::TopLeft,
+            (true, false) => Corner::BottomLeft,
+        }
+    }
+}
+
+/// The memo or group panel floating over the files' area (`ui`'s room) in its corner: as wide as a
+/// column, as tall as it needs up to most of the area. Its top corners keep clear of a document's
+/// tool bar.
+fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
+    use egui::{Align2, pos2};
+    let area = ui.available_rect_before_wrap();
+    let width = LAYER_W.min(area.width() - 2.0 * LAYER_INSET - 20.0).max(160.0);
+    let tall = (area.height() * 0.65).max(160.0);
+    let top = area.top() + HEADER_H + LAYER_INSET;
+    let (pivot, at) = match app.ui.side_corner {
+        Corner::TopRight => (Align2::RIGHT_TOP, pos2(area.right() - LAYER_INSET, top)),
+        Corner::BottomRight => (Align2::RIGHT_BOTTOM, pos2(area.right() - LAYER_INSET, area.bottom() - LAYER_INSET)),
+        Corner::TopLeft => (Align2::LEFT_TOP, pos2(area.left() + LAYER_INSET, top)),
+        Corner::BottomLeft => (Align2::LEFT_BOTTOM, pos2(area.left() + LAYER_INSET, area.bottom() - LAYER_INSET)),
+    };
+    // While its title is dragged it follows the pointer.
+    let at = at + app.side_drag.unwrap_or_default();
+    let mut title = None;
+    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
+    let shadow = ui.style().visuals.popup_shadow;
+    egui::Area::new(egui::Id::unique("monun.side_layer")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain_to(area).show(
+        ui.ctx(),
+        |ui| {
+            egui::Frame::new()
+                .fill(t.ribbon)
+                .stroke(egui::Stroke::new(1.0, t.ribbon_border))
+                .corner_radius(8.0)
+                .shadow(shadow)
+                .inner_margin(margin)
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    title = Some(header(app, ui, pane, t, true));
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(tall - HEADER_H).auto_shrink([false, true]).show(ui, |ui| content(app, ui, pane));
+                });
+        },
+    );
+    if let Some(title) = title {
+        moved(app, ui.ctx(), &title, area, true);
+    }
+}
+
+/// A pane's title strip: the title, a memo or group panel's options (where it goes) and Close.
+/// Returns the strip, by which a memo or group panel is dragged.
+fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool) -> egui::Response {
+    use egui::{Align2, Rect, Sense, Stroke, pos2};
+    let lang = app.ui.language;
+    let title = match pane {
+        "comments" => "Comments",
+        "group" => "Groups",
+        "watch" => "Watch Window",
+        "selection" => "Selection",
+        "formatChart" => "Format Chart Area",
+        _ => "",
+    };
+    let title = lang.tr(title).to_string();
+    let sense = if movable { Sense::click_and_drag() } else { Sense::hover() };
+    let (strip, resp) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), sense);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, &title));
+    // The line under it runs the pane's whole width, out through its margins.
+    ui.painter().line_segment(
+        [pos2(strip.left() - 10.0, strip.bottom() - 0.5), pos2(strip.right() + 10.0, strip.bottom() - 0.5)],
+        Stroke::new(1.0, t.ribbon_border),
+    );
+    ui.painter().text(pos2(strip.left(), strip.center().y), Align2::LEFT_CENTER, &title, theme::ui_bold(14.0), t.text);
+    let buttons = Rect::from_min_max(pos2(strip.right() - 60.0, strip.top()), strip.max);
+    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    if crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
+        match pane {
+            "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
+            "group" => app.ui.group_panel = false,
+            _ => app.grid.pane = None,
+        }
+    }
+    if movable {
+        let more = crate::widgets::icon_button(&mut row, crate::icons::Icon::More, t.text_dim, "Panel options", vec2(22.0, 22.0));
+        more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Panel options")));
+        egui::Popup::menu(&more).show(|ui| options(app, ui));
+    }
+    resp
+}
+
+/// The memo and group panels' options: a column on the right or left, or a layer in a corner.
+fn options(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    ui.set_min_width(200.0);
+    let mut layer = app.ui.side_layer;
+    if ui.checkbox(&mut layer, lang.tr("Float as a layer")).changed() {
+        app.ui.side_layer = layer;
+        // It stays on its side: a layer in the corner on the column's side (its top or bottom as
+        // last chosen), a column on the layer's side.
+        let bottom = matches!(app.ui.side_corner, Corner::BottomRight | Corner::BottomLeft);
+        if layer {
+            app.ui.side_corner = match (app.ui.side_left, bottom) {
+                (false, false) => Corner::TopRight,
+                (false, true) => Corner::BottomRight,
+                (true, false) => Corner::TopLeft,
+                (true, true) => Corner::BottomLeft,
+            };
+        } else {
+            app.ui.side_left = matches!(app.ui.side_corner, Corner::TopLeft | Corner::BottomLeft);
+        }
+    }
+    ui.separator();
+    if app.ui.side_layer {
+        for (corner, label) in Corner::ALL {
+            if ui.radio(app.ui.side_corner == corner, lang.tr(label)).clicked() {
+                app.ui.side_corner = corner;
+                ui.close();
+            }
+        }
+    } else {
+        for (left, label) in [(false, "Right side"), (true, "Left side")] {
+            if ui.radio(app.ui.side_left == left, lang.tr(label)).clicked() {
+                app.ui.side_left = left;
+                ui.close();
+            }
+        }
+    }
+    ui.separator();
+    ui.label(egui::RichText::new(lang.tr("Drag the title to move it.")).small().weak());
+}
+
+/// A memo or group panel's title dragged: a layer follows the pointer and settles in the corner of
+/// `area` (the files') it is let go nearest; a column, shown where it would go, moves to the side
+/// of `area` (the window) it is let go on.
+fn moved(app: &mut SheetApp, ctx: &egui::Context, title: &egui::Response, area: egui::Rect, layer: bool) {
+    let t = Tokens::get(ctx);
+    if title.dragged() {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        *app.side_drag.get_or_insert(egui::Vec2::ZERO) += title.drag_delta();
+        if !layer && let Some(p) = ctx.pointer_interact_pos() {
+            // Where the column would go.
+            let width = title.rect.width() + 20.0;
+            let side = if p.x < area.center().x {
+                egui::Rect::from_min_size(area.min, vec2(width, area.height()))
+            } else {
+                egui::Rect::from_min_max(egui::pos2(area.right() - width, area.top()), area.max)
+            };
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("monun.side_drop")));
+            painter.rect_filled(side, 0.0, t.accent.gamma_multiply(0.15));
+            painter.rect_stroke(side, 0.0, egui::Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+        }
+    } else if title.hovered() {
+        ctx.set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    if title.drag_stopped() {
+        let p = ctx.input(|i| i.pointer.latest_pos());
+        if let Some(p) = p {
+            if layer {
+                app.ui.side_corner = Corner::nearest(area, p);
+            } else {
+                app.ui.side_left = p.x < area.center().x;
+            }
+        }
+        app.side_drag = None;
+    }
 }
 
 /// Whether the memo panel and its button are offered for the file in front: a workbook or a
