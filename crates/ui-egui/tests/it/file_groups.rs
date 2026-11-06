@@ -348,3 +348,44 @@ fn the_side_panels_title_meets_the_document_tool_bar_and_moves_by_it() {
     assert!(moved.right() > 1000.0 && moved.top() > 300.0, "{moved:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_layer_resizes_by_its_free_edges() {
+    let dir = folder("layer-size");
+    let mut h = harness(&[path(&dir, "b.md")]);
+    h.state_mut().ui.side_layer = true;
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    let before = heading(&h, "Groups");
+    // In the top right corner its left edge and its bottom are free: dragged out, it grows.
+    let edges: Vec<egui::Rect> = h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).collect();
+    let side = edges.iter().copied().find(|r| r.height() > r.width() * 3.0).unwrap();
+    drag(&mut h, side.center(), side.center() - egui::vec2(120.0, 0.0));
+    let wider = heading(&h, "Groups");
+    assert!(wider.width() > before.width() + 100.0, "{before:?} → {wider:?}");
+    assert!((wider.right() - before.right()).abs() < 1.0, "its corner stays put");
+    // The bottom edge: as much taller as it is dragged, from the height it shows at.
+    let shown = h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).find(|r| r.height() > r.width() * 3.0).unwrap().height() + 16.0;
+    let end = h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).find(|r| r.width() > r.height() * 3.0).unwrap();
+    drag(&mut h, end.center(), end.center() + egui::vec2(0.0, 150.0));
+    let tall = h.state().ui.side_layer_h.unwrap();
+    assert!((tall - (shown + 150.0)).abs() < 12.0, "{shown} + 150 → {tall}");
+    // A double-click on an edge brings it back to its own size.
+    let side = h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).find(|r| r.height() > r.width() * 3.0).unwrap();
+    for _ in 0..2 {
+        let at = side.center();
+        h.input_mut().events.push(egui::Event::PointerMoved(at));
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+    }
+    h.run_steps(3);
+    assert_eq!((h.state().ui.side_layer_w, h.state().ui.side_layer_h), (None, None));
+    let _ = std::fs::remove_dir_all(&dir);
+}

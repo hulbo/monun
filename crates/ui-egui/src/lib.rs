@@ -114,6 +114,10 @@ pub struct UiState {
     pub side_layer: bool,
     pub side_corner: panes::Corner,
     pub side_left: bool,
+    /// The layer's size as made by dragging its edges; `None` until then (a column's width, as
+    /// tall as it needs).
+    pub side_layer_w: Option<f32>,
+    pub side_layer_h: Option<f32>,
     /// The memos on Markdown files' paragraphs ([`memos`]), by the files' paths.
     pub memos: Vec<memos::DocMemo>,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
@@ -176,6 +180,8 @@ impl Default for UiState {
             side_layer: false,
             side_corner: panes::Corner::TopRight,
             side_left: false,
+            side_layer_w: None,
+            side_layer_h: None,
             memos: vec![],
             doc_outline: false,
         }

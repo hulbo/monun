@@ -104,16 +104,21 @@ impl Corner {
     }
 }
 
-/// The memo or group panel floating over the files' area (`ui`'s room) in its corner: as wide as a
-/// column, as tall as it needs up to most of the area. Its top corners keep clear of a document's
-/// tool bar.
+/// The memo or group panel floating over the files' area (`ui`'s room) in its corner: as large as
+/// it was made (its free edges, those away from its corner, drag to resize it; a double-click on
+/// one goes back), or at first a column's width and as tall as it needs up to most of the area.
+/// Its top corners keep clear of a document's tool bar.
 fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
     use egui::{Align2, pos2};
     let area = ui.available_rect_before_wrap();
-    let width = LAYER_W.min(area.width() - 2.0 * LAYER_INSET - 20.0).max(160.0);
-    let tall = (area.height() * 0.65).max(160.0);
     let top = area.top() + HEADER_H + LAYER_INSET;
-    let (pivot, at) = match app.ui.side_corner {
+    let widest = (area.width() - 2.0 * LAYER_INSET).max(LAYER_MIN_W);
+    let tallest = (area.bottom() - LAYER_INSET - top).max(LAYER_MIN_H);
+    let width = app.ui.side_layer_w.unwrap_or(LAYER_W).clamp(LAYER_MIN_W, widest);
+    let chosen = app.ui.side_layer_h.map(|h| h.clamp(LAYER_MIN_H, tallest));
+    let tall = chosen.unwrap_or((area.height() * 0.65).max(LAYER_MIN_H)).min(tallest);
+    let corner = app.ui.side_corner;
+    let (pivot, at) = match corner {
         Corner::TopRight => (Align2::RIGHT_TOP, pos2(area.right() - LAYER_INSET, top)),
         Corner::BottomRight => (Align2::RIGHT_BOTTOM, pos2(area.right() - LAYER_INSET, area.bottom() - LAYER_INSET)),
         Corner::TopLeft => (Align2::LEFT_TOP, pos2(area.left() + LAYER_INSET, top)),
@@ -122,28 +127,108 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
     // While its title is dragged it follows the pointer.
     let at = at + app.side_drag.unwrap_or_default();
     let mut title = None;
+    let mut resized = None;
+    let mut shown = 0.0;
     let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
     let shadow = ui.style().visuals.popup_shadow;
     egui::Area::new(egui::Id::unique("monun.side_layer")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain_to(area).show(
         ui.ctx(),
         |ui| {
-            egui::Frame::new()
+            let frame = egui::Frame::new()
                 .fill(t.ribbon)
                 .stroke(egui::Stroke::new(1.0, t.ribbon_border))
                 .corner_radius(8.0)
                 .shadow(shadow)
                 .inner_margin(margin)
                 .show(ui, |ui| {
-                    ui.set_width(width);
+                    ui.set_width(width - 20.0);
                     title = Some(header(app, ui, pane, t, true));
                     ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height(tall - HEADER_H).auto_shrink([false, true]).show(ui, |ui| content(app, ui, pane));
+                    let room = (tall - HEADER_H - 16.0).max(40.0);
+                    let mut scroll = egui::ScrollArea::vertical().max_height(room);
+                    // A height chosen is kept, however little it holds.
+                    scroll = if chosen.is_some() {
+                        scroll.min_scrolled_height(room).auto_shrink([false, false])
+                    } else {
+                        scroll.auto_shrink([false, true])
+                    };
+                    scroll.show(ui, |ui| content(app, ui, pane));
                 });
+            shown = frame.response.rect.height();
+            resized = edges(ui, frame.response.rect, corner, t);
         },
     );
+    match resized {
+        // From its height as chosen, or the one it shows at while it is sized to what it holds.
+        Some(Resized::By(dw, dh)) => {
+            app.ui.side_layer_w = Some((width + dw).clamp(LAYER_MIN_W, widest));
+            if dh != 0.0 {
+                app.ui.side_layer_h = Some((chosen.unwrap_or(shown) + dh).clamp(LAYER_MIN_H, tallest));
+            }
+        }
+        Some(Resized::Back) => {
+            app.ui.side_layer_w = None;
+            app.ui.side_layer_h = None;
+        }
+        None => {}
+    }
     if let Some(title) = title {
         moved(app, ui.ctx(), &title, area, true);
     }
+}
+
+/// The smallest a layer is made.
+const LAYER_MIN_W: f32 = 220.0;
+const LAYER_MIN_H: f32 = 120.0;
+/// How wide a layer's edge is to grab.
+const EDGE: f32 = 10.0;
+
+/// What a layer's edges were dragged to: its size changed by this much (width, height), or back to
+/// its own (a double-click).
+enum Resized {
+    By(f32, f32),
+    Back,
+}
+
+/// A layer's free edges and the corner between them (those away from its `corner`, which stays
+/// put), to drag: the cursor tells which way each one goes.
+fn edges(ui: &mut Ui, rect: egui::Rect, corner: Corner, t: &Tokens) -> Option<Resized> {
+    use egui::{CursorIcon, Rect, Sense, pos2};
+    let left = matches!(corner, Corner::TopRight | Corner::BottomRight);
+    let below = matches!(corner, Corner::TopRight | Corner::TopLeft);
+    // The free side edge and the free top or bottom edge, as strips across them (half in, half
+    // out), and the corner between them.
+    let x = if left { rect.left() } else { rect.right() } - EDGE / 2.0;
+    let y = if below { rect.bottom() } else { rect.top() } - EDGE / 2.0;
+    let side = Rect::from_min_size(pos2(x, rect.top() + 10.0), egui::vec2(EDGE, rect.height() - 20.0));
+    let end = Rect::from_min_size(pos2(rect.left() + 10.0, y), egui::vec2(rect.width() - 20.0, EDGE));
+    let tip = Rect::from_min_size(pos2(x, y), egui::vec2(EDGE, EDGE)).expand(3.0);
+    let diagonal = if left == below { CursorIcon::ResizeNeSw } else { CursorIcon::ResizeNwSe };
+    let mut out = None;
+    for (zone, grows, cursor, id) in [
+        (side, (true, false), CursorIcon::ResizeHorizontal, "side"),
+        (end, (false, true), CursorIcon::ResizeVertical, "end"),
+        (tip, (true, true), diagonal, "tip"),
+    ] {
+        let resp = ui.interact(zone, ui.scope_id().with(("monun.layer_edge", id)), Sense::click_and_drag());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, "Resize the panel"));
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(cursor);
+            ui.painter().rect_filled(zone, 2.0, t.accent.gamma_multiply(0.35));
+        }
+        if resp.double_clicked() {
+            out = Some(Resized::Back);
+        } else if resp.dragged() {
+            let d = resp.drag_delta();
+            // An edge on the left grows as it goes left; one on top, as it goes up.
+            let dw = if grows.0 { if left { -d.x } else { d.x } } else { 0.0 };
+            let dh = if grows.1 { if below { d.y } else { -d.y } } else { 0.0 };
+            if dw != 0.0 || dh != 0.0 {
+                out = Some(Resized::By(dw, dh));
+            }
+        }
+    }
+    out
 }
 
 /// A pane's title strip: the title, a memo or group panel's options (where it goes) and Close.
