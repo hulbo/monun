@@ -192,3 +192,33 @@ fn title_bar_switch_and_file_menu_choose_the_theme() {
     system_theme(&mut h, Some(Theme::Dark));
     assert_appearance(&h, true);
 }
+
+#[test]
+fn options_choose_the_accent_color_and_it_is_kept() {
+    use monun_ui_egui::theme::{Accent, Tokens};
+    let mut h = harness(UiState::default());
+    assert_eq!(preferences(&h)["accent"], "green");
+    assert_eq!(Tokens::get(&h.ctx).accent, Tokens::light().accent, "green until another is chosen");
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Options").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::RadioButton, "Blue").click();
+    h.run_steps(3);
+    // The whole interface takes it: tokens, egui's own selection, and it is saved.
+    assert_eq!(preferences(&h)["accent"], "blue");
+    assert_eq!(Tokens::get(&h.ctx), Tokens::palette(false, Accent::Blue));
+    assert_eq!(h.ctx.global_style().visuals.selection.stroke.color, Tokens::palette(false, Accent::Blue).accent);
+    // In the dark theme too, with its own shade.
+    h.state_mut().run("view.theme", json!({"mode": "dark"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(Tokens::get(&h.ctx), Tokens::palette(true, Accent::Blue));
+    // A name it doesn't know is refused and changes nothing; one saved that it doesn't know
+    // reads as green.
+    assert!(h.state_mut().run("view.accent", json!({"color": "sepia"})).is_err());
+    assert_eq!(preferences(&h)["accent"], "blue");
+    let saved: UiState = serde_json::from_value(json!({"accent": "sepia"})).unwrap();
+    assert_eq!(saved.accent, Accent::Green);
+    let saved: UiState = serde_json::from_value(json!({"accent": "teal"})).unwrap();
+    assert_eq!(saved.accent, Accent::Teal);
+}

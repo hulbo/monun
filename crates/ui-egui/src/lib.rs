@@ -76,6 +76,9 @@ pub struct UiState {
     /// The manual preference, retained when following the system appearance.
     pub dark: bool,
     pub system_theme: bool,
+    /// The interface's colour (File › Options › General).
+    #[serde(deserialize_with = "theme::lenient_accent")]
+    pub accent: theme::Accent,
     pub ribbon_tab: String,
     pub ribbon_collapsed: bool,
     pub formula_bar_expanded: bool,
@@ -162,6 +165,7 @@ impl Default for UiState {
         UiState {
             dark: false,
             system_theme: false,
+            accent: theme::Accent::Green,
             ribbon_tab: "Home".into(),
             ribbon_collapsed: false,
             formula_bar_expanded: false,

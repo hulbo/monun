@@ -374,7 +374,14 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             let font = theme::ui_font(12.5);
             let unsaved = on && dirty.contains(path);
             let shown = crate::file_tabs::fit(ui, &name, &font, (r.right() - icon.right() - 24.0).max(20.0));
-            let ink = if on { t.text } else { t.text_dim };
+            // The open file reads in the accent, its name as well as its icon.
+            let ink = if front {
+                t.accent_text
+            } else if on {
+                t.text
+            } else {
+                t.text_dim
+            };
             ui.painter().text(pos2(icon.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, ink);
             if unsaved {
                 ui.painter().circle_filled(pos2(r.right() - 10.0, r.center().y), 3.0, t.text_dim);

@@ -233,6 +233,16 @@ impl SheetApp {
                 }
                 Ok(json!({"mode": self.ui.theme_mode()}))
             }
+            "view.accent" => {
+                match p.get("color").and_then(Json::as_str).and_then(crate::theme::Accent::parse) {
+                    Some(accent) => self.ui.accent = accent,
+                    None => {
+                        let names: Vec<&str> = crate::theme::Accent::ALL.iter().map(|a| a.name()).collect();
+                        return Some(Err(format!("accent color must be one of {}", names.join(", "))));
+                    }
+                }
+                Ok(json!({"color": self.ui.accent.name()}))
+            }
             "view.animations" => {
                 self.ui.animations = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.animations);
                 Ok(json!({"on": self.ui.animations}))

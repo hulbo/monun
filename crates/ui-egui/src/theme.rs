@@ -49,6 +49,9 @@ pub struct Tokens {
     pub accent: Color32,
     pub accent_dark: Color32,
     pub accent_soft: Color32,
+    /// Text in the accent colour on the chrome's surfaces, hover included (the open file in the
+    /// group panel): deeper than `accent` in the light theme, brighter in the dark one.
+    pub accent_text: Color32,
     pub hover: Color32,
     pub pressed: Color32,
     pub separator: Color32,
@@ -137,6 +140,130 @@ impl Cat {
     pub const ALL: [Cat; 8] = [Cat::Blue, Cat::Green, Cat::Orange, Cat::Red, Cat::Purple, Cat::Teal, Cat::Amber, Cat::Slate];
 }
 
+/// The interface's colour (File › Options › General): Monun's green, as in Excel, or another. It
+/// tints the chrome's highlights, switched-on buttons and toggles, the selected headers and the
+/// sheet's selection; the rest of the palette stays as it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Accent {
+    #[default]
+    Green,
+    Blue,
+    Teal,
+    Purple,
+    Pink,
+    Orange,
+    Gray,
+}
+
+/// One accent's colours for one theme.
+struct Shades {
+    accent: u32,
+    /// Pressed buttons and, in the light theme, accent text.
+    deep: u32,
+    soft: u32,
+    /// Accent text: on selected headers and on hover.
+    strong: u32,
+    /// The select-all corner.
+    corner: u32,
+    confirm: u32,
+    on_accent: u32,
+}
+
+impl Accent {
+    pub const ALL: [Accent; 7] = [Accent::Green, Accent::Blue, Accent::Teal, Accent::Purple, Accent::Pink, Accent::Orange, Accent::Gray];
+
+    /// Its name in `ui.json` and the `view.accent` command.
+    pub fn name(self) -> &'static str {
+        match self {
+            Accent::Green => "green",
+            Accent::Blue => "blue",
+            Accent::Teal => "teal",
+            Accent::Purple => "purple",
+            Accent::Pink => "pink",
+            Accent::Orange => "orange",
+            Accent::Gray => "gray",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Accent> {
+        Accent::ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// Its label, to translate.
+    pub fn label(self) -> &'static str {
+        match self {
+            Accent::Green => "Green",
+            Accent::Blue => "Blue",
+            Accent::Teal => "Teal",
+            Accent::Purple => "Purple",
+            Accent::Pink => "Pink",
+            Accent::Orange => "Orange",
+            Accent::Gray => "Gray",
+        }
+    }
+
+    /// Its main colour in a theme, for a swatch.
+    pub fn swatch(self, dark: bool) -> Color32 {
+        rgb(self.shades(dark).accent)
+    }
+
+    #[rustfmt::skip]
+    fn shades(self, dark: bool) -> Shades {
+        let s = |accent, deep, soft, strong, corner, confirm, on_accent| Shades { accent, deep, soft, strong, corner, confirm, on_accent };
+        match (self, dark) {
+            (Accent::Green, false) => s(0x107C41, 0x0B5E31, 0xDFF1E6, 0x0B5E31, 0xC8E6D3, 0xDDEFE3, 0xFFFFFF),
+            (Accent::Green, true) => s(0x5CC587, 0x3FA86C, 0x234531, 0x6FD39A, 0x2E553E, 0x264330, 0x0F2A1A),
+            (Accent::Blue, false) => s(0x1F5FBF, 0x174A96, 0xDDE8F7, 0x174A96, 0xC6D9F1, 0xDCE7F5, 0xFFFFFF),
+            (Accent::Blue, true) => s(0x6FA8F0, 0x4F8FE0, 0x1F3550, 0x86B7F5, 0x2A4566, 0x223650, 0x0E1F33),
+            (Accent::Teal, false) => s(0x0D7078, 0x09545A, 0xD9EFF0, 0x09545A, 0xC2E4E6, 0xD8ECED, 0xFFFFFF),
+            (Accent::Teal, true) => s(0x4CC3CC, 0x33A7B0, 0x1D4245, 0x6AD2DA, 0x285357, 0x213F42, 0x0B2628),
+            (Accent::Purple, false) => s(0x7A3FB8, 0x5E2E91, 0xEDE3F7, 0x5E2E91, 0xDCCBEF, 0xEAE0F5, 0xFFFFFF),
+            (Accent::Purple, true) => s(0xB796EE, 0x9E78DE, 0x3A2D52, 0xC6ABF3, 0x4A3A66, 0x352A4A, 0x24163A),
+            (Accent::Pink, false) => s(0xB5306E, 0x8E2556, 0xF8E0EC, 0x8E2556, 0xF0C6DA, 0xF5DFEA, 0xFFFFFF),
+            (Accent::Pink, true) => s(0xF08DBE, 0xDE6FA6, 0x4A2A3B, 0xF4A6CD, 0x5C3449, 0x45283A, 0x3A0F24),
+            (Accent::Orange, false) => s(0xA84F0A, 0x823D07, 0xFBE7D6, 0x823D07, 0xF3CDAE, 0xFBEBD5, 0xFFFFFF),
+            (Accent::Orange, true) => s(0xF2A05E, 0xE0873F, 0x4A3320, 0xF5B37C, 0x5E4027, 0x463220, 0x3A1F08),
+            (Accent::Gray, false) => s(0x4A5563, 0x343C47, 0xE3E6EA, 0x343C47, 0xCDD2D9, 0xE2E5E9, 0xFFFFFF),
+            (Accent::Gray, true) => s(0xAAB4C2, 0x8E99A8, 0x3A3F46, 0xBCC5D1, 0x4A5059, 0x383D44, 0x1C2026),
+        }
+    }
+}
+
+/// Reads a saved accent, taking one it doesn't know (or no name) as green rather than failing
+/// the whole `UiState`.
+pub fn lenient_accent<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Accent, D::Error> {
+    use serde::Deserialize as _;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Name(String),
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match Raw::deserialize(d)? {
+        Raw::Name(name) => Accent::parse(&name).unwrap_or_default(),
+        Raw::Other(_) => Accent::default(),
+    })
+}
+
+fn accent_id() -> egui::Id {
+    egui::Id::unique("monun.accent")
+}
+
+/// The accent `ctx` draws with.
+pub fn accent(ctx: &egui::Context) -> Accent {
+    ctx.data(|d| d.get_temp::<Accent>(accent_id())).unwrap_or_default()
+}
+
+/// Draws with `accent` from now on: both themes' visuals are installed again with it.
+pub fn set_accent(ctx: &egui::Context, accent: Accent) {
+    if self::accent(ctx) != accent {
+        ctx.data_mut(|d| d.insert_temp(accent_id(), accent));
+        install_visuals(ctx);
+        ctx.request_repaint();
+    }
+}
+
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
@@ -172,15 +299,19 @@ const SHEET_TRACK: Color32 = rgb(0xD6D6D6);
 
 impl Tokens {
     pub fn light() -> Tokens {
-        Tokens::palette(false)
+        Tokens::palette(false, Accent::Green)
     }
 
     pub fn dark() -> Tokens {
-        Tokens::palette(true)
+        Tokens::palette(true, Accent::Green)
     }
 
-    /// One palette for both modes: each colour is written once, with its light and dark values.
-    fn palette(dark: bool) -> Tokens {
+    /// One palette for both modes: each colour is written once, with its light and dark values;
+    /// those of the accent come from [`Accent`].
+    pub fn palette(dark: bool, accent: Accent) -> Tokens {
+        let a = accent.shades(dark);
+        // The sheet stays white, so its selection takes the accent's light colour in both themes.
+        let sheet = rgb(accent.shades(false).accent);
         Tokens {
             dark,
             window: pick(dark, Color32::from_rgb(0xF3, 0xF3, 0xF3), Color32::from_rgb(0x29, 0x29, 0x29)),
@@ -189,9 +320,10 @@ impl Tokens {
             text: pick(dark, Color32::from_rgb(0x24, 0x24, 0x24), Color32::from_rgb(0xEE, 0xEE, 0xEE)),
             text_dim: pick(dark, Color32::from_rgb(0x61, 0x61, 0x61), Color32::from_rgb(0xB0, 0xB0, 0xB0)),
             text_disabled: pick(dark, Color32::from_rgb(0xB0, 0xB0, 0xB0), Color32::from_rgb(0x70, 0x70, 0x70)),
-            accent: pick(dark, Color32::from_rgb(0x10, 0x7C, 0x41), Color32::from_rgb(0x5C, 0xC5, 0x87)),
-            accent_dark: pick(dark, Color32::from_rgb(0x0B, 0x5E, 0x31), Color32::from_rgb(0x3F, 0xA8, 0x6C)),
-            accent_soft: pick(dark, Color32::from_rgb(0xDF, 0xF1, 0xE6), Color32::from_rgb(0x23, 0x45, 0x31)),
+            accent: rgb(a.accent),
+            accent_dark: rgb(a.deep),
+            accent_soft: rgb(a.soft),
+            accent_text: rgb(a.strong),
             hover: pick(dark, Color32::from_rgb(0xEB, 0xEB, 0xEB), Color32::from_rgb(0x42, 0x42, 0x42)),
             pressed: pick(dark, Color32::from_rgb(0xDD, 0xDD, 0xDD), Color32::from_rgb(0x4D, 0x4D, 0x4D)),
             separator: pick(dark, Color32::from_rgb(0xE0, 0xE0, 0xE0), Color32::from_rgb(0x48, 0x48, 0x48)),
@@ -202,10 +334,10 @@ impl Tokens {
             header_text: pick(dark, Color32::from_rgb(0x42, 0x42, 0x42), Color32::from_rgb(0xCC, 0xCC, 0xCC)),
             header_line: pick(dark, Color32::from_rgb(0xD6, 0xD6, 0xD6), Color32::from_rgb(0x45, 0x45, 0x45)),
             header_sel_bg: pick(dark, Color32::from_rgb(0xE1, 0xE1, 0xE1), Color32::from_rgb(0x45, 0x45, 0x45)),
-            header_sel_text: pick(dark, Color32::from_rgb(0x0B, 0x5E, 0x31), Color32::from_rgb(0x6F, 0xD3, 0x9A)),
-            header_all_bg: pick(dark, Color32::from_rgb(0xC8, 0xE6, 0xD3), Color32::from_rgb(0x2E, 0x55, 0x3E)),
-            sel_fill: pick(dark, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x1C), Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24)),
-            sel_border: Color32::from_rgb(0x10, 0x7C, 0x41),
+            header_sel_text: rgb(a.strong),
+            header_all_bg: rgb(a.corner),
+            sel_fill: Color32::from_rgba_unmultiplied(sheet.r(), sheet.g(), sheet.b(), pick(dark, 0x1C, 0x24)),
+            sel_border: sheet,
             input_bg: pick(dark, Color32::WHITE, Color32::from_rgb(0x1F, 0x1F, 0x1F)),
             input_border: pick(dark, Color32::from_rgb(0xD1, 0xD1, 0xD1), Color32::from_rgb(0x50, 0x50, 0x50)),
             tab_bar: pick(dark, Color32::from_rgb(0xF3, 0xF3, 0xF3), Color32::from_rgb(0x29, 0x29, 0x29)),
@@ -215,7 +347,7 @@ impl Tokens {
             menu_bg: pick(dark, Color32::WHITE, Color32::from_rgb(0x30, 0x30, 0x30)),
             shadow: pick(dark, Color32::from_black_alpha(40), Color32::from_black_alpha(90)),
             danger: pick(dark, Color32::from_rgb(0xC4, 0x2B, 0x1C), Color32::from_rgb(0xFF, 0x95, 0x85)),
-            confirm_fill: pick(dark, Color32::from_rgb(0xDD, 0xEF, 0xE3), Color32::from_rgb(0x26, 0x43, 0x30)),
+            confirm_fill: rgb(a.confirm),
             discard_fill: pick(dark, Color32::from_rgb(0xF8, 0xE3, 0xE0), Color32::from_rgb(0x4A, 0x2D, 0x2A)),
             error_check_green: pick(dark, Color32::from_rgb(0x1E, 0x8E, 0x3E), Color32::from_rgb(0x4C, 0xC2, 0x6B)),
             warning_fill: Color32::from_rgb(0xF2, 0xB7, 0x05),
@@ -224,7 +356,7 @@ impl Tokens {
             notice_warn_border: pick(dark, Color32::from_rgb(0xF0, 0xC3, 0x6E), Color32::from_rgb(0x7A, 0x67, 0x30)),
             notice_info_bg: pick(dark, Color32::from_rgb(0xEA, 0xF2, 0xFB), Color32::from_rgb(0x24, 0x33, 0x44)),
             notice_info_border: pick(dark, Color32::from_rgb(0xB9, 0xD2, 0xEC), Color32::from_rgb(0x3B, 0x55, 0x72)),
-            on_accent: pick(dark, Color32::WHITE, rgb(0x0F2A1A)),
+            on_accent: rgb(a.on_accent),
             cat: pick(
                 dark,
                 [rgb(0x2F6FCF), rgb(0x1E8A4C), rgb(0xC8601A), rgb(0xC8372D), rgb(0x8350C8), rgb(0x13808A), rgb(0x9C6C00), rgb(0x5A6B7D)],
@@ -254,7 +386,7 @@ impl Tokens {
     }
 
     pub fn get(ctx: &egui::Context) -> Tokens {
-        if ctx.global_style().visuals.dark_mode { Tokens::dark() } else { Tokens::light() }
+        Tokens::palette(ctx.global_style().visuals.dark_mode, accent(ctx))
     }
 
     /// One colour of the category palette.
@@ -287,9 +419,30 @@ pub fn contrast(a: Color32, b: Color32) -> f32 {
 /// Installs light and dark token visuals in both theme slots, keeps the 2-3 px widget and 8-10 px window/menu corner radii from 0.36, and sets spacing, text styles and the active theme.
 pub fn apply(ctx: &egui::Context, dark: bool) {
     // Install both palettes before System can switch between the style slots.
+    install_visuals(ctx);
+    ctx.options_mut(|o| o.fallback_theme = egui::Theme::Light);
+    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+    ctx.all_styles_mut(|s| {
+        s.spacing.item_spacing = egui::vec2(6.0, 4.0);
+        s.spacing.button_padding = egui::vec2(6.0, 3.0);
+        s.spacing.interact_size.y = 22.0;
+        // 0.37 fades scroll areas' edges into the panel colour, which washed out the first and
+        // last lines (and showed as pale bands over the dark theme's documents); Excel has none.
+        s.spacing.scroll.fade.strength = 0.0;
+        s.text_styles.insert(egui::TextStyle::Body, ui_font(13.0));
+        s.text_styles.insert(egui::TextStyle::Button, ui_font(13.0));
+        s.text_styles.insert(egui::TextStyle::Small, ui_font(11.0));
+        s.text_styles.insert(egui::TextStyle::Heading, ui_bold(18.0));
+        s.text_styles.insert(egui::TextStyle::Monospace, FontId::new(12.0, FontFamily::Name(MONO.into())));
+    });
+}
+
+/// The light and dark visuals, with the accent in use, in egui's two theme slots.
+fn install_visuals(ctx: &egui::Context) {
+    let accent = accent(ctx);
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
         let dark = theme == egui::Theme::Dark;
-        let t = if dark { Tokens::dark() } else { Tokens::light() };
+        let t = Tokens::palette(dark, accent);
         let mut v = if dark { Visuals::dark() } else { Visuals::light() };
         v.panel_fill = t.window;
         v.window_fill = t.menu_bg;
@@ -319,21 +472,6 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         v.text_options.subpixel_binning = false;
         ctx.set_visuals_of(theme, v);
     }
-    ctx.options_mut(|o| o.fallback_theme = egui::Theme::Light);
-    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
-    ctx.all_styles_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        s.spacing.button_padding = egui::vec2(6.0, 3.0);
-        s.spacing.interact_size.y = 22.0;
-        // 0.37 fades scroll areas' edges into the panel colour, which washed out the first and
-        // last lines (and showed as pale bands over the dark theme's documents); Excel has none.
-        s.spacing.scroll.fade.strength = 0.0;
-        s.text_styles.insert(egui::TextStyle::Body, ui_font(13.0));
-        s.text_styles.insert(egui::TextStyle::Button, ui_font(13.0));
-        s.text_styles.insert(egui::TextStyle::Small, ui_font(11.0));
-        s.text_styles.insert(egui::TextStyle::Heading, ui_bold(18.0));
-        s.text_styles.insert(egui::TextStyle::Monospace, FontId::new(12.0, FontFamily::Name(MONO.into())));
-    });
 }
 
 /// Model colour → egui colour.
@@ -372,6 +510,9 @@ mod contrast_tests {
         }
         add("text on pressed", t.text, t.pressed, TEXT);
         add("accent text (File, contextual tabs) on window", t.accent, t.window, TEXT);
+        for (name, bg) in surfaces {
+            add(&format!("accent text on {name}"), t.accent_text, bg, TEXT);
+        }
         for (name, bg) in [("ribbon", t.ribbon), ("menu", t.menu_bg), ("hover", t.hover), ("pressed", t.pressed)] {
             for c in Cat::ALL {
                 add(&format!("{c:?} icon colour on {name}"), t.cat(c), bg, GLYPH);
@@ -423,11 +564,14 @@ mod contrast_tests {
     #[test]
     fn token_pairs_meet_wcag_contrast_in_both_themes() {
         let mut failures = Vec::new();
-        for t in [Tokens::light(), Tokens::dark()] {
-            for (name, fg, bg, min) in pairs(&t) {
-                let ratio = contrast(fg, bg);
-                if ratio < min {
-                    failures.push(format!("{} theme: {name} is {ratio:.2}:1, needs {min}:1", if t.dark { "dark" } else { "light" }));
+        for accent in Accent::ALL {
+            for t in [Tokens::palette(false, accent), Tokens::palette(true, accent)] {
+                for (name, fg, bg, min) in pairs(&t) {
+                    let ratio = contrast(fg, bg);
+                    if ratio < min {
+                        let theme = if t.dark { "dark" } else { "light" };
+                        failures.push(format!("{accent:?} {theme} theme: {name} is {ratio:.2}:1, needs {min}:1"));
+                    }
                 }
             }
         }
@@ -440,6 +584,20 @@ mod contrast_tests {
         assert!((contrast(Color32::WHITE, Color32::WHITE) - 1.0).abs() < 0.001);
         // #767676 on white is the classic 4.54:1 grey.
         assert!((contrast(rgb(0x767676), Color32::WHITE) - 4.54).abs() < 0.01);
+    }
+
+    #[test]
+    fn accents_round_trip_by_name_and_keep_green_by_default() {
+        for a in Accent::ALL {
+            assert_eq!(Accent::parse(a.name()), Some(a));
+            assert_eq!(serde_json::to_value(a).ok(), Some(serde_json::json!(a.name())));
+        }
+        assert_eq!(Accent::default(), Accent::Green);
+        assert_eq!(Tokens::palette(false, Accent::Green), Tokens::light());
+        // The sheet's selection stays light in the dark theme: the sheet stays white.
+        for a in Accent::ALL {
+            assert_eq!(Tokens::palette(true, a).sel_border, Tokens::palette(false, a).sel_border);
+        }
     }
 
     #[test]

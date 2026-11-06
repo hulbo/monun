@@ -1,6 +1,6 @@
 use super::{Key, Language, Modifiers, SheetApp, Ui, dim, i18n, json, section, vec2};
 
-/// Excel's File › Options page: General (display theme, interface language and Show formula bar),
+/// Excel's File › Options page: General (display theme, accent color, interface language and Show formula bar),
 /// Editing (AutoComplete) and Save (the autosave checkbox toggling `app.ui.autosave`), plus Formulas
 /// (calculation mode and iterative calculation) when a document is active. Theme, language, formula
 /// bar, AutoComplete and calculation changes run their commands through `run_or_alert`; calculation
@@ -35,7 +35,7 @@ pub(super) fn options(app: &mut SheetApp, ui: &mut Ui) {
     dim(ui, lang.tr("Calculation settings are saved with the workbook."));
 }
 
-/// The display theme and interface language controls of the General section.
+/// The display theme, accent color and interface language controls of the General section.
 fn general_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
     egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
         let label = ui.label(lang.tr("Display theme"));
@@ -58,6 +58,9 @@ fn general_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
             .response
             .labelled_by(label.id);
         ui.end_row();
+        let label = ui.label(lang.tr("Accent color"));
+        accent_picker(app, ui, lang).labelled_by(label.id);
+        ui.end_row();
         let label = ui.label(lang.tr("Interface language"));
         craft_ui::ComboBox::from_id_salt("backstage_language")
             .width(160.0)
@@ -73,6 +76,34 @@ fn general_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
             .labelled_by(label.id);
         ui.end_row();
     });
+}
+
+/// The accent colours as swatches, the one in use ringed, and its name.
+fn accent_picker(app: &mut SheetApp, ui: &mut Ui, lang: Language) -> egui::Response {
+    use crate::theme::{Accent, Tokens};
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for accent in Accent::ALL {
+            let on = app.ui.accent == accent;
+            let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+            let name = lang.tr(accent.label());
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, name));
+            let c = rect.center();
+            ui.painter().circle_filled(c, 8.0, accent.swatch(t.dark));
+            if on {
+                ui.painter().circle_stroke(c, 11.0, egui::Stroke::new(2.0, t.text));
+            } else if resp.hovered() {
+                ui.painter().circle_stroke(c, 11.0, egui::Stroke::new(1.0, t.text_dim));
+            }
+            if resp.on_hover_text(name).clicked() && !on {
+                app.run_or_alert("view.accent", json!({"color": accent.name()}));
+            }
+        }
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(lang.tr(app.ui.accent.label())).color(t.text_dim));
+    })
+    .response
 }
 
 /// The calculation mode, and iterative calculation, of the active workbook.
