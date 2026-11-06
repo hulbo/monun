@@ -433,3 +433,30 @@ fn a_layers_auto_height_follows_what_it_holds() {
     assert_eq!(h.state().ui.side_layer_h, None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_layer_sized_to_what_it_holds_grows_as_files_open() {
+    let dir = folder("layer-grow");
+    for name in ["c.md", "d.md", "e.md", "f.md"] {
+        std::fs::write(dir.join(name), "# x\n").unwrap();
+    }
+    let mut h = harness(&[path(&dir, "b.md")]);
+    h.state_mut().ui.side_layer = true;
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(4);
+    let tall = |h: &egui_kittest::Harness<'static, SheetApp>| {
+        h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).find(|r| r.height() > r.width() * 3.0).unwrap().height()
+    };
+    let one = tall(&h);
+    for name in ["c.md", "d.md", "e.md", "f.md"] {
+        h.state_mut().run("file.open", json!({"path": path(&dir, name)})).unwrap();
+    }
+    h.run_steps(6);
+    let five = tall(&h);
+    assert!(five > one + 4.0 * 20.0, "a row a file more: {one} → {five}");
+    // Every file shows, the last one inside the layer.
+    let last = h.get_all_by_label("f.md").map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap();
+    let title = heading(&h, "Groups");
+    assert!(last.bottom() < title.top() + five + 4.0, "{last:?} inside a layer {five} tall from {title:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

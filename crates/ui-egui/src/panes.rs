@@ -135,6 +135,11 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
     egui::Area::new(egui::Id::unique("monun.side_layer")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain_to(area).show(
         ui.ctx(),
         |ui| {
+            // An area gives what it holds the room it took last frame: without the room it may
+            // take, a layer sized to what it holds shrinks but never grows back (a group opened,
+            // files added).
+            ui.set_max_width(width);
+            ui.set_max_height(tall);
             let frame = egui::Frame::new()
                 .fill(t.ribbon)
                 .stroke(egui::Stroke::new(1.0, t.ribbon_border))
