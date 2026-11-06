@@ -124,6 +124,37 @@ fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
 }
 
 #[test]
+fn view_text_selects_with_a_drag_and_copies() {
+    let mut h = with_document("# Plan\n\nFirst paragraph here.\n\nSecond paragraph here.\n");
+    let first = h.get_by_label("First paragraph here.").rect();
+    let second = h.get_by_label("Second paragraph here.").rect();
+    // A drag from the first paragraph's start into the second selects across them.
+    let (from, to) = (first.left_center() + egui::vec2(1.0, 0.0), second.center());
+    let button = |pos, pressed| Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    h.input_mut().events.extend([Event::PointerMoved(from), button(from, true)]);
+    h.step();
+    for i in 1..=8 {
+        h.input_mut().events.push(Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+        h.step();
+    }
+    h.input_mut().events.push(button(to, false));
+    h.run_steps(2);
+    h.input_mut().events.push(Event::Copy);
+    h.run_steps(1);
+    let copied: String = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(copied.starts_with("First paragraph here.") && copied.contains("Second"), "copied {copied:?}");
+}
+
+#[test]
 fn fields_show_cell_values_and_follow_them() {
     let mut s = blank_session();
     s.run("cell.set", json!({"cell": "A1", "input": "30000"})).unwrap();

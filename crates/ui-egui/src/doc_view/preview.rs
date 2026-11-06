@@ -506,10 +506,13 @@ fn measure(ui: &Ui, spans: &[Span], cx: &Cx, font: FontSpec, width: f32) -> egui
 fn rich_line(ui: &mut Ui, spans: &[Span], cx: &Cx, font: FontSpec, color: Color32, line: usize, out: &mut Out, width: f32) {
     let Styled { job, links, tips } = styled(spans, cx, font, color, width);
     let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), Sense::click());
-    let plain = galley.text().to_owned();
-    resp.widget_info(|| egui::WidgetInfo::labeled(if links.is_empty() { egui::Role::Label } else { egui::Role::Link }, true, &plain));
-    ui.painter().galley(rect.min, galley.clone(), color);
+    // Text as text: a drag selects it (on from one paragraph to the next) and Ctrl+C copies it.
+    let resp = ui.add(egui::Label::new(galley.clone()).selectable(true).sense(Sense::click()));
+    let rect = resp.rect;
+    if !links.is_empty() {
+        let plain = galley.text().to_owned();
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &plain));
+    }
     let at: Option<usize> = resp.hover_pos().map(|p| galley.cursor_from_pos(p - rect.min).index.into());
     let link = at.and_then(|at| links.iter().find(|(a, b, _)| (*a..*b).contains(&at)).map(|(_, _, l)| *l));
     if let Some(tip) = at.and_then(|at| tips.iter().find(|(a, b, _)| (*a..*b).contains(&at))).filter(|_| link.is_none()) {
