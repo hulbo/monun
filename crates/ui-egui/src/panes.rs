@@ -115,8 +115,9 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
     let widest = (area.width() - 2.0 * LAYER_INSET).max(LAYER_MIN_W);
     let tallest = (area.bottom() - LAYER_INSET - top).max(LAYER_MIN_H);
     let width = app.ui.side_layer_w.unwrap_or(LAYER_W).clamp(LAYER_MIN_W, widest);
+    // Auto Height (no height chosen): as tall as what it holds, up to the whole area.
     let chosen = app.ui.side_layer_h.map(|h| h.clamp(LAYER_MIN_H, tallest));
-    let tall = chosen.unwrap_or((area.height() * 0.65).max(LAYER_MIN_H)).min(tallest);
+    let tall = chosen.unwrap_or(tallest);
     let corner = app.ui.side_corner;
     let (pivot, at) = match corner {
         Corner::TopRight => (Align2::RIGHT_TOP, pos2(area.right() - LAYER_INSET, top)),
@@ -155,6 +156,7 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
                     scroll.show(ui, |ui| content(app, ui, pane));
                 });
             shown = frame.response.rect.height();
+            app.side_layer_shown_h = shown;
             resized = edges(ui, frame.response.rect, corner, t);
         },
     );
@@ -179,7 +181,7 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
 
 /// The smallest a layer is made.
 const LAYER_MIN_W: f32 = 220.0;
-const LAYER_MIN_H: f32 = 120.0;
+const LAYER_MIN_H: f32 = 80.0;
 /// How wide a layer's edge is to grab.
 const EDGE: f32 = 10.0;
 
@@ -248,11 +250,10 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
     let sense = if movable { Sense::click_and_drag() } else { Sense::hover() };
     let (strip, resp) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), sense);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, &title));
-    // The line under it runs the pane's whole width, out through its margins.
-    ui.painter().line_segment(
-        [pos2(strip.left() - 10.0, strip.bottom() - 0.5), pos2(strip.right() + 10.0, strip.bottom() - 0.5)],
-        Stroke::new(1.0, t.ribbon_border),
-    );
+    // The line under it runs the pane's whole width, out through its margins, on the very row a
+    // document tool bar's line is drawn on.
+    ui.painter()
+        .line_segment([pos2(strip.left() - 10.0, strip.bottom()), pos2(strip.right() + 10.0, strip.bottom())], Stroke::new(1.0, t.ribbon_border));
     ui.painter().text(pos2(strip.left(), strip.center().y), Align2::LEFT_CENTER, &title, theme::ui_bold(14.0), t.text);
     let buttons = Rect::from_min_max(pos2(strip.right() - 90.0, strip.top()), strip.max);
     let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
@@ -307,6 +308,13 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
                 app.ui.side_corner = corner;
                 ui.close();
             }
+        }
+        ui.separator();
+        // As tall as what it holds, growing and shrinking with it; off, it keeps the height it
+        // shows at now (its bottom or top edge drags it, which turns this off too).
+        let mut auto = app.ui.side_layer_h.is_none();
+        if ui.checkbox(&mut auto, lang.tr("Auto Height")).on_hover_text(lang.tr("As tall as what the panel holds")).changed() {
+            app.ui.side_layer_h = if auto { None } else { Some(app.side_layer_shown_h.max(LAYER_MIN_H)) };
         }
     } else {
         for (left, label) in [(false, "Right side"), (true, "Left side")] {

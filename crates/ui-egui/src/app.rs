@@ -85,6 +85,7 @@ impl SheetApp {
             files_checked: f64::NEG_INFINITY,
             changes_told: Default::default(),
             side_drag: None,
+            side_layer_shown_h: 0.0,
             file_tabs: false,
             groups_frozen: false,
             arrange_windows: None,

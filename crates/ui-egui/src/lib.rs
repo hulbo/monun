@@ -400,6 +400,8 @@ pub struct SheetApp {
     pub(crate) changes_told: std::collections::HashMap<u64, Option<monun_engine::io::DiskStamp>>,
     /// How far the memo or group panel's title has been dragged, while it is.
     pub(crate) side_drag: Option<egui::Vec2>,
+    /// The layer's height as it showed last frame.
+    pub(crate) side_layer_shown_h: f32,
     /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
     /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
     /// them, and with no file open a start page shows instead of a blank workbook. The desktop app

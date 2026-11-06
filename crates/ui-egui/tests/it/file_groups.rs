@@ -389,3 +389,47 @@ fn a_layer_resizes_by_its_free_edges() {
     assert_eq!((h.state().ui.side_layer_w, h.state().ui.side_layer_h), (None, None));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_layers_auto_height_follows_what_it_holds() {
+    let dir = folder("layer-auto");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    h.state_mut().ui.side_layer = true;
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    let tall = |h: &egui_kittest::Harness<'static, SheetApp>| {
+        h.get_all_by_role(egui::accesskit::Role::Splitter).map(|n| n.rect()).find(|r| r.height() > r.width() * 3.0).unwrap().height()
+    };
+    let open = tall(&h);
+    // Its group folded, it is shorter: as tall as what it holds.
+    let arrow = heading(&h, "Groups").left_bottom() + egui::vec2(10.0, 22.0);
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerMoved(arrow));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: arrow,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(3);
+    let folded = tall(&h);
+    assert!(folded < open - 30.0, "{open} → {folded}");
+    // Auto Height off: it keeps the height it shows at, whatever it holds.
+    h.get_by_label("Panel options").click();
+    h.run_steps(2);
+    h.get_by_label("Auto Height").click();
+    h.run_steps(3);
+    let kept = h.state().ui.side_layer_h.expect("a height of its own");
+    assert!((kept - (folded + 20.0)).abs() < 12.0, "kept {kept} from {folded}");
+    // On again: back to fitting what it holds.
+    if h.query_by_label("Auto Height").is_none() {
+        h.get_by_label("Panel options").click();
+        h.run_steps(2);
+    }
+    h.get_by_label("Auto Height").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.side_layer_h, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

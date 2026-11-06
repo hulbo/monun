@@ -1922,6 +1922,8 @@ const MORE: &[(&str, &str)] = &[
     ("Group panel", "그룹 패널"),
     ("Panel options", "패널 설정"),
     ("Float as a layer", "레이어로 띄우기"),
+    ("Auto Height", "높이 자동 조절"),
+    ("As tall as what the panel holds", "패널 내용만큼 높이가 늘고 줄어듭니다"),
     ("Top right", "오른쪽 위"),
     ("Bottom right", "오른쪽 아래"),
     ("Top left", "왼쪽 위"),
