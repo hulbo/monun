@@ -321,6 +321,14 @@ fn the_side_panels_title_meets_the_document_tool_bar_and_moves_by_it() {
     let tool = h.get_by_label("Find").rect();
     assert!((title.center().y - tool.center().y).abs() < 1.5 && (title.height() - 36.0).abs() < 0.5, "{title:?} beside {tool:?}");
     assert!(title.left() > 800.0, "on the right at first");
+    // New Group is the + in its title strip.
+    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").rect();
+    assert!((plus.center().y - title.center().y).abs() < 1.0, "in the title strip");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").click();
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Group name:").count() > 0, "it asks for the new group's name");
+    press(&mut h, "Cancel");
+    h.run_steps(2);
     // Dragged by its title to the left, it is a column on the left.
     drag(&mut h, title.center(), egui::pos2(60.0, title.center().y));
     assert!(h.state().ui.side_left);

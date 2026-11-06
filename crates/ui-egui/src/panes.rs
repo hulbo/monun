@@ -169,7 +169,7 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
         Stroke::new(1.0, t.ribbon_border),
     );
     ui.painter().text(pos2(strip.left(), strip.center().y), Align2::LEFT_CENTER, &title, theme::ui_bold(14.0), t.text);
-    let buttons = Rect::from_min_max(pos2(strip.right() - 60.0, strip.top()), strip.max);
+    let buttons = Rect::from_min_max(pos2(strip.right() - 90.0, strip.top()), strip.max);
     let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
     if crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
         match pane {
@@ -182,6 +182,14 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
         let more = crate::widgets::icon_button(&mut row, crate::icons::Icon::More, t.text_dim, "Panel options", vec2(22.0, 22.0));
         more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Panel options")));
         egui::Popup::menu(&more).show(|ui| options(app, ui));
+    }
+    // The group panel's New Group…, as a + beside them.
+    if pane == "group" {
+        let new = crate::widgets::icon_button(&mut row, crate::icons::Icon::Plus, t.text_dim, "New Group…", vec2(22.0, 22.0));
+        new.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("New Group…")));
+        if new.clicked() {
+            app.open_dialog("newGroup", json!({}));
+        }
     }
     resp
 }

@@ -302,8 +302,8 @@ enum PanelAction {
 
 /// The group panel (the right-hand pane beside the files, with file tabs): every group with its
 /// files, the group in use marked and its files shown. A click on a group goes to it, and on a file
-/// shows it, going to its group first when that isn't the group in use. New Group is at the top; a
-/// group's right-click menu renames or deletes it. The title bar's group button keeps its menu.
+/// shows it, going to its group first when that isn't the group in use. New Group is the + in the
+/// panel's title strip; a group's right-click menu renames or deletes it. The title bar's group button keeps its menu.
 pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
@@ -312,10 +312,6 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let open_tab = app.session.active().and_then(|d| d.path.clone());
     let dirty: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).filter_map(|d| d.path.clone()).collect();
     let mut action = None;
-    if ui.button(lang.tr("New Group…")).clicked() {
-        action = Some(PanelAction::Dialog("newGroup", json!({})));
-    }
-    ui.add_space(6.0);
     let width = ui.available_width();
     for g in &groups {
         let on = g.name == current;
