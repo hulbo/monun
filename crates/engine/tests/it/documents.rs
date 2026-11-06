@@ -380,9 +380,22 @@ fn a_document_web_page_shows_it_as_the_tab_does() {
     // Fit Width widens tables to the page.
     let fit = html_of(&mut s, json!({"fitWidth": true}));
     assert!(fit.contains("<article class=\"doc fit\">"));
-    // A diagram grows with the page, at most twice its own width.
+    // A diagram keeps its own width there, centred: no wider than its drawing says.
     if cfg!(feature = "diagrams") {
-        assert!(fit.contains("<div class=\"diagram\" style=\"max-width:"), "{fit}");
+        let own = |page: &str| -> Option<f32> {
+            let svg = page.get(page.find("<div class=\"diagram\"")?..)?;
+            let svg = svg.get(svg.find("<svg")?..)?;
+            let at = svg.find(" width=\"")? + " width=\"".len();
+            svg.get(at..)?.split('"').next()?.trim_end_matches("px").parse().ok()
+        };
+        let cap = |page: &str| -> Option<f32> {
+            let tag = "<div class=\"diagram\" style=\"max-width:";
+            let at = page.find(tag)? + tag.len();
+            page.get(at..)?.split("px").next()?.parse().ok()
+        };
+        let (own, cap) = (own(&fit), cap(&fit));
+        assert!(own.is_some() && cap.is_some(), "{fit}");
+        assert!((cap.unwrap_or(0.0) - own.unwrap_or(0.0)).abs() <= 0.5, "{own:?} {cap:?}");
     }
 }
 

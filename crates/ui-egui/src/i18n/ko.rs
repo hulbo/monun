@@ -1868,7 +1868,7 @@ const MORE: &[(&str, &str)] = &[
     ("Insert a picture into the document", "문서에 그림 넣기"),
     ("The picture on the clipboard can't be read.", "클립보드의 그림을 읽을 수 없습니다."),
     ("Fit Width", "너비 맞춤"),
-    ("Show tables and diagrams as wide as the page", "표와 흐름도를 문서 폭에 맞춰 넓게 보기"),
+    ("Show tables as wide as the page and diagrams centred", "표는 문서 폭에 맞춰 넓게, 흐름도는 가운데에 보기"),
     ("Delete this sheet", "이 시트 삭제"),
     ("Delete the sheet “{name}” and everything on it?", "'{name}' 시트와 그 안의 내용을 모두 삭제할까요?"),
     ("Undo (Ctrl+Z) brings it back.", "실행 취소(Ctrl+Z)로 되돌릴 수 있습니다."),

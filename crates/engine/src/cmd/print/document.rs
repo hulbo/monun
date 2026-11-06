@@ -36,7 +36,7 @@ const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
 /// The pages of document tab `sh`, as drawings; with `fit` (or the document's own Fit Width) its
-/// tables and diagrams are as wide as the page. With `code` (a SQL or plain text file) its text
+/// tables are as wide as the page and its diagrams centred. With `code` (a SQL or plain text file) its text
 /// prints as it is, in a monospace font, rather than as Markdown.
 pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, (fit, code): (bool, bool)) -> Vec<Vec<Op>> {
     let Some(doc) = &sh.document else { return Vec::new() };
@@ -375,18 +375,12 @@ impl Flow<'_> {
     #[cfg(feature = "diagrams")]
     fn diagram(&mut self, source: &str, indent: f32) -> bool {
         let draw = |scale| monun_markdown::diagram::render(source, monun_markdown::diagram::Options { dark: false, scale });
-        let Ok(mut image) = draw(2.0) else { return false };
-        // An SVG unit is about 0.75 points; with Fit Width the diagram grows to the page, at most
-        // twice its size, drawn again for that size so it stays as sharp.
+        let Ok(image) = draw(2.0) else { return false };
+        // An SVG unit is about 0.75 points. With Fit Width the diagram is centred, never grown to
+        // the page: a narrow flowchart as wide as the page would print huge.
         let natural = (image.size.0 * 0.75, image.size.1 * 0.75);
-        let grow = if self.fit { ((self.width - indent) / natural.0.max(1.0)).clamp(1.0, 2.0) } else { 1.0 };
-        if grow > 1.01
-            && let Ok(sharper) = draw(2.0 * grow)
-        {
-            image = sharper;
-        }
         let rgba = unpremultiply(image.rgba);
-        self.place(Arc::new(rgba), [image.width, image.height], (natural.0 * grow, natural.1 * grow), indent, self.fit);
+        self.place(Arc::new(rgba), [image.width, image.height], natural, indent, self.fit);
         true
     }
 

@@ -36,7 +36,7 @@ pub struct Look<'a> {
     pub pictures: &'a [monun_engine::model::Image],
     /// A Markdown file's pictures beside it: the link its text writes and the picture's id.
     pub files: &'a [(String, u32)],
-    /// Fit Width: tables and diagrams as wide as the page.
+    /// Fit Width: tables as wide as the page, diagrams centred on it.
     pub full: bool,
     /// `{{…}}` reads as typed, untinted: a Markdown file has no cells for a field to show.
     pub plain_fields: bool,

@@ -123,6 +123,23 @@ fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
     assert!(wait_for(&mut h, "This diagram has an error:"));
 }
 
+#[cfg(feature = "diagrams")]
+#[test]
+fn fit_width_centres_a_diagram_at_its_own_size() {
+    let mut h = with_document("```mermaid\nflowchart TD\n  A[start] --> B[end]\n```\n");
+    assert!(wait_for(&mut h, "Diagram"), "the flowchart is drawn");
+    let before = h.get_by_label("Diagram").rect();
+    h.get_by_label("Fit Width").click();
+    for _ in 0..10 {
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    // A narrow flowchart isn't blown up to the page's width: it keeps its size, in the middle.
+    let after = h.get_by_label("Diagram").rect();
+    assert!((after.width() - before.width()).abs() < 1.0, "it keeps its size: {before:?} → {after:?}");
+    assert!(after.left() > before.left() + 50.0, "it moves to the middle: {before:?} → {after:?}");
+}
+
 #[test]
 fn view_text_selects_with_a_drag_and_copies() {
     let mut h = with_document("# Plan\n\nFirst paragraph here.\n\nSecond paragraph here.\n");

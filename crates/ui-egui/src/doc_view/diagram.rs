@@ -24,10 +24,6 @@ fn thousandths(scale: f32) -> u32 {
     (scale * 1000.0).floor().clamp(100.0, 16000.0) as u32
 }
 
-/// How much larger than its own size a diagram may be drawn to fill the page's width.
-#[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
-const MAX_GROW: f32 = 2.0;
-
 #[cfg_attr(not(feature = "diagrams"), allow(dead_code))]
 enum State {
     Pending,
@@ -87,8 +83,9 @@ pub fn show(_ui: &mut Ui, _cache: &mut Cache, _source: &str, _z: f32, _t: &Token
 }
 
 /// Draws the diagram of `source` (a Mermaid block's text): the picture once it is drawn, a note
-/// while it is being drawn, or the syntax error. It shows at its own size narrowed to the width,
-/// or with `fill` as wide as the width (up to [`MAX_GROW`] times its size, centred).
+/// while it is being drawn, or the syntax error. It shows at its own size times the zoom, narrowed
+/// to the width; with `fill` (Fit Width) centred in it, never grown to it: a narrow flowchart
+/// widened to the page would be drawn huge.
 #[cfg(feature = "diagrams")]
 pub fn show(ui: &mut Ui, cache: &mut Cache, source: &str, z: f32, t: &Tokens, lang: Language, fill: bool) -> Option<egui::Response> {
     use std::hash::{Hash, Hasher};
@@ -102,7 +99,7 @@ pub fn show(ui: &mut Ui, cache: &mut Cache, source: &str, z: f32, t: &Tokens, la
     // The width to show it at, once its own size is known, and the scale that draws it at that
     // width in whole pixels.
     let own = cache.sizes.get(&(hash, dark)).copied().filter(|s| s.x > 0.0);
-    let width = own.map(|s| if fill { room.min(s.x * z * MAX_GROW) } else { (s.x * z).min(room) });
+    let width = own.map(|s| (s.x * z).min(room));
     let scale = match (own, width) {
         (Some(s), Some(w)) if (w - s.x * z).abs() >= 0.5 => (w * ppp).floor() / s.x,
         _ => z * ppp,

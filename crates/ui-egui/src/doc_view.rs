@@ -986,7 +986,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
     let (_, fit) = chosen_view(app);
     let fit_width =
         ui.add(egui::Button::selectable(fit, egui::RichText::new(lang.tr("Fit Width")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
-    if fit_width.on_hover_text(lang.tr("Show tables and diagrams as wide as the page")).clicked() {
+    if fit_width.on_hover_text(lang.tr("Show tables as wide as the page and diagrams centred")).clicked() {
         app.run_or_alert("doc.view", json!({"sheet": sheet, "fitWidth": !fit}));
     }
     find_button(app, ui);

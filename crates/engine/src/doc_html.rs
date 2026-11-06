@@ -162,10 +162,10 @@ fn code(out: &mut String, lang: &str, text: &str) {
 #[cfg(feature = "diagrams")]
 fn diagram(out: &mut String, source: &str, fit: bool) -> bool {
     let Ok(svg) = monun_markdown::diagram::svg(source, false) else { return false };
-    // With Fit Width a diagram grows to the page, at most twice its own size, as on screen.
+    // With Fit Width a diagram keeps its own size, centred on the page, as on screen.
     match svg_width(&svg).filter(|_| fit) {
         Some(w) => {
-            let _ = write!(out, "<div class=\"diagram\" style=\"max-width:{}px\">", (w * 2.0).round());
+            let _ = write!(out, "<div class=\"diagram\" style=\"max-width:{}px\">", w.round());
         }
         None => out.push_str("<div class=\"diagram\">"),
     }
