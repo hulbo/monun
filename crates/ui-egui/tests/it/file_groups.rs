@@ -553,3 +553,22 @@ fn the_side_panels_buttons_point_and_only_its_title_grabs() {
     assert_eq!(h.state().ui.side_corner, monun_ui_egui::panes::Corner::TopRight);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_file_of_the_group_deleted_meanwhile_is_left_out_and_named() {
+    let dir = folder("deleted");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    h.run_steps(3);
+    // Deleted while its group isn't in use.
+    std::fs::remove_file(dir.join("b.md")).unwrap();
+    groups::switch(h.state_mut(), Target::Group("Default group".into()));
+    h.run_steps(3);
+    assert_eq!(open_names(&h), ["a.xlsx"], "the others open");
+    let (_, text) = h.state().message.clone().expect("a message names it");
+    assert!(text.contains(&path(&dir, "b.md")), "{text}");
+    let group = h.state().ui.groups.iter().find(|g| g.name == "Default group").unwrap();
+    assert_eq!(group.files, [path(&dir, "a.xlsx")], "and it is no longer in the group");
+    assert!(!h.state().session.documents().iter().any(|d| d.is_dirty()), "nothing kept in its place");
+    let _ = std::fs::remove_dir_all(&dir);
+}
