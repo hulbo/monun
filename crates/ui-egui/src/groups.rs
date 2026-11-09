@@ -426,6 +426,11 @@ enum PanelAction {
     Reorder { name: String, to: usize },
 }
 
+/// Where the group panel keeps whether a group was unfolded or folded by hand.
+fn fold_id(name: &str) -> egui::Id {
+    egui::Id::unique(("monun.group_panel.open", name))
+}
+
 /// The group panel's Sort menu (the ↕ in its title strip): the order of the groups, and of each
 /// group's files.
 pub(crate) fn sort_menu(app: &mut SheetApp, ui: &mut Ui) {
@@ -461,6 +466,17 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let current = current(app);
     let groups = ordered(app);
+    // A group unfolded or folded by hand stays so until the group in use changes: then only the
+    // new one shows its files, the one left (and any other) folded.
+    let seen_id = egui::Id::unique("monun.group_panel.current");
+    if ui.data(|d| d.get_temp::<String>(seen_id)).as_deref() != Some(current.as_str()) {
+        ui.data_mut(|d| {
+            for g in &groups {
+                d.remove::<bool>(fold_id(&g.name));
+            }
+            d.insert_temp(seen_id, current.clone());
+        });
+    }
     let own_order = app.ui.group_order == GroupOrder::Custom;
     let file_order = app.ui.file_order;
     let open_tab = app.session.active().and_then(|d| d.path.clone());
@@ -474,8 +490,7 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let last = groups.len().saturating_sub(1);
     for (i, g) in groups.iter().enumerate() {
         let on = g.name == current;
-        let fold_id = egui::Id::unique(("monun.group_panel.open", &g.name));
-        let open = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(on);
+        let open = ui.data(|d| d.get_temp::<bool>(fold_id(&g.name))).unwrap_or(on);
         // The group's row: the arrow folds it, the rest goes to it; in Your Own Order it drags.
         let sense = if own_order { Sense::click_and_drag() } else { Sense::click() };
         let (r, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
@@ -589,9 +604,9 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
         Some(PanelAction::Reorder { name, to }) => reorder(app, &name, to),
         Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
         Some(PanelAction::Fold(name)) => {
-            let fold_id = egui::Id::unique(("monun.group_panel.open", &name));
-            let open = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(name == current);
-            ui.data_mut(|d| d.insert_temp(fold_id, !open));
+            let id = fold_id(&name);
+            let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(name == current);
+            ui.data_mut(|d| d.insert_temp(id, !open));
         }
         Some(PanelAction::Open { group, path }) if group == current => {
             app.open_path(&path);

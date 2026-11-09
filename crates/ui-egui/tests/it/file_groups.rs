@@ -572,3 +572,47 @@ fn a_file_of_the_group_deleted_meanwhile_is_left_out_and_named() {
     assert!(!h.state().session.documents().iter().any(|d| d.is_dirty()), "nothing kept in its place");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn going_to_another_group_folds_the_one_left_and_unfolds_the_new_one() {
+    let dir = folder("fold");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    let shown = |h: &egui_kittest::Harness<'static, SheetApp>, name: &str| h.query_all_by_label(name).count();
+    let arrow = |h: &mut egui_kittest::Harness<'static, SheetApp>, group: &str| {
+        let at = h.get_by_role_and_label(egui::accesskit::Role::Button, group).rect().left_center() + egui::vec2(10.0, 0.0);
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerMoved(at));
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+        }
+        h.run_steps(2);
+    };
+    // Default group unfolded by hand beside SFR002 (empty, in use).
+    arrow(&mut h, "Default group");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (1, 1), "both unfolded");
+    // To Default group: SFR002 folds.
+    h.get_by_label("Default group").click();
+    h.run_steps(4);
+    assert_eq!(h.state().ui.group, "Default group");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (2, 0), "its files (in the panel and the tab), SFR002 folded");
+    // SFR002 unfolded by hand and Default group folded by hand, then back to SFR002: the same.
+    arrow(&mut h, "SFR002");
+    arrow(&mut h, "Default group");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (1, 1), "only the tab");
+    groups::switch(h.state_mut(), Target::Group("SFR002".into()));
+    h.run_steps(4);
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (0, 1), "Default group folded, SFR002 unfolded");
+    groups::switch(h.state_mut(), Target::Group("Default group".into()));
+    h.run_steps(4);
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (2, 0), "and unfolded again on coming back");
+    let _ = std::fs::remove_dir_all(&dir);
+}
