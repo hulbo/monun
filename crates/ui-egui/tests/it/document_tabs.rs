@@ -428,3 +428,21 @@ fn ctrl_and_the_wheel_zoom_a_document_a_step_a_notch() {
     assert_eq!(h.state().session.active().unwrap().wb.sheet(0).unwrap().zoom, 120);
     assert_eq!(h.state().session.active().unwrap().wb.sheet(1).unwrap().zoom, 100);
 }
+
+#[test]
+fn ctrl_home_and_ctrl_end_go_to_the_top_and_bottom_in_view_mode() {
+    let paragraphs: String = (1..=80).map(|n| format!("paragraph {n}\n\n")).collect();
+    let mut h = with_document(&format!("# First heading\n\n{paragraphs}# Last heading\n"));
+    let screen = h.ctx.content_rect();
+    // A block out of view isn't drawn at all.
+    let shown =
+        |h: &Harness, label: &str| h.query_by_label(label).is_some_and(|n| n.rect().top() >= screen.top() && n.rect().bottom() <= screen.bottom());
+    assert!(shown(&h, "First heading") && !shown(&h, "Last heading"), "View mode, at the top");
+    press(&mut h, Key::End, Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(shown(&h, "Last heading") && !shown(&h, "First heading"), "at the bottom");
+    press(&mut h, Key::Home, Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(shown(&h, "First heading") && !shown(&h, "Last heading"), "back at the top");
+    assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 1, "still the document");
+}

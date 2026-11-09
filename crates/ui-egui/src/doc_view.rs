@@ -1075,6 +1075,31 @@ fn text_file_items(app: &SheetApp, ui: &mut Ui, kind: TextKind, t: &Tokens) {
     label(ui, breaks, "The line breaks the file is saved with: CRLF (Windows) or LF", t.text_dim);
 }
 
+/// Where Ctrl+Home and Ctrl+End take View mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Jump {
+    Top,
+    Bottom,
+}
+
+/// Ctrl+Home or Ctrl+End in View mode: to the top or the bottom of the document, as they go while
+/// editing. A field being typed in (Find) or a dialog keeps them.
+fn view_jump(app: &SheetApp, ctx: &egui::Context) -> Option<Jump> {
+    let typing = ctx.text_edit_focused() && ctx.memory(|m| m.focused()) != Some(editor_id());
+    if typing || app.dialog.is_some() || app.message.is_some() {
+        return None;
+    }
+    ctx.input_mut(|i| {
+        if i.consume_key(Modifiers::COMMAND, Key::Home) {
+            Some(Jump::Top)
+        } else if i.consume_key(Modifiers::COMMAND, Key::End) {
+            Some(Jump::Bottom)
+        } else {
+            None
+        }
+    })
+}
+
 /// View mode: the rendered document, centred.
 fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let Some((key, text)) = app.doc_view.draft.as_ref().map(|d| ((d.uid, d.sheet), d.text.clone())) else { return };
@@ -1105,6 +1130,10 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
         scroll = scroll.vertical_scroll_offset((y + lead - 8.0 * z).max(0.0));
     }
+    let jump = view_jump(app, ui.ctx());
+    if jump == Some(Jump::Top) {
+        scroll = scroll.vertical_scroll_offset(0.0);
+    }
     let (mut action, mut positions) = (None, Vec::new());
     let (marks, picked) = (crate::memos::marks_of(app), app.memos.picked);
     let mut marked = None;
@@ -1121,6 +1150,9 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
                 marked = crate::memos::draw_marks(ui, &drawn.lines, &marks, picked);
                 (action, positions) = (drawn.action, drawn.positions);
                 ui.add_space(48.0 * z);
+                if jump == Some(Jump::Bottom) {
+                    ui.scroll_to_cursor_animation(Some(egui::Align::Max), egui::style::ScrollAnimation::none());
+                }
             });
         });
     });
