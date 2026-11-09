@@ -460,3 +460,96 @@ fn a_layer_sized_to_what_it_holds_grows_as_files_open() {
     assert!(last.bottom() < title.top() + five + 4.0, "{last:?} inside a layer {five} tall from {title:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The groups `names` as the group panel lists them, top to bottom.
+fn panel_order(h: &egui_kittest::Harness<'static, SheetApp>, names: &[&str]) -> Vec<String> {
+    let mut rows: Vec<(f32, String)> = names
+        .iter()
+        .filter_map(|n| h.query_by_role_and_label(egui::accesskit::Role::Button, n).map(|node| (node.rect().top(), n.to_string())))
+        .collect();
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, n)| n).collect()
+}
+
+/// Chooses `label` in the group panel's Sort menu: the `nth` of that name (Order of groups' By
+/// name is the first, Order of files' the second).
+fn sort_by(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, nth: usize) {
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Sort Groups and Files").click();
+    h.run_steps(2);
+    let mut found: Vec<egui::Rect> = h.get_all_by_label(label).map(|n| n.rect()).collect();
+    found.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    let at = found[nth].center();
+    h.get_all_by_label(label).find(|n| n.rect().center() == at).unwrap().click();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_group_panel_sorts_groups_and_files_and_keeps_your_own_order() {
+    let dir = folder("sort");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // The files as their tabs are, then by type: the Markdown file first.
+    let top = |h: &egui_kittest::Harness<'static, SheetApp>, name: &str| {
+        h.get_all_by_label(name).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().top()
+    };
+    assert!(top(&h, "a.xlsx") < top(&h, "b.md"));
+    sort_by(&mut h, "By type", 0);
+    assert_eq!(h.state().ui.file_order, groups::FileOrder::Kind);
+    assert!(top(&h, "b.md") < top(&h, "a.xlsx"), "by type");
+
+    // The groups as made, by name (a number by its value), and the one in use first.
+    groups::switch(h.state_mut(), Target::New { name: "REQ-10".into(), take: false });
+    groups::switch(h.state_mut(), Target::New { name: "REQ-9".into(), take: false });
+    h.run_steps(3);
+    let all = ["Default group", "REQ-10", "REQ-9"];
+    assert_eq!(panel_order(&h, &all), all);
+    sort_by(&mut h, "By name", 0);
+    assert_eq!(panel_order(&h, &all), ["Default group", "REQ-9", "REQ-10"]);
+    sort_by(&mut h, "Most recently used first", 0);
+    assert_eq!(panel_order(&h, &all), ["REQ-9", "REQ-10", "Default group"]);
+    // The title bar's group menu lists them the same way.
+    assert_eq!(groups::ordered(h.state()).iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["REQ-9", "REQ-10", "Default group"]);
+
+    // Your own order: a group dragged goes where it is let go.
+    sort_by(&mut h, "Your own order", 0);
+    assert_eq!(panel_order(&h, &all), all);
+    let from = h.get_by_role_and_label(egui::accesskit::Role::Button, "REQ-9").rect().center();
+    let to = h.get_by_role_and_label(egui::accesskit::Role::Button, "Default group").rect().center_top() + egui::vec2(0.0, 4.0);
+    drag(&mut h, from, to);
+    assert_eq!(panel_order(&h, &all), ["REQ-9", "Default group", "REQ-10"]);
+    assert_eq!(h.state().ui.group, "REQ-9", "dragging it doesn't go to it");
+    // Or moved by its menu.
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "REQ-10").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Move Up").click();
+    h.run_steps(3);
+    assert_eq!(panel_order(&h, &all), ["REQ-9", "REQ-10", "Default group"]);
+    assert_eq!(h.state().ui.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["REQ-9", "REQ-10", "Default group"], "and kept so");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_side_panels_buttons_point_and_only_its_title_grabs() {
+    let dir = folder("cursor");
+    let mut h = harness(&[path(&dir, "b.md")]);
+    h.state_mut().ui.side_layer = true;
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    let cursor = |h: &mut egui_kittest::Harness<'static, SheetApp>, at: egui::Pos2| {
+        h.hover_at(at);
+        h.run_steps(2);
+        h.output().platform_output.cursor_icon
+    };
+    for button in ["New Group…", "Sort Groups and Files", "Panel options", "Close"] {
+        let at = h.get_all_by_label(button).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
+        assert_eq!(cursor(&mut h, at), egui::CursorIcon::PointingHand, "{button}");
+    }
+    let title = heading(&h, "Groups");
+    assert_eq!(cursor(&mut h, title.left_center() + egui::vec2(20.0, 0.0)), egui::CursorIcon::Grab);
+    // A press on a button and a drag never take the panel along.
+    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").rect().center();
+    drag(&mut h, plus, plus + egui::vec2(-400.0, 300.0));
+    assert_eq!(h.state().ui.side_corner, monun_ui_egui::panes::Corner::TopRight);
+    let _ = std::fs::remove_dir_all(&dir);
+}

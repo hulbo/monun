@@ -112,6 +112,11 @@ pub struct UiState {
     pub group: String,
     /// The group panel ([`groups::panel`]) shows, whichever file is in front.
     pub group_panel: bool,
+    /// The order the group panel lists the groups and their files in (its Sort button).
+    #[serde(deserialize_with = "groups::lenient")]
+    pub group_order: groups::GroupOrder,
+    #[serde(deserialize_with = "groups::lenient")]
+    pub file_order: groups::FileOrder,
     /// The memo and group panels float over the files as a layer, in `side_corner`, rather than
     /// take a column of their own (on the left with `side_left`, else on the right).
     pub side_layer: bool,
@@ -181,6 +186,8 @@ impl Default for UiState {
             group: String::new(),
             doc_views: vec![],
             group_panel: false,
+            group_order: groups::GroupOrder::Custom,
+            file_order: groups::FileOrder::Tabs,
             side_layer: false,
             side_corner: panes::Corner::TopRight,
             side_left: false,

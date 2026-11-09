@@ -25,6 +25,126 @@ pub struct FileGroup {
     pub files: Vec<String>,
     /// The file whose tab was in front.
     pub active: Option<String>,
+    /// When it last became the group in use (milliseconds since 1970), for Most Recently Used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<u64>,
+}
+
+/// The order the group panel and the group menu list the groups in (the panel's Sort button).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GroupOrder {
+    /// The order they are kept in: as made, then as dragged (or moved up and down).
+    #[default]
+    Custom,
+    /// By name, a number by its value (REQ-9 before REQ-10).
+    Name,
+    /// The group in use first, then the others by when they were last in use.
+    Recent,
+}
+
+/// The order the group panel lists a group's files in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileOrder {
+    /// As their tabs are.
+    #[default]
+    Tabs,
+    /// By name.
+    Name,
+    /// By type (the extension), then by name.
+    Kind,
+}
+
+/// Reads a saved order; one this version doesn't know reads as the default.
+pub(crate) fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    let v = Json::deserialize(d)?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+/// Compares two names the way a person sorts them: letters regardless of case, a run of digits by
+/// its value (REQ-9 before REQ-10), Hangul in 가나다 order (its code points are in that order).
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering::Equal;
+    fn digits(it: &mut std::iter::Peekable<std::str::Chars>) -> String {
+        let mut run = String::new();
+        while let Some(c) = it.next_if(char::is_ascii_digit) {
+            run.push(c);
+        }
+        run
+    }
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        let order = match (x.peek().copied(), y.peek().copied()) {
+            // Alike but for case or leading zeros: in a fixed order all the same.
+            (None, None) => return a.cmp(b),
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let (m, n) = (digits(&mut x), digits(&mut y));
+                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                m.len().cmp(&n.len()).then_with(|| m.cmp(n))
+            }
+            (Some(c), Some(d)) => {
+                x.next();
+                y.next();
+                c.to_lowercase().cmp(d.to_lowercase())
+            }
+        };
+        if order != Equal {
+            return order;
+        }
+    }
+}
+
+/// The groups in the order the panel and the group menu list them ([`UiState::group_order`]).
+///
+/// [`UiState::group_order`]: crate::UiState::group_order
+pub fn ordered(app: &SheetApp) -> Vec<FileGroup> {
+    let mut groups = app.ui.groups.clone();
+    match app.ui.group_order {
+        GroupOrder::Custom => {}
+        GroupOrder::Name => groups.sort_by(|a, b| natural_cmp(&a.name, &b.name)),
+        GroupOrder::Recent => {
+            let current = &app.ui.group;
+            groups.sort_by_key(|g| std::cmp::Reverse(if &g.name == current { u64::MAX } else { g.used.unwrap_or(0) }));
+        }
+    }
+    groups
+}
+
+/// A path's file name.
+fn file_name(path: &str) -> &str {
+    std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path)
+}
+
+/// A group's files in the order the panel lists them.
+pub fn ordered_files(files: &[String], order: FileOrder) -> Vec<String> {
+    let kind = |p: &str| std::path::Path::new(p).extension().and_then(std::ffi::OsStr::to_str).unwrap_or_default().to_lowercase();
+    let mut files = files.to_vec();
+    match order {
+        FileOrder::Tabs => {}
+        FileOrder::Name => files.sort_by(|a, b| natural_cmp(file_name(a), file_name(b))),
+        FileOrder::Kind => files.sort_by(|a, b| kind(a).cmp(&kind(b)).then_with(|| natural_cmp(file_name(a), file_name(b)))),
+    }
+    files
+}
+
+/// Notes that the group `name` is the one in use from now, for Most Recently Used.
+fn touch(app: &mut SheetApp, name: &str) {
+    let now = crate::now_ms().max(0.0) as u64;
+    if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == name) {
+        g.used = Some(now);
+    }
+}
+
+/// Moves the group `name` to place `to` in the order the groups are kept in (Your Own Order).
+fn reorder(app: &mut SheetApp, name: &str, to: usize) {
+    let Some(from) = app.ui.groups.iter().position(|g| g.name == name) else { return };
+    let g = app.ui.groups.remove(from);
+    let to = to.min(app.ui.groups.len());
+    app.ui.groups.insert(to, g);
+    persist(app);
 }
 
 /// Where a switch goes.
@@ -150,11 +270,14 @@ pub fn switch(app: &mut SheetApp, target: Target) {
         sync(app);
         let i = ensure(app);
         let files = app.ui.groups.get_mut(i).map(std::mem::take).unwrap_or_default();
+        let used = files.used;
         app.ui.groups.push(FileGroup { name: name.clone(), ..files });
         if let Some(left) = app.ui.groups.get_mut(i) {
             left.name = app.ui.group.clone();
+            left.used = used;
         }
         app.ui.group = name.clone();
+        touch(app, name);
         persist(app);
         return;
     }
@@ -190,6 +313,7 @@ fn go(app: &mut SheetApp, target: &Target) {
     };
     if let Some(g) = group {
         app.ui.group = g.name.clone();
+        touch(app, &g.name);
         open_group(app, &g);
     }
     sync(app);
@@ -255,7 +379,7 @@ fn menu(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     ui.set_min_width(220.0);
     let current = current(app);
-    let groups = app.ui.groups.clone();
+    let groups = ordered(app);
     let mut chosen = None;
     for g in &groups {
         let on = g.name == current;
@@ -298,27 +422,70 @@ enum PanelAction {
     Open { group: String, path: String },
     /// Open a group dialog (New, Rename, Delete).
     Dialog(&'static str, Json),
+    /// Move a group to this place in Your Own Order.
+    Reorder { name: String, to: usize },
+}
+
+/// The group panel's Sort menu (the ↕ in its title strip): the order of the groups, and of each
+/// group's files.
+pub(crate) fn sort_menu(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    ui.set_min_width(220.0);
+    ui.label(egui::RichText::new(lang.tr("Order of groups")).strong());
+    for (order, label) in [(GroupOrder::Custom, "Your own order"), (GroupOrder::Name, "By name"), (GroupOrder::Recent, "Most recently used first")] {
+        if ui.radio(app.ui.group_order == order, lang.tr(label)).clicked() {
+            app.ui.group_order = order;
+            ui.close();
+        }
+    }
+    ui.separator();
+    ui.label(egui::RichText::new(lang.tr("Order of files")).strong());
+    for (order, label) in [(FileOrder::Tabs, "Tab order"), (FileOrder::Name, "By name"), (FileOrder::Kind, "By type")] {
+        if ui.radio(app.ui.file_order == order, lang.tr(label)).clicked() {
+            app.ui.file_order = order;
+            ui.close();
+        }
+    }
+    ui.separator();
+    ui.label(egui::RichText::new(lang.tr("In your own order, drag a group to move it.")).small().weak());
 }
 
 /// The group panel (the right-hand pane beside the files, with file tabs): every group with its
-/// files, the group in use marked and its files shown. A click on a group goes to it, and on a file
-/// shows it, going to its group first when that isn't the group in use. New Group is the + in the
-/// panel's title strip; a group's right-click menu renames or deletes it. The title bar's group button keeps its menu.
+/// files, the group in use marked and its files shown, in the order its Sort menu chose. A click on
+/// a group goes to it, and on a file shows it, going to its group first when that isn't the group
+/// in use. New Group is the + in the panel's title strip; a group's right-click menu renames or
+/// deletes it (and in Your Own Order moves it, as dragging it does). The title bar's group button
+/// keeps its menu.
 pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
     let current = current(app);
-    let groups = app.ui.groups.clone();
+    let groups = ordered(app);
+    let own_order = app.ui.group_order == GroupOrder::Custom;
+    let file_order = app.ui.file_order;
     let open_tab = app.session.active().and_then(|d| d.path.clone());
     let dirty: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).filter_map(|d| d.path.clone()).collect();
     let mut action = None;
     let width = ui.available_width();
-    for g in &groups {
+    // The groups' rows as drawn, and the one being dragged or let go (Your Own Order).
+    let mut rows: Vec<(String, Rect)> = Vec::new();
+    let mut dragged = None;
+    let mut dropped = None;
+    let last = groups.len().saturating_sub(1);
+    for (i, g) in groups.iter().enumerate() {
         let on = g.name == current;
         let fold_id = egui::Id::unique(("monun.group_panel.open", &g.name));
         let open = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(on);
-        // The group's row: the arrow folds it, the rest goes to it.
-        let (r, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        // The group's row: the arrow folds it, the rest goes to it; in Your Own Order it drags.
+        let sense = if own_order { Sense::click_and_drag() } else { Sense::click() };
+        let (r, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
+        rows.push((g.name.clone(), r));
+        if resp.dragged() {
+            dragged = Some(g.name.clone());
+        }
+        if resp.drag_stopped() {
+            dropped = Some(g.name.clone());
+        }
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &g.name));
         if on {
             ui.painter().rect_filled(r, 4.0, t.pressed);
@@ -351,6 +518,15 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             if !on && ui.button(lang.tr("Delete Group…")).clicked() {
                 action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
             }
+            if own_order && (i > 0 || i < last) {
+                ui.separator();
+                if i > 0 && ui.button(lang.tr("Move Up")).clicked() {
+                    action = Some(PanelAction::Reorder { name: g.name.clone(), to: i - 1 });
+                }
+                if i < last && ui.button(lang.tr("Move Down")).clicked() {
+                    action = Some(PanelAction::Reorder { name: g.name.clone(), to: i + 1 });
+                }
+            }
         });
         if !open {
             continue;
@@ -361,8 +537,8 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
                 ui.label(egui::RichText::new(lang.tr("No files")).font(theme::ui_font(12.0)).color(t.text_dim).italics());
             });
         }
-        for path in &g.files {
-            let name = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
+        for path in &ordered_files(&g.files, file_order) {
+            let name = file_name(path).to_string();
             let front = on && open_tab.as_deref() == Some(path.as_str());
             let (r, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, &name));
@@ -392,7 +568,25 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
         }
         ui.add_space(4.0);
     }
+    // A group dragged goes between the rows nearest the pointer: a line shows where. Let go away
+    // from the panel, it stays where it was.
+    if let Some(name) = dragged.as_ref().or(dropped.as_ref())
+        && let Some(p) = ui.ctx().pointer_interact_pos()
+        && ui.min_rect().expand(24.0).contains(p)
+    {
+        let others: Vec<Rect> = rows.iter().filter(|(n, _)| n != name).map(|(_, r)| *r).collect();
+        let to = others.iter().filter(|r| r.center().y < p.y).count();
+        if dropped.is_some() {
+            action = Some(PanelAction::Reorder { name: name.clone(), to });
+        } else {
+            let y = others.get(to).map_or(ui.min_rect().bottom(), |r| r.top() - 1.0);
+            let x = rows.first().map_or(ui.min_rect().x_range(), |(_, r)| r.x_range());
+            ui.painter().hline(x, y, egui::Stroke::new(2.0, t.accent));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+    }
     match action {
+        Some(PanelAction::Reorder { name, to }) => reorder(app, &name, to),
         Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
         Some(PanelAction::Fold(name)) => {
             let fold_id = egui::Id::unique(("monun.group_panel.open", &name));
@@ -541,5 +735,36 @@ fn submit_name(app: &mut SheetApp, d: &mut Dialog, open: &mut bool, renaming: Op
             let take = d.values.get("take").and_then(Json::as_bool).unwrap_or(false);
             switch(app, Target::New { name, take });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_sort_as_a_person_reads_them() {
+        let mut names = ["REQ-10", "req-9", "REQ-016_리포팅툴", "REQ-016_데이터이관", "기본 그룹", "Default group", "REQ-033"];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(names, ["Default group", "req-9", "REQ-10", "REQ-016_데이터이관", "REQ-016_리포팅툴", "REQ-033", "기본 그룹"]);
+        assert_eq!(natural_cmp("a2", "a02"), "a2".cmp("a02"), "alike but for zeros, still in a fixed order");
+        assert_eq!(natural_cmp("abc", "ab"), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn files_list_by_tab_name_or_type() {
+        let files: Vec<String> = ["/w/보고서.xlsx", "/w/기획.md", "/w/a10.md", "/w/a9.sql"].map(String::from).to_vec();
+        let names = |order| ordered_files(&files, order).iter().map(|p| file_name(p).to_string()).collect::<Vec<_>>();
+        assert_eq!(names(FileOrder::Tabs), ["보고서.xlsx", "기획.md", "a10.md", "a9.sql"]);
+        assert_eq!(names(FileOrder::Name), ["a9.sql", "a10.md", "기획.md", "보고서.xlsx"]);
+        assert_eq!(names(FileOrder::Kind), ["a10.md", "기획.md", "a9.sql", "보고서.xlsx"]);
+    }
+
+    #[test]
+    fn an_unknown_saved_order_reads_as_the_default() {
+        let ui: crate::UiState = serde_json::from_str(r#"{"groupOrder":"byColour","fileOrder":"kind"}"#).unwrap();
+        assert_eq!((ui.group_order, ui.file_order), (GroupOrder::Custom, FileOrder::Kind));
+        let back = serde_json::to_value(&ui).unwrap();
+        assert_eq!((back["groupOrder"].as_str(), back["fileOrder"].as_str()), (Some("custom"), Some("kind")));
     }
 }

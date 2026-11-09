@@ -53,9 +53,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.add_space(6.0);
         egui::ScrollArea::vertical().show(ui, |ui| content(app, ui, &pane));
     });
-    if let Some(title) = title.filter(|_| movable) {
+    if let Some((title, strip)) = title.filter(|_| movable) {
         let window = ui.ctx().content_rect();
-        moved(app, ui.ctx(), &title, window, false);
+        moved(app, ui.ctx(), &title, strip.width(), window, false);
     }
 }
 
@@ -179,8 +179,8 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
         }
         None => {}
     }
-    if let Some(title) = title {
-        moved(app, ui.ctx(), &title, area, true);
+    if let Some((title, strip)) = title {
+        moved(app, ui.ctx(), &title, strip.width(), area, true);
     }
 }
 
@@ -238,9 +238,10 @@ fn edges(ui: &mut Ui, rect: egui::Rect, corner: Corner, t: &Tokens) -> Option<Re
     out
 }
 
-/// A pane's title strip: the title, a memo or group panel's options (where it goes) and Close.
-/// Returns the strip, by which a memo or group panel is dragged.
-fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool) -> egui::Response {
+/// A pane's title strip: the title, a memo or group panel's options (where it goes) and Close; the
+/// group panel's New Group and Sort as well. Returns the title beside the buttons, by which a memo
+/// or group panel is dragged, and the whole strip.
+fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool) -> (egui::Response, egui::Rect) {
     use egui::{Align2, Rect, Sense, Stroke, pos2};
     let lang = app.ui.language;
     let title = match pane {
@@ -252,17 +253,19 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
         _ => "",
     };
     let title = lang.tr(title).to_string();
-    let sense = if movable { Sense::click_and_drag() } else { Sense::hover() };
-    let (strip, resp) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, &title));
+    let (strip, heading) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+    heading.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, &title));
     // The line under it runs the pane's whole width, out through its margins, on the very row a
     // document tool bar's line is drawn on.
     ui.painter()
         .line_segment([pos2(strip.left() - 10.0, strip.bottom()), pos2(strip.right() + 10.0, strip.bottom())], Stroke::new(1.0, t.ribbon_border));
     ui.painter().text(pos2(strip.left(), strip.center().y), Align2::LEFT_CENTER, &title, theme::ui_bold(14.0), t.text);
-    let buttons = Rect::from_min_max(pos2(strip.right() - 90.0, strip.top()), strip.max);
+    let buttons = Rect::from_min_max(pos2(strip.right() - 120.0, strip.top()), strip.max);
     let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    if crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
+    let size = vec2(22.0, 22.0);
+    let close = crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", size);
+    let mut pointing = close.hovered();
+    if close.clicked() {
         match pane {
             "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
             "group" => app.ui.group_panel = false,
@@ -270,19 +273,32 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
         }
     }
     if movable {
-        let more = crate::widgets::icon_button(&mut row, crate::icons::Icon::More, t.text_dim, "Panel options", vec2(22.0, 22.0));
+        let more = crate::widgets::icon_button(&mut row, crate::icons::Icon::More, t.text_dim, "Panel options", size);
         more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Panel options")));
+        pointing |= more.hovered();
         egui::Popup::menu(&more).show(|ui| options(app, ui));
     }
-    // The group panel's New Group…, as a + beside them.
+    // The group panel's Sort and New Group…, beside them.
     if pane == "group" {
-        let new = crate::widgets::icon_button(&mut row, crate::icons::Icon::Plus, t.text_dim, "New Group…", vec2(22.0, 22.0));
+        let sort = crate::widgets::icon_button(&mut row, crate::icons::Icon::SortAsc, t.text_dim, "Sort Groups and Files", size);
+        sort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Sort Groups and Files")));
+        pointing |= sort.hovered();
+        egui::Popup::menu(&sort).show(|ui| crate::groups::sort_menu(app, ui));
+        let new = crate::widgets::icon_button(&mut row, crate::icons::Icon::Plus, t.text_dim, "New Group…", size);
         new.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("New Group…")));
+        pointing |= new.hovered();
         if new.clicked() {
             app.open_dialog("newGroup", json!({}));
         }
     }
-    resp
+    // The buttons are for clicking: the hand shows over them, and the title drags only beside them
+    // (a press on one never takes the panel along).
+    if pointing {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let grip = Rect::from_min_max(strip.min, pos2((row.min_rect().left() - 4.0).max(strip.left()), strip.bottom()));
+    let sense = if movable { Sense::click_and_drag() } else { Sense::hover() };
+    (ui.interact(grip, ui.scope_id().with("monun.pane_title"), sense), strip)
 }
 
 /// The memo and group panels' options: a column on the right or left, or a layer in a corner.
@@ -334,16 +350,16 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 /// A memo or group panel's title dragged: a layer follows the pointer and settles in the corner of
-/// `area` (the files') it is let go nearest; a column, shown where it would go, moves to the side
-/// of `area` (the window) it is let go on.
-fn moved(app: &mut SheetApp, ctx: &egui::Context, title: &egui::Response, area: egui::Rect, layer: bool) {
+/// `area` (the files') it is let go nearest; a column (`strip_w` wide inside its margins), shown
+/// where it would go, moves to the side of `area` (the window) it is let go on.
+fn moved(app: &mut SheetApp, ctx: &egui::Context, title: &egui::Response, strip_w: f32, area: egui::Rect, layer: bool) {
     let t = Tokens::get(ctx);
     if title.dragged() {
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         *app.side_drag.get_or_insert(egui::Vec2::ZERO) += title.drag_delta();
         if !layer && let Some(p) = ctx.pointer_interact_pos() {
             // Where the column would go.
-            let width = title.rect.width() + 20.0;
+            let width = strip_w + 20.0;
             let side = if p.x < area.center().x {
                 egui::Rect::from_min_size(area.min, vec2(width, area.height()))
             } else {

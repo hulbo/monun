@@ -196,6 +196,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 ("view.darkMode", "Dark Mode", ""),
                 ("view.theme", "Display Theme", ""),
                 ("view.accent", "Accent Color", "{color: green|blue|teal|purple|pink|orange|gray} → {color}"),
+                ("view.groupOrder", "Sort Groups and Files", "{groups?: custom|name|recent, files?: tabs|name|kind} → {groups, files}"),
                 ("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}"),
                 ("options.autoComplete", "Enable AutoComplete for cell values", "{on?: bool} (toggles without it) → {on}"),
                 ("view.interfaceScale", "Interface Size", "{percent: 75–200 | \"auto\"} (100 = auto; clamped)"),

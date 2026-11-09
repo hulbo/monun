@@ -243,6 +243,21 @@ impl SheetApp {
                 }
                 Ok(json!({"color": self.ui.accent.name()}))
             }
+            "view.groupOrder" => {
+                if let Some(v) = p.get("groups") {
+                    match serde_json::from_value(v.clone()) {
+                        Ok(order) => self.ui.group_order = order,
+                        Err(_) => return Some(Err("groups must be one of custom, name, recent".into())),
+                    }
+                }
+                if let Some(v) = p.get("files") {
+                    match serde_json::from_value(v.clone()) {
+                        Ok(order) => self.ui.file_order = order,
+                        Err(_) => return Some(Err("files must be one of tabs, name, kind".into())),
+                    }
+                }
+                Ok(json!({"groups": self.ui.group_order, "files": self.ui.file_order}))
+            }
             "view.animations" => {
                 self.ui.animations = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.animations);
                 Ok(json!({"on": self.ui.animations}))
