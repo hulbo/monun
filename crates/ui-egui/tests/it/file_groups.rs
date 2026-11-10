@@ -616,3 +616,87 @@ fn going_to_another_group_folds_the_one_left_and_unfolds_the_new_one() {
     assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (2, 0), "and unfolded again on coming back");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Right-clicks the group panel's row `label` (the panel's, not a file tab of the same name: the
+/// one furthest right) and clicks `item` in its menu.
+fn panel_menu(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, item: &str) {
+    let at = h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
+    h.get_all_by_label(label).find(|n| n.rect().center() == at).unwrap().click_secondary();
+    h.run_steps(2);
+    h.get_by_label(item).click();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_group_in_use_is_deleted_from_its_menu_after_going_to_the_next_one() {
+    let dir = folder("delete-in-use");
+    let mut h = harness(&[path(&dir, "a.xlsx")]);
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    groups::switch(h.state_mut(), Target::Group("Default group".into()));
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // A change not saved yet: going asks about it, and Cancel keeps the group.
+    h.state_mut().run("cell.set", json!({"cell": "A2", "input": "changed"})).unwrap();
+    h.run_steps(2);
+    panel_menu(&mut h, "Default group", "Delete Group…");
+    assert!(h.query_by_label("Its open files close, and the group “SFR002” opens.").is_some(), "it says where it goes");
+    press(&mut h, "Delete");
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("switchGroup"), "its unsaved file asked about");
+    press(&mut h, "Cancel");
+    h.run_steps(2);
+    assert_eq!(h.state().ui.group, "Default group");
+    assert_eq!(h.state().ui.groups.len(), 2, "nothing deleted");
+    // Don't Save: off to SFR002, and Default group is gone; its file stays where it is.
+    panel_menu(&mut h, "Default group", "Delete Group…");
+    press(&mut h, "Delete");
+    h.run_steps(2);
+    press(&mut h, "Don't Save");
+    h.run_steps(3);
+    assert_eq!(h.state().ui.group, "SFR002");
+    assert_eq!(h.state().ui.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["SFR002"]);
+    assert!(open_names(&h).is_empty());
+    assert!(dir.join("a.xlsx").exists());
+    // The only group left can't be deleted.
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "SFR002").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Delete Group…").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Delete the group “SFR002”? Its files stay where they are.").is_none());
+    assert_eq!(h.state().ui.groups.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_file_is_removed_from_its_group_by_its_menu() {
+    let dir = folder("remove-file");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // In the group in use: its tab closes, and the group follows.
+    panel_menu(&mut h, "b.md", "Remove from Group");
+    assert_eq!(open_names(&h), ["a.xlsx"]);
+    assert_eq!(h.state().ui.groups[0].files, [path(&dir, "a.xlsx")]);
+    // In another group: out of its list, the file left where it is.
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    h.run_steps(3);
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, "Default group").rect().left_center() + egui::vec2(10.0, 0.0);
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerMoved(arrow));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: arrow,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(2);
+    panel_menu(&mut h, "a.xlsx", "Remove from Group");
+    let default = h.state().ui.groups.iter().find(|g| g.name == "Default group").unwrap();
+    assert!(default.files.is_empty(), "{:?}", default.files);
+    assert_eq!(h.state().ui.group, "SFR002", "without going there");
+    assert!(dir.join("a.xlsx").exists() && dir.join("b.md").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

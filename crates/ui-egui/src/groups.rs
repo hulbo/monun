@@ -262,6 +262,12 @@ fn persist(app: &SheetApp) {
 /// about (Save, Don't Save, Cancel) before anything closes. A new group taking the open files
 /// along closes nothing.
 pub fn switch(app: &mut SheetApp, target: Target) {
+    switch_then_delete(app, target, None);
+}
+
+/// Goes to `target` as [`switch`] does, then deletes the group `delete` (the one left, when Delete
+/// Group was chosen for the group in use). Cancelled, nothing is deleted.
+fn switch_then_delete(app: &mut SheetApp, target: Target, delete: Option<String>) {
     if let Err(e) = app.settle_drafts() {
         app.alert(e);
         return;
@@ -284,13 +290,52 @@ pub fn switch(app: &mut SheetApp, target: Target) {
     let unsaved: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.display_title()).collect();
     if unsaved.is_empty() {
         go(app, &target);
+        delete_left(app, delete);
     } else {
         let (name, new) = match &target {
             Target::Group(name) => (name.clone(), false),
             Target::New { name, .. } => (name.clone(), true),
         };
-        app.open_dialog("switchGroup", json!({"target": name, "new": new, "files": unsaved}));
+        app.open_dialog("switchGroup", json!({"target": name, "new": new, "files": unsaved, "delete": delete}));
     }
+}
+
+/// Deletes the group left behind by a switch (Delete Group on the group in use); never the group
+/// in use, should the switch not have happened.
+fn delete_left(app: &mut SheetApp, delete: Option<String>) {
+    if let Some(name) = delete
+        && name != app.ui.group
+    {
+        app.ui.groups.retain(|g| g.name != name);
+        persist(app);
+    }
+}
+
+/// Where Delete Group on the group in use goes: the group listed after it, or else the one before.
+fn neighbour(app: &SheetApp, name: &str) -> Option<String> {
+    let list = ordered(app);
+    let i = list.iter().position(|g| g.name == name)?;
+    list.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| list.get(j))).map(|g| g.name.clone())
+}
+
+/// Takes the file `path` out of the group `group`; the file itself stays where it is. In the group
+/// in use that closes it (asking first about unsaved changes): the group follows its tabs.
+fn remove_file(app: &mut SheetApp, group: &str, path: &str) {
+    if group == app.ui.group {
+        let uid = app.session.documents().iter().find(|d| d.path.as_deref() == Some(path)).map(|d| d.uid);
+        if let Some(window) = uid.and_then(|uid| app.session.doc_window(uid)) {
+            app.enter_window(window);
+            app.run_or_alert("file.close", json!({"document": true}));
+            return;
+        }
+    }
+    if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
+        g.files.retain(|f| f != path);
+        if g.active.as_deref() == Some(path) {
+            g.active = None;
+        }
+    }
+    persist(app);
 }
 
 /// Closes every file, then opens the target group's files (none for a new group).
@@ -424,6 +469,8 @@ enum PanelAction {
     Dialog(&'static str, Json),
     /// Move a group to this place in Your Own Order.
     Reorder { name: String, to: usize },
+    /// Take this file out of its group.
+    Remove { group: String, path: String },
 }
 
 /// Where the group panel keeps whether a group was unfolded or folded by hand.
@@ -530,7 +577,9 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             if ui.button(lang.tr("Rename Group…")).clicked() {
                 action = Some(PanelAction::Dialog("renameGroup", json!({"name": g.name})));
             }
-            if !on && ui.button(lang.tr("Delete Group…")).clicked() {
+            // Any group but the only one; the group in use goes to its neighbour first.
+            let delete = ui.add_enabled(last > 0, egui::Button::new(lang.tr("Delete Group…")));
+            if delete.on_disabled_hover_text(lang.tr("The only group can't be deleted.")).clicked() {
                 action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
             }
             if own_order && (i > 0 || i < last) {
@@ -577,9 +626,16 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             if unsaved {
                 ui.painter().circle_filled(pos2(r.right() - 10.0, r.center().y), 3.0, t.text_dim);
             }
-            if resp.on_hover_text(path).clicked() {
+            let resp = resp.on_hover_text(path);
+            if resp.clicked() {
                 action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
             }
+            resp.context_menu(|ui| {
+                let tip = if on { "Its tab closes; the file itself stays where it is." } else { "The file itself stays where it is." };
+                if ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr(tip)).clicked() {
+                    action = Some(PanelAction::Remove { group: g.name.clone(), path: path.clone() });
+                }
+            });
         }
         ui.add_space(4.0);
     }
@@ -602,6 +658,7 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     }
     match action {
         Some(PanelAction::Reorder { name, to }) => reorder(app, &name, to),
+        Some(PanelAction::Remove { group, path }) => remove_file(app, &group, &path),
         Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
         Some(PanelAction::Fold(name)) => {
             let id = fold_id(&name);
@@ -671,17 +728,24 @@ pub(crate) fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
         }
         "deleteGroup" => {
             let name = text(d, "name");
+            // The group in use: its files close and its neighbour opens first.
+            let next = if name == app.ui.group { neighbour(app, &name) } else { None };
             ui.add_space(4.0);
             ui.label(lang.tr("Delete the group “{name}”? Its files stay where they are.").replace("{name}", &name));
+            if let Some(next) = &next {
+                ui.label(
+                    egui::RichText::new(lang.tr("Its open files close, and the group “{name}” opens.").replace("{name}", next)).color(t.text_dim),
+                );
+            }
             ui.add_space(8.0);
             let row = [DialogButton::discard("Delete"), DialogButton::neutral("Cancel")];
             match crate::widgets::dialog_buttons(ui, &row) {
                 Some(0) => {
-                    if name != app.ui.group {
-                        app.ui.groups.retain(|g| g.name != name);
-                        persist(app);
-                    }
                     *open = false;
+                    match next {
+                        Some(next) => switch_then_delete(app, Target::Group(next), Some(name)),
+                        None => delete_left(app, Some(name)),
+                    }
                 }
                 Some(_) => *open = false,
                 None => {}
@@ -705,16 +769,19 @@ pub(crate) fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
             ui.add_space(8.0);
             let row = [DialogButton::confirm("Save"), DialogButton::discard("Don't Save"), DialogButton::neutral("Cancel")];
             let target = if new { Target::New { name, take: false } } else { Target::Group(name) };
+            let delete = Some(text(d, "delete")).filter(|n| !n.is_empty());
             match crate::widgets::dialog_buttons(ui, &row) {
                 Some(0) => {
                     *open = false;
                     if save_all(app) {
                         go(app, &target);
+                        delete_left(app, delete);
                     }
                 }
                 Some(1) => {
                     *open = false;
                     go(app, &target);
+                    delete_left(app, delete);
                 }
                 Some(_) => *open = false,
                 None => {}

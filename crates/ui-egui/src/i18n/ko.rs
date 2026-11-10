@@ -1998,4 +1998,9 @@ const MORE: &[(&str, &str)] = &[
     ("In your own order, drag a group to move it.", "직접 정한 순서에서는 그룹을 끌어서 옮길 수 있습니다."),
     ("Move Up", "위로 이동"),
     ("Move Down", "아래로 이동"),
+    ("Remove from Group", "그룹에서 제외"),
+    ("Its tab closes; the file itself stays where it is.", "탭이 닫히고, 파일 자체는 그대로 남습니다."),
+    ("The file itself stays where it is.", "파일 자체는 그대로 남습니다."),
+    ("The only group can't be deleted.", "그룹이 하나뿐이라 지울 수 없습니다."),
+    ("Its open files close, and the group “{name}” opens.", "열린 파일은 닫히고 “{name}” 그룹이 열립니다."),
 ];
