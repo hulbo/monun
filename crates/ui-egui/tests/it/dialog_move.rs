@@ -69,3 +69,22 @@ fn go_to_format_cells_and_sort_can_be_dragged_too() {
         assert_eq!(after.min - before.min, vec2(-100.0, 60.0), "{name} went from {before:?} to {after:?}");
     }
 }
+
+#[test]
+fn a_dialog_opens_in_the_middle_of_the_window_again_after_it_was_dragged() {
+    let mut h = harness();
+    h.state_mut().open_dialog("goTo", json!({}));
+    h.run_steps(6);
+    let middle = h.ctx.content_rect().center() + vec2(0.0, -40.0);
+    let first = dialog_rect(&h, "goTo");
+    assert!((first.center() - middle).length() < 2.0, "{first:?} about {middle:?}");
+    drag_title_bar(&mut h, "goTo", vec2(-300.0, 250.0));
+    h.run_steps(4);
+    // Closed and opened again: in the middle, not where it was left.
+    h.state_mut().dialog = None;
+    h.run_steps(3);
+    h.state_mut().open_dialog("goTo", json!({}));
+    h.run_steps(6);
+    let again = dialog_rect(&h, "goTo");
+    assert!((again.center() - middle).length() < 2.0, "{again:?} about {middle:?}");
+}

@@ -70,6 +70,9 @@ pub struct Dialog {
     /// The dialog this one was opened from (Name Manager › New…): it comes back when this closes.
     back: Option<Box<Dialog>>,
     focus_initialized: bool,
+    /// It has been shown since it opened: it opens in the middle of the window, then stays where
+    /// it is dragged while it is open.
+    placed: bool,
     /// The formula box that takes references clicked or dragged on the grid (New Formatting Rule).
     pick: Option<RefPick>,
 }
@@ -182,6 +185,7 @@ impl Dialog {
             picture_target: None,
             back: None,
             focus_initialized: false,
+            placed: false,
             pick: None,
         }
     }
@@ -203,6 +207,7 @@ impl Dialog {
             picture_target: None,
             back: None,
             focus_initialized: false,
+            placed: false,
             pick: None,
         }
     }

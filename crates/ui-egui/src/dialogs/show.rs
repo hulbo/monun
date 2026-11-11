@@ -140,14 +140,28 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "pasteSpecial" => 480.0,
         _ => 380.0,
     };
+    // In the middle of the window each time it opens (egui would bring it back where it was last,
+    // even after the window changed size); then where its title bar is dragged while it is open.
+    // A position, not an anchor: egui anchors can't be dragged.
+    let middle = ctx.content_rect().center() + vec2(0.0, -40.0);
+    let id = egui::Id::unique("dialog").with(&d.name);
+    if !d.placed {
+        // Its remembered place, not `current_pos`: a window dragged by its title bar takes its
+        // place from egui's memory after `current_pos` is applied.
+        if let Some(mut state) = egui::AreaState::load(ctx, id) {
+            state.pivot = egui::Align2::CENTER_CENTER;
+            state.pivot_pos = Some(middle);
+            ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(egui::Order::Middle, id), state));
+        }
+        d.placed = true;
+    }
     let window = egui::Window::new(app.ui.language.tr(&d.title))
-        .id(egui::Id::unique("dialog").with(&d.name))
+        .id(id)
         .collapsible(false)
         .resizable(false)
         .default_width(width)
-        // A default position, not an anchor: egui anchors can't be dragged, and dialogs move by their title bar.
         .pivot(egui::Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center() + vec2(0.0, -40.0))
+        .default_pos(middle)
         .open(&mut win_open);
     let window = match d.name.as_str() {
         "insertPicture" => window.default_height(240.0),
