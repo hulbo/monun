@@ -254,6 +254,7 @@ fn services() -> Services {
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().and_then(|p| p.to_str().map(str::to_string)))),
         pick_save: Some(Box::new(|suggested: &str| {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
@@ -412,9 +413,13 @@ fn main() -> eframe::Result<()> {
     let control_port = control_port;
     CONTROLLED.store(control_port.is_some(), std::sync::atomic::Ordering::Relaxed);
     load_prefs(&mut app);
-    // File groups are written as soon as they change, so a crash keeps them.
+    // File groups are written as soon as they change, so a crash keeps them. A run that keeps
+    // nothing (an agent's or a test's) starts on This PC with no working root: it never writes to
+    // the user's projects.
     if persists() {
         app.services.save_ui = Some(Box::new(save_ui));
+    } else {
+        monun_ui_egui::projects::detach(&mut app);
     }
     // AutoRecover, and the unsaved work of a run that crashed. Not for agents' runs (`--control`,
     // no prefs), which must never pick up or leave the user's recovery copies.

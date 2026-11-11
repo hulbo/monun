@@ -39,6 +39,7 @@ pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
 pub mod printing;
+pub mod projects;
 pub mod recovery;
 pub mod ribbon;
 pub mod selection_glide;
@@ -107,9 +108,21 @@ pub struct UiState {
     /// [`INTERFACE_SCALE_MIN`]..=[`INTERFACE_SCALE_MAX`]; a malformed saved value reads as 100.
     #[serde(deserialize_with = "lenient_interface_scale")]
     pub interface_scale: u16,
-    /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name.
+    /// File groups ([`groups`]), with file tabs: each one's files, and the one in use by name. They
+    /// are the groups of the project in use: This PC's own (as before projects), or a copy of a
+    /// project of the root's, read again from its file at start ([`projects`]).
     pub groups: Vec<groups::FileGroup>,
     pub group: String,
+    /// The working root folder (File › Options › General): the folder of documents, kept in git,
+    /// whose `.monun` folder holds the projects.
+    pub root: Option<String>,
+    /// The project of the root in use; `None` for This PC.
+    pub project: Option<String>,
+    /// This PC's groups, set aside while a project of the root is in use.
+    pub this_pc: Option<projects::GroupSet>,
+    /// This PC's place in each project of the root it has left: the group in use, and each group's
+    /// file in front and last use.
+    pub project_views: Vec<projects::ProjectView>,
     /// The group panel ([`groups::panel`]) shows, whichever file is in front.
     pub group_panel: bool,
     /// The order the group panel lists the groups and their files in (its Sort button).
@@ -184,6 +197,10 @@ impl Default for UiState {
             interface_scale: 100,
             groups: vec![],
             group: String::new(),
+            root: None,
+            project: None,
+            this_pc: None,
+            project_views: vec![],
             doc_views: vec![],
             group_panel: false,
             group_order: groups::GroupOrder::Custom,
@@ -421,6 +438,12 @@ pub struct SheetApp {
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,
+    /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
+    /// before it is read (a run that doesn't restore the user's files never writes to it).
+    pub(crate) project_loaded: Option<projects::Loaded>,
+    /// Files of the group in use that couldn't be opened on this PC, while a project of the root
+    /// is in use: they stay in its list for the PCs that have them ([`groups::sync`]).
+    pub(crate) unopened: Vec<String>,
     /// View › Arrange All's layout and windows, waiting for the native windows to move.
     pub arrange_windows: Option<(String, Vec<u64>)>,
 }

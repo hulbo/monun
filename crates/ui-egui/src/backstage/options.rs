@@ -75,7 +75,32 @@ fn general_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
             .response
             .labelled_by(label.id);
         ui.end_row();
+        let label = ui.label(lang.tr("Working root folder"));
+        root_picker(app, ui, lang).labelled_by(label.id);
+        ui.end_row();
     });
+}
+
+/// The working root folder of projects ([`crate::projects`]): where it is, Browse… and Clear, and
+/// what it is for.
+fn root_picker(app: &mut SheetApp, ui: &mut Ui, lang: Language) -> egui::Response {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            match app.ui.root.clone() {
+                Some(root) => ui.label(root),
+                None => ui.label(egui::RichText::new(lang.tr("(none)")).color(t.text_dim)),
+            };
+            if app.services.pick_folder.is_some() && ui.button(lang.tr("Browse…")).clicked() {
+                crate::projects::choose_root(app);
+            }
+            if app.ui.root.is_some() && ui.button(lang.tr("Clear")).clicked() {
+                app.run_or_alert("project.root", json!({"path": null}));
+            }
+        });
+        dim(ui, lang.tr("Projects are kept in its .monun folder: keep the folder in git to use them on other PCs."));
+    })
+    .response
 }
 
 /// The accent colours as swatches, the one in use ringed, and its name.

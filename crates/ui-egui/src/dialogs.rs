@@ -1010,8 +1010,11 @@ impl Dialog {
             "switchGroup" => Dialog::custom(
                 "switchGroup",
                 "Switch Group",
-                json!({"target": p("target"), "new": p("new"), "files": p("files"), "delete": p("delete")}),
+                json!({"target": p("target"), "new": p("new"), "project": p("project"), "files": p("files"), "delete": p("delete")}),
             ),
+            "newProject" => Dialog::custom("newProject", "New Project", json!({"name": ""})),
+            "renameProject" => Dialog::custom("renameProject", "Rename Project", json!({"name": p("name"), "was": p("name")})),
+            "deleteProject" => Dialog::custom("deleteProject", "Delete Project", json!({"name": p("name")})),
             "start" => Dialog::custom("start", "Monun", json!({})),
             // The bar's Reload: the file in front, as another program left it.
             "reloadFile" => {

@@ -121,6 +121,8 @@ pub enum Icon {
     SheetList,
     Book,
     Folder,
+    /// A project (above file groups): folders stacked.
+    Project,
     /// Header & Footer: a page with its top / bottom band marked.
     Header,
     Footer,
@@ -696,6 +698,10 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
         }
         Icon::Folder => {
             g.poly(&[(1.5, 4.0), (6.0, 4.0), (7.5, 5.5), (14.5, 5.5), (14.5, 13.0), (1.5, 13.0)], yellow);
+        }
+        Icon::Project => {
+            g.poly(&[(4.0, 1.5), (7.5, 1.5), (9.0, 3.0), (15.0, 3.0), (15.0, 10.0), (4.0, 10.0)], yellow.gamma_multiply(0.55));
+            g.poly(&[(1.0, 5.5), (5.0, 5.5), (6.5, 7.0), (13.0, 7.0), (13.0, 14.5), (1.0, 14.5)], yellow);
         }
         Icon::Header | Icon::Footer => {
             g.rect(3.5, 1.5, 9.0, 13.0, None, Some(c));

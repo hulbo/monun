@@ -62,6 +62,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                     if app.file_tabs {
                         ui.add_space(6.0);
                         crate::groups::button(app, ui, &t);
+                        crate::projects::button(app, ui, &t);
                         group_panel_button(app, ui, ch);
                     }
                 });
@@ -150,7 +151,9 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 // With file tabs the group button takes Share's place; File › Export and Save a
                 // Copy keep what Share offered.
                 if app.file_tabs {
+                    // Right to left: the project, then its group.
                     crate::groups::button(app, ui, &t);
+                    crate::projects::button(app, ui, &t);
                     group_panel_button(app, ui, ch);
                 } else {
                     share(app, ui);

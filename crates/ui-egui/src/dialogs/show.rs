@@ -330,6 +330,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     }
                 }
                 "newGroup" | "renameGroup" | "deleteGroup" | "switchGroup" => crate::groups::dialog(app, ui, &mut d, &mut open),
+                "newProject" | "renameProject" | "deleteProject" => crate::projects::dialog(app, ui, &mut d, &mut open),
                 "saveChanges" => {
                     // The window title asks the question; the window bar names the workbook.
                     let quitting = d.values.get("quit").and_then(Json::as_bool) == Some(true);

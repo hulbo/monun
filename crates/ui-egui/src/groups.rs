@@ -154,6 +154,8 @@ pub enum Target {
     Group(String),
     /// A new group: empty, or (`take`) with the files open now.
     New { name: String, take: bool },
+    /// Another project ([`crate::projects`]; `None`: This PC), at the group this PC last used in it.
+    Project(Option<String>),
 }
 
 /// The longest group name.
@@ -206,19 +208,39 @@ pub(crate) fn sync(app: &mut SheetApp) {
         // The quit was cancelled.
         app.groups_frozen = false;
     }
-    let (files, active) = open_files(app);
+    let (mut files, active) = open_files(app);
     let i = ensure(app);
+    // A project's files this PC couldn't open stay in its list, where they were, for the PCs that
+    // have them.
+    app.unopened.retain(|p| !files.contains(p));
+    if !app.unopened.is_empty()
+        && let Some(g) = app.ui.groups.get(i)
+    {
+        let tabs: Vec<&String> = g.files.iter().filter(|p| !app.unopened.contains(p)).collect();
+        if tabs == files.iter().collect::<Vec<_>>() {
+            files = g.files.clone();
+        } else {
+            files.extend(app.unopened.iter().filter(|p| !files.contains(p)).cloned().collect::<Vec<_>>());
+        }
+    }
+    let mut changed = false;
     if let Some(g) = app.ui.groups.get_mut(i)
         && (g.files != files || g.active != active)
     {
+        changed = g.files != files;
         g.files = files;
         g.active = active;
+    }
+    // A project of the root keeps its groups' files in its own file (which is in front stays here).
+    if changed {
+        crate::projects::save_current(app);
     }
 }
 
 /// Opens the files of the group in use, as they were left (the desktop app at start, before the
 /// files it was asked to open).
 pub fn restore(app: &mut SheetApp) {
+    crate::projects::at_start(app);
     let i = ensure(app);
     if let Some(g) = app.ui.groups.get(i).cloned() {
         open_group(app, &g);
@@ -244,15 +266,24 @@ fn open_group(app: &mut SheetApp, g: &FileGroup) {
     }
     app.follow_active_window();
     app.after_engine();
+    // In a project of the root they stay in the group, for the PCs that have them; This PC's
+    // groups let them go.
+    app.unopened = if app.project_loaded.is_some() { missing.clone() } else { Vec::new() };
     if !missing.is_empty() {
         let lang = app.ui.language;
-        let text = format!("{}\n\n{}", lang.tr("These files of the group could not be opened:"), missing.join("\n"));
+        let mut text = format!("{}\n\n{}", lang.tr("These files of the group could not be opened:"), missing.join("\n"));
+        // A message already up (why a project gave way) comes first.
+        if let Some((_, earlier)) = app.message.take() {
+            text = format!("{earlier}\n\n{text}");
+        }
         app.message = Some((lang.tr("Monun").to_string(), text));
     }
 }
 
-/// Writes the groups now (the desktop's `ui.json`), so a change outlasts a crash.
-fn persist(app: &SheetApp) {
+/// Writes the groups now (the desktop's `ui.json`, and a project of the root's own file), so a
+/// change outlasts a crash.
+fn persist(app: &mut SheetApp) {
+    crate::projects::save_current(app);
     if let Some(save) = &app.services.save_ui {
         save(&app.ui);
     }
@@ -269,6 +300,13 @@ pub fn switch(app: &mut SheetApp, target: Target) {
 /// Group was chosen for the group in use). Cancelled, nothing is deleted.
 fn switch_then_delete(app: &mut SheetApp, target: Target, delete: Option<String>) {
     if let Err(e) = app.settle_drafts() {
+        app.alert(e);
+        return;
+    }
+    // A project that can't be read is said so before anything is asked or closed.
+    if let Target::Project(Some(name)) = &target
+        && let Err(e) = crate::projects::open(app, name)
+    {
         app.alert(e);
         return;
     }
@@ -292,11 +330,12 @@ fn switch_then_delete(app: &mut SheetApp, target: Target, delete: Option<String>
         go(app, &target);
         delete_left(app, delete);
     } else {
-        let (name, new) = match &target {
-            Target::Group(name) => (name.clone(), false),
-            Target::New { name, .. } => (name.clone(), true),
+        let (name, new, project) = match &target {
+            Target::Group(name) => (name.clone(), false, false),
+            Target::New { name, .. } => (name.clone(), true, false),
+            Target::Project(name) => (name.clone().unwrap_or_default(), false, true),
         };
-        app.open_dialog("switchGroup", json!({"target": name, "new": new, "files": unsaved, "delete": delete}));
+        app.open_dialog("switchGroup", json!({"target": name, "new": new, "project": project, "files": unsaved, "delete": delete}));
     }
 }
 
@@ -321,6 +360,7 @@ fn neighbour(app: &SheetApp, name: &str) -> Option<String> {
 /// Takes the file `path` out of the group `group`; the file itself stays where it is. In the group
 /// in use that closes it (asking first about unsaved changes): the group follows its tabs.
 fn remove_file(app: &mut SheetApp, group: &str, path: &str) {
+    app.unopened.retain(|p| p != path);
     if group == app.ui.group {
         let uid = app.session.documents().iter().find(|d| d.path.as_deref() == Some(path)).map(|d| d.uid);
         if let Some(window) = uid.and_then(|uid| app.session.doc_window(uid)) {
@@ -338,8 +378,19 @@ fn remove_file(app: &mut SheetApp, group: &str, path: &str) {
     persist(app);
 }
 
-/// Closes every file, then opens the target group's files (none for a new group).
+/// Closes every file, then opens the target group's files (none for a new group). A project is
+/// read first: one that can't be leaves everything as it was.
 fn go(app: &mut SheetApp, target: &Target) {
+    let opened = match target {
+        Target::Project(Some(name)) => match crate::projects::open(app, name) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                app.alert(e);
+                return;
+            }
+        },
+        _ => None,
+    };
     sync(app);
     app.backstage = None;
     // Each close takes the workbook in front with all its windows.
@@ -354,6 +405,11 @@ fn go(app: &mut SheetApp, target: &Target) {
             let g = FileGroup { name: name.clone(), ..FileGroup::default() };
             app.ui.groups.push(g.clone());
             Some(g)
+        }
+        Target::Project(name) => {
+            crate::projects::swap(app, name.clone(), opened);
+            let i = ensure(app);
+            app.ui.groups.get(i).cloned()
         }
     };
     if let Some(g) = group {
@@ -471,6 +527,8 @@ enum PanelAction {
     Reorder { name: String, to: usize },
     /// Take this file out of its group.
     Remove { group: String, path: String },
+    /// Copy this group into another project (`None`: This PC).
+    Send { group: String, project: Option<String> },
 }
 
 /// Where the group panel keeps whether a group was unfolded or folded by hand.
@@ -528,6 +586,7 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let file_order = app.ui.file_order;
     let open_tab = app.session.active().and_then(|d| d.path.clone());
     let dirty: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).filter_map(|d| d.path.clone()).collect();
+    let unopened = app.unopened.clone();
     let mut action = None;
     let width = ui.available_width();
     // The groups' rows as drawn, and the one being dragged or let go (Your Own Order).
@@ -582,6 +641,24 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             if delete.on_disabled_hover_text(lang.tr("The only group can't be deleted.")).clicked() {
                 action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
             }
+            // A copy of it in another project (This PC's groups among them).
+            let targets = crate::projects::targets(app);
+            if targets.is_empty() {
+                let why = if app.ui.root.is_some() {
+                    "Make another project first: the project button's New Project…"
+                } else {
+                    "Choose a working root folder to keep projects in it."
+                };
+                ui.add_enabled(false, egui::Button::new(lang.tr("Send to Project"))).on_disabled_hover_text(lang.tr(why));
+            } else {
+                ui.menu_button(lang.tr("Send to Project"), |ui| {
+                    for (label, project) in targets {
+                        if ui.button(label).clicked() {
+                            action = Some(PanelAction::Send { group: g.name.clone(), project });
+                        }
+                    }
+                });
+            }
             if own_order && (i > 0 || i < last) {
                 ui.separator();
                 if i > 0 && ui.button(lang.tr("Move Up")).clicked() {
@@ -614,10 +691,12 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             let font = theme::ui_font(12.5);
             let unsaved = on && dirty.contains(path);
             let shown = crate::file_tabs::fit(ui, &name, &font, (r.right() - icon.right() - 24.0).max(20.0));
-            // The open file reads in the accent, its name as well as its icon.
+            // The open file reads in the accent, its name as well as its icon; one this PC couldn't
+            // open is dim.
+            let missing = on && unopened.contains(path);
             let ink = if front {
                 t.accent_text
-            } else if on {
+            } else if on && !missing {
                 t.text
             } else {
                 t.text_dim
@@ -626,7 +705,15 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             if unsaved {
                 ui.painter().circle_filled(pos2(r.right() - 10.0, r.center().y), 3.0, t.text_dim);
             }
-            let resp = resp.on_hover_text(path);
+            let resp = if missing {
+                resp.on_hover_text(format!(
+                    "{path}
+{}",
+                    lang.tr("Couldn't be opened on this PC; it stays in the project for the others.")
+                ))
+            } else {
+                resp.on_hover_text(path)
+            };
             if resp.clicked() {
                 action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
             }
@@ -659,6 +746,15 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     match action {
         Some(PanelAction::Reorder { name, to }) => reorder(app, &name, to),
         Some(PanelAction::Remove { group, path }) => remove_file(app, &group, &path),
+        Some(PanelAction::Send { group, project }) => {
+            app.run_or_alert("group.sendToProject", json!({"group": group, "project": project}));
+            let shown = crate::projects::display(app, project.as_deref());
+            if app.message.is_none() {
+                let lang = app.ui.language;
+                let note = lang.tr("Copied the group “{group}” to the project “{project}”.").replace("{group}", &group).replace("{project}", &shown);
+                app.toast = Some((note, crate::now_ms()));
+            }
+        }
         Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
         Some(PanelAction::Fold(name)) => {
             let id = fold_id(&name);
@@ -754,6 +850,7 @@ pub(crate) fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
         "switchGroup" => {
             let name = text(d, "target");
             let new = d.values.get("new").and_then(Json::as_bool) == Some(true);
+            let project = d.values.get("project").and_then(Json::as_bool) == Some(true);
             let files: Vec<String> = d
                 .values
                 .get("files")
@@ -761,14 +858,26 @@ pub(crate) fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, open: &mut
                 .map(|a| a.iter().filter_map(Json::as_str).map(str::to_string).collect())
                 .unwrap_or_default();
             ui.add_space(4.0);
-            ui.label(lang.tr("Save changes to these files before going to the group “{name}”?").replace("{name}", &name));
+            let question = if project {
+                let shown = crate::projects::display(app, Some(name.as_str()).filter(|n| !n.is_empty()));
+                lang.tr("Save changes to these files before going to the project “{name}”?").replace("{name}", &shown)
+            } else {
+                lang.tr("Save changes to these files before going to the group “{name}”?").replace("{name}", &name)
+            };
+            ui.label(question);
             ui.add_space(4.0);
             for f in &files {
                 ui.label(egui::RichText::new(format!("•  {f}")).color(t.text_dim));
             }
             ui.add_space(8.0);
             let row = [DialogButton::confirm("Save"), DialogButton::discard("Don't Save"), DialogButton::neutral("Cancel")];
-            let target = if new { Target::New { name, take: false } } else { Target::Group(name) };
+            let target = if project {
+                Target::Project(Some(name).filter(|n| !n.is_empty()))
+            } else if new {
+                Target::New { name, take: false }
+            } else {
+                Target::Group(name)
+            };
             let delete = Some(text(d, "delete")).filter(|n| !n.is_empty());
             match crate::widgets::dialog_buttons(ui, &row) {
                 Some(0) => {

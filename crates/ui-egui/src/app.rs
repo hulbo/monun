@@ -88,6 +88,8 @@ impl SheetApp {
             side_layer_shown_h: 0.0,
             file_tabs: false,
             groups_frozen: false,
+            project_loaded: None,
+            unopened: Vec::new(),
             arrange_windows: None,
         }
     }
