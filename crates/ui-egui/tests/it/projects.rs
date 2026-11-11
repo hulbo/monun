@@ -351,3 +351,30 @@ fn coming_back_to_a_project_goes_to_the_group_used_last_in_it() {
     assert_eq!(h.state().ui.root.as_deref(), Some(path(&other).as_str()));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn a_project_file_that_cant_be_read_just_now_is_left_as_it_is() {
+    let (base, root) = root("unreadable");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "P"}));
+    // Not text (a checkout gone wrong): it can't even be read.
+    let broken: &[u8] = b"{\"monun\": 1, \"groups\": [{\"name\": \"G\xff\", \"files\": []}]}\n";
+    let file = root.join(".monun").join("P.json");
+    std::fs::write(&file, broken).unwrap();
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("x.md"))}));
+    assert_eq!(std::fs::read(&file).unwrap(), broken, "left as it is");
+    let (_, text) = h.state().message.clone().expect("said so");
+    assert!(text.contains("can't be read just now"), "{text}");
+    // Said once; each change tries again, and the one after it can be read writes.
+    h.state_mut().message = None;
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("y.md"))}));
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    assert_eq!(std::fs::read(&file).unwrap(), broken);
+    std::fs::write(&file, "{\"monun\": 1, \"groups\": [{\"name\": \"Default group\", \"files\": []}]}\n").unwrap();
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("b.xlsx"))}));
+    let text = project_file(&root, "P");
+    assert!(text.contains("\"a/b.xlsx\"") && text.contains("\"a/y.md\""), "{text}");
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -704,7 +704,8 @@ pub fn toast(app: &mut SheetApp, ctx: &egui::Context) {
         return;
     }
     let msg = app.ui.language.tr_error(&msg);
-    let Some(rect) = app.grid.rect else { return };
+    // Over the file in front, a document's too (no grid is drawn for one).
+    let Some(rect) = app.files_rect.or(app.grid.rect) else { return };
     egui::Area::new(egui::Id::unique("toast")).fixed_pos(pos2(rect.center().x - 160.0, rect.bottom() - 48.0)).order(egui::Order::Tooltip).show(
         ctx,
         |ui| {

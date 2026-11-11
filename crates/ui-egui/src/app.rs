@@ -91,6 +91,7 @@ impl SheetApp {
             project_loaded: None,
             root_memos: None,
             unopened: Vec::new(),
+            files_rect: None,
             arrange_windows: None,
         }
     }
@@ -263,11 +264,16 @@ impl SheetApp {
         if self.chrome.title_bar {
             ribbon::title_bar(self, ui);
         }
+        // Set again below for this window, unless Backstage covers its files.
+        self.files_rect = None;
         if start_page {
             crate::file_tabs::bottom_bar(self, ui);
             // The group panel, to go to a group's files from here.
             panes::show(self, ui);
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| crate::file_tabs::start_page(self, ui));
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| {
+                self.files_rect = Some(ui.max_rect());
+                crate::file_tabs::start_page(self, ui);
+            });
         } else if self.backstage.is_some() {
             // File tab: the Backstage view replaces everything below the title bar.
             backstage::show(self, ui);
@@ -289,6 +295,7 @@ impl SheetApp {
             pivot_pane::show(self, ui);
             panes::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {
+                self.files_rect = Some(ui.max_rect());
                 let g0 = now_ms();
                 if document {
                     crate::doc_view::show(self, ui);

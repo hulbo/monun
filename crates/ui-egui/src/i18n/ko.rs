@@ -2050,6 +2050,7 @@ const MORE: &[(&str, &str)] = &[
     ("That folder doesn't exist.", "그 폴더가 없습니다."),
     ("The project “{name}” could not be opened, so This PC's groups are in use:", "“{name}” 프로젝트를 열지 못해 이 PC의 그룹을 씁니다:"),
     ("The project “{name}” could not be saved:", "“{name}” 프로젝트를 저장하지 못했습니다:"),
+    ("Its file can't be read just now, so it is left as it is.", "지금은 프로젝트 파일을 읽을 수 없어 그대로 두었습니다."),
     ("There is no group “{name}”.", "“{name}” 그룹이 없습니다."),
     ("The group is in that project already.", "그룹이 이미 그 프로젝트에 있습니다."),
     ("Send to Project", "다른 프로젝트로 보내기"),

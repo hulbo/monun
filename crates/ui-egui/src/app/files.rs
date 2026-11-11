@@ -148,7 +148,8 @@ impl SheetApp {
                 let name = d.display_title();
                 if self.run("file.reload", json!({"document": uid})).is_ok() {
                     let note = self.ui.language.tr("“{name}” was changed elsewhere and is shown as it is now.").replace("{name}", &name);
-                    self.toast = Some((note, crate::monotonic_ms()));
+                    // On the toasts' clock (`widgets::toast`).
+                    self.toast = Some((note, crate::now_ms()));
                 }
                 continue;
             }
