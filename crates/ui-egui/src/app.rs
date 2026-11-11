@@ -89,6 +89,7 @@ impl SheetApp {
             file_tabs: false,
             groups_frozen: false,
             project_loaded: None,
+            root_memos: None,
             unopened: Vec::new(),
             arrange_windows: None,
         }
@@ -159,6 +160,8 @@ impl SheetApp {
         let saves = now_ms();
         self.autosave(ctx);
         self.watch_files(ctx);
+        // The memos kept in the working root: read for it, and again after a git pull.
+        crate::memos::root_file::watch(self);
         self.auto_recover(ctx);
         self.perf.save_ms = now_ms() - saves;
         self.update_title(ctx);

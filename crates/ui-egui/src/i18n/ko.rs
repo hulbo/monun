@@ -2025,8 +2025,8 @@ const MORE: &[(&str, &str)] = &[
     ("Working Root Folder", "작업 루트 폴더 정하기"),
     ("Working root folder", "작업 루트 폴더"),
     (
-        "Projects are kept in its .monun folder: keep the folder in git to use them on other PCs.",
-        "프로젝트는 이 폴더 안의 .monun 폴더에 저장됩니다. 폴더를 git에 올리면 다른 PC에서도 쓸 수 있습니다.",
+        "Projects, and the memos on its Markdown files, are kept in its .monun folder: keep the folder in git to use them on other PCs.",
+        "프로젝트와 이 폴더 안 Markdown 문서의 메모는 .monun 폴더에 저장됩니다. 폴더를 git에 올리면 다른 PC에서도 쓸 수 있습니다.",
     ),
     ("Project name:", "프로젝트 이름:"),
     (
@@ -2065,4 +2065,17 @@ const MORE: &[(&str, &str)] = &[
     ),
     ("Copied the group “{group}” to the project “{project}”.", "“{group}” 그룹을 “{project}” 프로젝트로 복사했습니다."),
     ("Save changes to these files before going to the project “{name}”?", "“{name}” 프로젝트로 가기 전에 이 파일들의 변경 내용을 저장할까요?"),
+    ("The memos in the working root folder could not be read:", "작업 루트 폴더의 메모를 읽지 못했습니다:"),
+    ("The memos in the working root folder could not be saved:", "작업 루트 폴더의 메모를 저장하지 못했습니다:"),
+    (
+        "Their file was changed outside Monun and can't be read (a git conflict?), so it is left as it is.",
+        "모눈 밖에서 바뀐 메모 파일을 읽을 수 없어(git 충돌?) 그대로 두었습니다.",
+    ),
+    ("New memos are kept on this PC until it can be read.", "읽을 수 있게 될 때까지 새 메모는 이 PC에 저장합니다."),
+    ("The memo is kept on this PC for now.", "메모는 우선 이 PC에 저장했습니다."),
+    ("This memo file was made by a newer version of Monun.", "더 새 버전의 모눈이 만든 메모 파일입니다."),
+    (
+        "Moved {count} memo(s) into the working root folder, to go with it to other PCs.",
+        "메모 {count}개를 작업 루트 폴더로 옮겼습니다. 이제 루트 폴더와 함께 다른 PC로 갑니다.",
+    ),
 ];

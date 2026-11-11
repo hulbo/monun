@@ -4,7 +4,9 @@
 //! by its path relative to the root (with `/`), so the root can be cloned anywhere, on any PC, and
 //! the groups still open. This PC is the groups kept on this PC alone, as they were before
 //! projects. Which group is in use, which file was in front and when a group was last used stay on
-//! this PC ([`UiState::project_views`]): switching tabs never changes a file git sees.
+//! this PC ([`UiState::project_views`]): switching tabs never changes a file git sees. The memos on
+//! the root's Markdown files are kept in the `.monun` folder too, in a folder of their own
+//! ([`crate::memos::root_file`]).
 //!
 //! [`UiState::project_views`]: crate::UiState::project_views
 
@@ -205,13 +207,22 @@ fn render(root: &str, groups: &[FileGroup]) -> String {
 /// Writes a project file whole: beside it first, then in its place, so it is never left half
 /// written.
 fn write(root: &str, name: &str, text: &str) -> Result<(), String> {
-    let path = project_path(root, name);
+    write_whole(&project_path(root, name), text)
+}
+
+/// Writes a file of the `.monun` folder whole (a project's, the memos'), and the folders it is in:
+/// beside it first, then in its place, so it is never left half written. The beside one goes when
+/// the move fails.
+pub(crate) fn write_whole(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
+    std::fs::write(&tmp, text).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("{}: {e}", tmp.display())
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("{}: {e}", path.display())
     })
@@ -228,8 +239,9 @@ fn existing(app: &SheetApp, name: &str) -> Result<String, String> {
 }
 
 /// A run that keeps nothing (an agent's or a test's: `--control`, or no preferences) starts on
-/// This PC with no working root, so it can never write to the user's projects; an agent sets a
-/// root of its own (`project.root`).
+/// This PC with no working root, so it can never write to the user's projects or to the memos of
+/// the root's files ([`crate::memos::root_file`]); an agent sets a root of its own
+/// (`project.root`).
 pub fn detach(app: &mut SheetApp) {
     if app.ui.project.is_some() {
         let set = app.ui.this_pc.take().unwrap_or_default();
@@ -239,6 +251,7 @@ pub fn detach(app: &mut SheetApp) {
     }
     app.ui.root = None;
     app.project_loaded = None;
+    app.root_memos = None;
 }
 
 /// A project name typed into New Project or Rename Project, trimmed; the reason it can't be used,
@@ -583,6 +596,8 @@ pub(crate) fn command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<J
                 l.seen = None;
             }
             save_current(app);
+            // And the memos of the root's files, as their file is now.
+            crate::memos::root_file::reload(app);
             Ok(json!({"project": app.ui.project}))
         }
         "group.sendToProject" => {

@@ -139,7 +139,10 @@ pub struct UiState {
     /// tall as it needs).
     pub side_layer_w: Option<f32>,
     pub side_layer_h: Option<f32>,
-    /// The memos on Markdown files' paragraphs ([`memos`]), by the files' paths.
+    /// The memos on Markdown files' paragraphs ([`memos`]), by the files' paths: those of files
+    /// outside the working root. The root's files keep theirs in the root ([`memos::root_file`]),
+    /// but for memos kept here while the root's memo file couldn't be read or written, and those
+    /// of a run that keeps nothing.
     pub memos: Vec<memos::DocMemo>,
     /// How Markdown files were last shown, most recent first (their .md keeps the text only).
     pub doc_views: Vec<DocViewMemory>,
@@ -441,6 +444,9 @@ pub struct SheetApp {
     /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
     /// before it is read (a run that doesn't restore the user's files never writes to it).
     pub(crate) project_loaded: Option<projects::Loaded>,
+    /// The memos on the working root's files, kept in the root ([`memos::root_file`]): read for the
+    /// root in use, `None` with no root.
+    pub(crate) root_memos: Option<memos::root_file::Store>,
     /// Files of the group in use that couldn't be opened on this PC, while a project of the root
     /// is in use: they stay in its list for the PCs that have them ([`groups::sync`]).
     pub(crate) unopened: Vec<String>,
