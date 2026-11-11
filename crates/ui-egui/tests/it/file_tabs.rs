@@ -476,3 +476,21 @@ fn a_markdown_file_changed_by_another_program_shows_as_it_is_now() {
     assert!(!h.state().session.active().unwrap().is_dirty());
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_markdown_file_changed_elsewhere_is_shown_as_it_is_now_and_said_so() {
+    let path = std::env::temp_dir().join(format!("monun-changed-{}.md", std::process::id()));
+    std::fs::write(&path, "# Plan\n\nFirst paragraph.\n").unwrap();
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": path.to_string_lossy()})).unwrap();
+    h.run_steps(4);
+    std::fs::write(&path, "# Plan\n\nChanged by another program.\n").unwrap();
+    // Open files are looked at about every second.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    h.run_steps(3);
+    assert!(h.query_by_label("Changed by another program.").is_some(), "shown as it is now");
+    let note = format!("“{name}” was changed elsewhere and is shown as it is now.");
+    assert!(h.query_by_label(&note).is_some(), "and said so, over the document");
+    let _ = std::fs::remove_file(&path);
+}

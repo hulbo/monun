@@ -98,7 +98,10 @@ fn root_picker(app: &mut SheetApp, ui: &mut Ui, lang: Language) -> egui::Respons
                 app.run_or_alert("project.root", json!({"path": null}));
             }
         });
-        dim(ui, lang.tr("Projects are kept in its .monun folder: keep the folder in git to use them on other PCs."));
+        dim(
+            ui,
+            lang.tr("Projects, and the memos on its Markdown files, are kept in its .monun folder: keep the folder in git to use them on other PCs."),
+        );
     })
     .response
 }

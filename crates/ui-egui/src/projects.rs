@@ -4,7 +4,9 @@
 //! by its path relative to the root (with `/`), so the root can be cloned anywhere, on any PC, and
 //! the groups still open. This PC is the groups kept on this PC alone, as they were before
 //! projects. Which group is in use, which file was in front and when a group was last used stay on
-//! this PC ([`UiState::project_views`]): switching tabs never changes a file git sees.
+//! this PC ([`UiState::project_views`]): switching tabs never changes a file git sees. The memos on
+//! the root's Markdown files are kept in the `.monun` folder too, in a folder of their own
+//! ([`crate::memos::root_file`]).
 //!
 //! [`UiState::project_views`]: crate::UiState::project_views
 
@@ -70,6 +72,9 @@ pub struct Loaded {
     /// A version of its file 모눈 couldn't read (a git conflict left in it, a newer version's),
     /// told about once and never overwritten.
     pub refused: Option<String>,
+    /// Why its file couldn't be read at all last time (held by another program, not text): told
+    /// about once, and the file left as it is.
+    pub unreadable: Option<String>,
 }
 
 /// A project read for a switch to it.
@@ -205,13 +210,22 @@ fn render(root: &str, groups: &[FileGroup]) -> String {
 /// Writes a project file whole: beside it first, then in its place, so it is never left half
 /// written.
 fn write(root: &str, name: &str, text: &str) -> Result<(), String> {
-    let path = project_path(root, name);
+    write_whole(&project_path(root, name), text)
+}
+
+/// Writes a file of the `.monun` folder whole (a project's, the memos'), and the folders it is in:
+/// beside it first, then in its place, so it is never left half written. The beside one goes when
+/// the move fails.
+pub(crate) fn write_whole(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
+    std::fs::write(&tmp, text).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("{}: {e}", tmp.display())
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("{}: {e}", path.display())
     })
@@ -228,8 +242,9 @@ fn existing(app: &SheetApp, name: &str) -> Result<String, String> {
 }
 
 /// A run that keeps nothing (an agent's or a test's: `--control`, or no preferences) starts on
-/// This PC with no working root, so it can never write to the user's projects; an agent sets a
-/// root of its own (`project.root`).
+/// This PC with no working root, so it can never write to the user's projects or to the memos of
+/// the root's files ([`crate::memos::root_file`]); an agent sets a root of its own
+/// (`project.root`).
 pub fn detach(app: &mut SheetApp) {
     if app.ui.project.is_some() {
         let set = app.ui.this_pc.take().unwrap_or_default();
@@ -239,6 +254,7 @@ pub fn detach(app: &mut SheetApp) {
     }
     app.ui.root = None;
     app.project_loaded = None;
+    app.root_memos = None;
 }
 
 /// A project name typed into New Project or Rename Project, trimmed; the reason it can't be used,
@@ -340,7 +356,7 @@ pub(crate) fn swap(app: &mut SheetApp, target: Option<String>, opened: Option<Op
             app.ui.group = apply_view(&mut groups, view.as_ref());
             app.ui.groups = groups;
             app.ui.project = Some(name.clone());
-            app.project_loaded = Some(Loaded { root: o.root, name, seen: Some(o.text), refused: None });
+            app.project_loaded = Some(Loaded { root: o.root, name, seen: Some(o.text), ..Loaded::default() });
         }
         _ => {
             let set = app.ui.this_pc.take().unwrap_or_default();
@@ -363,7 +379,7 @@ pub(crate) fn at_start(app: &mut SheetApp) {
             let mut groups = o.groups;
             app.ui.group = apply_view(&mut groups, Some(&view));
             app.ui.groups = groups;
-            app.project_loaded = Some(Loaded { root: o.root, name, seen: Some(o.text), refused: None });
+            app.project_loaded = Some(Loaded { root: o.root, name, seen: Some(o.text), ..Loaded::default() });
         }
         Err(e) => {
             // This PC's place in it is kept for when it can be read again.
@@ -393,7 +409,32 @@ pub(crate) fn save_current(app: &mut SheetApp) {
         return;
     }
     let path = project_path(&loaded.root, &loaded.name);
-    let disk = std::fs::read_to_string(&path).ok();
+    let disk = match std::fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        // There, but it can't be read just now (held by a git checkout, not text): left as it is,
+        // said so once; a later change tries again.
+        Err(e) => {
+            let error = format!("{}: {e}", path.display());
+            log::warn!("project file not read: {error}");
+            if loaded.unreadable.as_deref() != Some(error.as_str()) {
+                let lang = app.ui.language;
+                let message = format!(
+                    "{}\n\n{}\n{error}",
+                    lang.tr("The project “{name}” could not be saved:").replace("{name}", &loaded.name),
+                    lang.tr("Its file can't be read just now, so it is left as it is.")
+                );
+                app.message = Some((lang.tr("Monun").to_string(), message));
+                if let Some(l) = app.project_loaded.as_mut() {
+                    l.unreadable = Some(error);
+                }
+            }
+            return;
+        }
+    };
+    if let Some(l) = app.project_loaded.as_mut() {
+        l.unreadable = None;
+    }
     if let Some(text) = disk.as_deref()
         && disk != loaded.seen
     {
@@ -581,8 +622,12 @@ pub(crate) fn command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<J
             // The file as it is now (a git pull), but for the group in use's files: its tabs.
             if let Some(l) = app.project_loaded.as_mut() {
                 l.seen = None;
+                // Asked for: a file that still can't be read is said so again.
+                l.unreadable = None;
             }
             save_current(app);
+            // And the memos of the root's files, as their file is now.
+            crate::memos::root_file::reload(app);
             Ok(json!({"project": app.ui.project}))
         }
         "group.sendToProject" => {

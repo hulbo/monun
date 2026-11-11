@@ -2,10 +2,13 @@
 //! document (View, or Side by Side's right half), listed in the memo panel and marked beside the
 //! paragraph. The memo panel shows the file in front's memos (a workbook's: its sheet's comments),
 //! then those of the group's other files, each file's under its name; a click on one goes there.
-//! They are 모눈's own, kept with the interface's settings ([`crate::UiState::memos`]) by
-//! the file's path, not in the .md: a work document stays as it is. A memo remembers its
-//! paragraph's line and first words, and follows the paragraph as the text around it changes; one
-//! whose paragraph is gone shows first in the panel, as lost.
+//! They are 모눈's own, kept by the file's path, not in the .md: a work document stays as it is.
+//! A file under the working root folder keeps its memos in the root ([`root_file`]), so they go to
+//! other PCs with it (git); any other with the interface's settings ([`crate::UiState::memos`]).
+//! A memo remembers its paragraph's line and first words, and follows the paragraph as the text
+//! around it changes; one whose paragraph is gone shows first in the panel, as lost.
+
+pub mod root_file;
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use monun_engine::docs::TextKind;
@@ -112,6 +115,56 @@ fn persist(app: &SheetApp) {
     }
 }
 
+/// Whether two paths are the same file's: regardless of case and of / or \ on Windows.
+fn same_path(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    if !cfg!(windows) {
+        return false;
+    }
+    let norm = |c: char| if c == '/' { '\\' } else { c };
+    a.chars().map(norm).flat_map(char::to_lowercase).eq(b.chars().map(norm).flat_map(char::to_lowercase))
+}
+
+/// Every memo: `ui.json`'s, then the root's file's.
+fn all(app: &SheetApp) -> impl Iterator<Item = &DocMemo> {
+    app.ui.memos.iter().chain(app.root_memos.iter().flat_map(|s| s.memos.iter()))
+}
+
+/// The id after every memo's.
+fn next_id(app: &SheetApp) -> u64 {
+    all(app).map(|m| m.id).max().map_or(1, |n| n.saturating_add(1))
+}
+
+/// Keeps a new memo: in the root's file for a file under the working root, else (or when that
+/// file can't be read or written) in `ui.json`. Returns its id.
+fn keep_new(app: &mut SheetApp, path: String, line: usize, quote: String, text: String) -> u64 {
+    let memo = DocMemo { id: next_id(app), path, line, quote, text, created: stamp() };
+    match root_file::add(app, memo) {
+        Ok(id) => id,
+        Err(mut memo) => {
+            // The root's file may have brought ids since.
+            memo.id = next_id(app);
+            let id = memo.id;
+            app.ui.memos.push(memo);
+            persist(app);
+            id
+        }
+    }
+}
+
+/// Deletes the memo `id` on `path`, wherever it is kept.
+fn delete(app: &mut SheetApp, id: u64, path: &str) {
+    let before = app.ui.memos.len();
+    app.ui.memos.retain(|m| !(m.id == id && same_path(&m.path, path)));
+    if app.ui.memos.len() != before {
+        persist(app);
+    } else if let Err(e) = root_file::delete(app, id, path) {
+        root_file::tell(app, root_file::COULD_NOT_SAVE, &e);
+    }
+}
+
 /// Starts a memo on line `line` of the file in front (Add Memo on a paragraph): the memo panel
 /// opens with a box to write it in.
 pub(crate) fn start(app: &mut SheetApp, line: usize) {
@@ -119,6 +172,11 @@ pub(crate) fn start(app: &mut SheetApp, line: usize) {
     // A memo half written is kept, not dropped.
     if app.memos.draft.as_ref().is_some_and(|d| !d.text.trim().is_empty()) {
         save_draft(app);
+        // One that couldn't be saved stays in its box (a message says why).
+        if app.memos.draft.is_some() {
+            show_panel(app);
+            return;
+        }
     }
     let quote = quote_of(&live_text(app), line);
     app.memos.draft = Some(Draft { id: None, path, line, quote, text: String::new(), focus: true });
@@ -137,8 +195,10 @@ fn show_panel(app: &mut SheetApp) {
 /// The memos of `path` and where each paragraph is in `text` now (`None`: gone), lost ones first,
 /// then in the document's order. A memo whose paragraph moved keeps its new line.
 pub(crate) fn placed(app: &mut SheetApp, path: &str, text: &str) -> Vec<(DocMemo, Option<usize>)> {
+    root_file::ensure(app);
     let mut out = Vec::new();
-    for m in app.ui.memos.iter_mut().filter(|m| m.path == path) {
+    let shared = app.root_memos.iter_mut().flat_map(|s| s.memos.iter_mut());
+    for m in app.ui.memos.iter_mut().chain(shared).filter(|m| same_path(&m.path, path)) {
         let at = locate(text, m.line, &m.quote);
         if let Some(line) = at {
             m.line = line;
@@ -153,7 +213,7 @@ pub(crate) fn placed(app: &mut SheetApp, path: &str, text: &str) -> Vec<(DocMemo
 enum Act {
     Go(u64, usize),
     Edit(DocMemo),
-    Delete(u64),
+    Delete(u64, String),
     Save,
     Cancel,
 }
@@ -369,10 +429,9 @@ fn this_document(app: &mut SheetApp, ui: &mut Ui) {
         Some(Act::Edit(m)) => {
             app.memos.draft = Some(Draft { id: Some(m.id), path: m.path, line: m.line, quote: m.quote, text: m.text, focus: true });
         }
-        Some(Act::Delete(id)) => {
-            app.ui.memos.retain(|m| m.id != id);
+        Some(Act::Delete(id, path)) => {
             app.memos.deleting = None;
-            persist(app);
+            delete(app, id, &path);
         }
         Some(Act::Save) => save_draft(app),
         Some(Act::Cancel) => app.memos.draft = None,
@@ -387,19 +446,25 @@ fn save_draft(app: &mut SheetApp) {
     if text.is_empty() {
         return;
     }
-    match d.id {
-        Some(id) => {
-            if let Some(m) = app.ui.memos.iter_mut().find(|m| m.id == id) {
-                m.text = text;
-            }
-        }
-        None => {
-            let id = app.ui.memos.iter().map(|m| m.id).max().map_or(1, |n| n.saturating_add(1));
-            app.ui.memos.push(DocMemo { id, path: d.path, line: d.line, quote: d.quote, text, created: stamp() });
-            app.memos.picked = Some(id);
+    let Some(id) = d.id else {
+        app.memos.picked = Some(keep_new(app, d.path, d.line, d.quote, text));
+        return;
+    };
+    if let Some(m) = app.ui.memos.iter_mut().find(|m| m.id == id && same_path(&m.path, &d.path)) {
+        m.text = text;
+        persist(app);
+        return;
+    }
+    match root_file::edit(app, id, &d.path, &text) {
+        Ok(true) => {}
+        // Gone meanwhile (deleted on another PC): what was written is kept, as a new memo.
+        Ok(false) => app.memos.picked = Some(keep_new(app, d.path, d.line, d.quote, text)),
+        Err(e) => {
+            root_file::tell(app, root_file::COULD_NOT_SAVE, &e);
+            // The text stays in its box.
+            app.memos.draft = Some(d);
         }
     }
-    persist(app);
 }
 
 /// A card's frame: picked ones outlined in the accent colour.
@@ -483,7 +548,7 @@ fn memo_card(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, m: &DocMemo, at: Optio
                         confirm = Some(false);
                     }
                     if ui.small_button(egui::RichText::new(lang.tr("Delete")).color(t.danger)).clicked() {
-                        *act = Some(Act::Delete(m.id));
+                        *act = Some(Act::Delete(m.id, m.path.clone()));
                     }
                 } else {
                     if ui.small_button(lang.tr("Delete")).clicked() {
@@ -588,7 +653,8 @@ const MARK: egui::Color32 = egui::Color32::from_rgb(0xD9, 0x8E, 0x04);
 /// for a document without memos.
 pub(crate) fn marks_of(app: &mut SheetApp) -> Vec<(u64, usize, String)> {
     let Ok(path) = memo_file(app) else { return Vec::new() };
-    if !app.ui.memos.iter().any(|m| m.path == path) {
+    root_file::ensure(app);
+    if !all(app).any(|m| same_path(&m.path, &path)) {
         return Vec::new();
     }
     let text = live_text(app);
@@ -639,5 +705,12 @@ mod tests {
         let s = stamp();
         assert_eq!(s.len(), "2026-11-05 14:06".len(), "{s}");
         assert_eq!((s.get(4..5), s.get(7..8), s.get(13..14)), (Some("-"), Some("-"), Some(":")));
+    }
+
+    #[test]
+    fn a_files_memos_are_found_by_its_path_as_windows_compares_them() {
+        assert!(same_path("/r/a/x.md", "/r/a/x.md"));
+        assert!(!same_path("/r/a/x.md", "/r/a/y.md"));
+        assert_eq!(same_path(r"C:\Docs\a\X.md", "c:/docs/A/x.md"), cfg!(windows), "regardless of case and slashes on Windows");
     }
 }
