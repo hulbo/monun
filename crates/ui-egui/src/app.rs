@@ -35,6 +35,7 @@ impl SheetApp {
             pdf: Default::default(),
             word: Default::default(),
             hwp: Default::default(),
+            images: Default::default(),
             memos: Default::default(),
             dialog: None,
             backstage: None,
@@ -324,6 +325,8 @@ impl SheetApp {
             crate::word_view::tidy(self, &ctx);
             // So do 한글 documents; their prints and exports finish here.
             crate::hwp_view::tidy(self, &ctx);
+            // Closed pictures' textures go.
+            crate::image_view::tidy(self);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

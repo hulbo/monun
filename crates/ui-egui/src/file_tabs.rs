@@ -401,7 +401,8 @@ pub(crate) fn path_icon(path: &str) -> Icon {
             | monun_engine::io::FileKind::Text
             | monun_engine::io::FileKind::Pdf
             | monun_engine::io::FileKind::Word
-            | monun_engine::io::FileKind::Hwp,
+            | monun_engine::io::FileKind::Hwp
+            | monun_engine::io::FileKind::Image,
         ) => Some(TextKind::of_name(path)),
         _ => None,
     };
@@ -411,11 +412,13 @@ pub(crate) fn path_icon(path: &str) -> Icon {
 pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
     match kind {
         None => Icon::Sheet,
-        Some(TextKind::Sql) => Icon::Script,
-        Some(TextKind::Markdown | TextKind::Plain) => Icon::Document,
+        Some(TextKind::Sql) => Icon::SqlFile,
+        Some(TextKind::Markdown) => Icon::MarkdownFile,
+        Some(TextKind::Plain) => Icon::TextFile,
         Some(TextKind::Pdf) => Icon::Pdf,
         Some(TextKind::Word) => Icon::Word,
         Some(TextKind::Hwp) => Icon::Hwp,
+        Some(TextKind::Image) => Icon::ImageFile,
     }
 }
 
@@ -592,13 +595,13 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     if start_button(ui, Icon::Sheet, lang.tr("New Excel Workbook"), &t).clicked() {
                         new_workbook(app);
                     }
-                    if start_button(ui, Icon::Document, lang.tr("New Markdown Document"), &t).clicked() {
+                    if start_button(ui, Icon::MarkdownFile, lang.tr("New Markdown Document"), &t).clicked() {
                         new_markdown(app);
                     }
-                    if start_button(ui, Icon::Script, lang.tr("New SQL File"), &t).clicked() {
+                    if start_button(ui, Icon::SqlFile, lang.tr("New SQL File"), &t).clicked() {
                         new_text(app, TextKind::Sql);
                     }
-                    if start_button(ui, Icon::Document, lang.tr("New Text File"), &t).clicked() {
+                    if start_button(ui, Icon::TextFile, lang.tr("New Text File"), &t).clicked() {
                         new_text(app, TextKind::Plain);
                     }
                     if cfg!(feature = "word") && start_button(ui, Icon::Word, lang.tr("New Word Document"), &t).clicked() {

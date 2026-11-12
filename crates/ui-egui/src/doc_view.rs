@@ -564,7 +564,7 @@ fn sync_draft(app: &mut SheetApp, ctx: &egui::Context, uid: u64, sheet: usize, t
 /// Draws the active document tab: its tool bar, then the document in the chosen mode.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some((uid, sheet, text)) = active_document(app) else { return };
-    if matches!(text_kind(app), TextKind::Pdf | TextKind::Word | TextKind::Hwp) {
+    if matches!(text_kind(app), TextKind::Pdf | TextKind::Word | TextKind::Hwp | TextKind::Image) {
         // Another document's typing goes to its workbook first, as when switching between texts.
         if app.doc_view.draft.is_some() {
             if let Err(e) = app.commit_doc_draft() {
@@ -575,6 +575,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         return match text_kind(app) {
             TextKind::Pdf => crate::pdf_view::show(app, ui),
             TextKind::Word => crate::word_view::show(app, ui),
+            TextKind::Image => crate::image_view::show(app, ui),
             _ => crate::hwp_view::show(app, ui),
         };
     }

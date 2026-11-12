@@ -34,6 +34,7 @@ pub mod hwp_view;
 pub mod hwp_view;
 pub mod i18n;
 pub mod icons;
+pub mod image_view;
 pub mod keymap;
 pub mod keytips;
 pub mod macro_editor;
@@ -353,6 +354,8 @@ pub struct SheetApp {
     pub word: word_view::State,
     /// 한글 tabs: each open document's thread, pages and input method.
     pub hwp: hwp_view::State,
+    /// Picture tabs: each open picture's texture.
+    pub images: image_view::State,
     /// The memo panel's memo being written and the one picked.
     pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,

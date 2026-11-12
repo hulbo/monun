@@ -50,7 +50,7 @@ aes = { version = "0.9", default-features = false }
 sha1 = { version = "0.11", default-features = false }
 # Korean code page 949 CSV and text files (read and written back as they came), pure Rust (wasm-safe).
 encoding_rs = "0.8"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "ico", "tiff"] }
 
 # PDF viewing (desktop): PdfCraft's renderer (page rasters on a pool of threads, the text layer
 # for find and copy, bookmarks), from one reviewed PdfCraft commit. It is built on PdfCraft's

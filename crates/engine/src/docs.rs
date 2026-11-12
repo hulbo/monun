@@ -61,6 +61,8 @@ pub enum TextKind {
     /// A 한글 document (.hwp, .hwpx), read, edited and saved by the interface: its document tab
     /// holds no text.
     Hwp,
+    /// A picture, shown by the interface to look at: its document tab holds no text.
+    Image,
 }
 
 impl TextKind {
@@ -74,6 +76,7 @@ impl TextKind {
             Some("pdf") => TextKind::Pdf,
             Some("docx" | "dotx" | "doc" | "rtf" | "odt") => TextKind::Word,
             Some("hwp" | "hwpx") => TextKind::Hwp,
+            Some("png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff") => TextKind::Image,
             _ => TextKind::Plain,
         }
     }
@@ -87,6 +90,7 @@ impl TextKind {
             TextKind::Pdf => "pdf",
             TextKind::Word => "docx",
             TextKind::Hwp => "hwpx",
+            TextKind::Image => "png",
         }
     }
 
@@ -135,6 +139,16 @@ pub const WORD_IN_TAB: &str = "A Word document is edited, saved, exported and pr
 /// Refused for changes to a 한글 document's tab and for saving, exporting or printing it through
 /// the engine: its tab does those.
 pub const HWP_IN_TAB: &str = "A Hangul document is edited, saved and printed in its tab.";
+
+/// Refused for every change to a picture opened to look at, and for saving, exporting or
+/// printing it.
+pub const IMAGE_READ_ONLY: &str = "A picture can only be looked at in Monun.";
+
+/// A workbook of one document tab standing for a picture, named after it, as [`pdf_workbook`]
+/// is for a PDF file: shown read-only, as large as fits the window until set otherwise.
+pub fn image_workbook(name: &str) -> Workbook {
+    word_workbook(name)
+}
 
 /// A workbook of one document tab standing for a 한글 document, named after it, as
 /// [`word_workbook`] is for a Word document.

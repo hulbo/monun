@@ -438,7 +438,7 @@ fn job_of(text: &str, (kind, wide): (TextKind, Wide), font: &FontId, colors: &Co
     let mut job = match kind {
         TextKind::Markdown => markdown_job(text, font, colors, wrap),
         TextKind::Sql => code_editor::layout_job(text, Lang::Sql, font, colors.text, &colors.syntax, wrap),
-        TextKind::Plain | TextKind::Pdf | TextKind::Word | TextKind::Hwp => {
+        TextKind::Plain | TextKind::Pdf | TextKind::Word | TextKind::Hwp | TextKind::Image => {
             code_editor::layout_job(text, Lang::Plain, font, colors.text, &colors.syntax, wrap)
         }
     };

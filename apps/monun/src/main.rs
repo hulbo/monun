@@ -240,7 +240,7 @@ fn services() -> Services {
                     "Spreadsheets and documents",
                     &[
                         "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp",
-                        "hwpx",
+                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp",
                     ],
                 )
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
@@ -253,6 +253,7 @@ fn services() -> Services {
                 .add_filter("Text document", &["txt"])
                 .add_filter("Word document", &["docx", "dotx", "doc", "rtf", "odt"])
                 .add_filter("Hangul document", &["hwp", "hwpx"])
+                .add_filter("Pictures (view only)", &["png", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "ico", "tif", "tiff"])
                 .add_filter("PDF document (read only)", &["pdf"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))

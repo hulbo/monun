@@ -2131,6 +2131,15 @@ const MORE: &[(&str, &str)] = &[
     ("Replaced {count}.", "{count}개를 바꿨습니다."),
     ("Headings (Heading 1, 2, …) show here.", "제목 스타일(제목 1, 2, …) 문단이 여기에 나옵니다."),
     ("New Word Document", "새 Word 문서"),
+    // Pictures (image_view).
+    ("Show the whole picture in the window", "그림 전체를 창에 맞춰 보여 줍니다"),
+    ("Actual Size", "실제 크기"),
+    ("Show the picture at its own size (100%)", "그림을 원래 크기(100%)로 보여 줍니다"),
+    (
+        "This picture couldn't be read: it may be damaged, or of a kind Monun doesn't show.",
+        "그림을 읽지 못했습니다. 손상되었거나 모눈이 보여 주지 못하는 형식일 수 있습니다.",
+    ),
+    ("A picture can only be looked at in Monun.", "모눈에서는 그림을 보기만 할 수 있습니다."),
     // 한글 documents (hwp_view).
     ("New Hangul Document", "새 한글 문서"),
     ("Hangul Document", "한글 문서"),

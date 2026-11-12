@@ -37,6 +37,10 @@ pub enum FileKind {
     /// interface reads, edits, saves and prints itself ([`crate::docs::hwp_workbook`]); the engine
     /// never reads or writes its contents.
     Hwp,
+    /// A picture (.png, .jpg, .gif, .bmp, .webp, .ico, .tif): opens as a document tab the
+    /// interface shows to look at ([`crate::docs::image_workbook`]); the engine never reads its
+    /// contents and never writes it.
+    Image,
 }
 
 impl FileKind {
@@ -56,6 +60,7 @@ impl FileKind {
             "pdf" => FileKind::Pdf,
             "docx" | "dotx" | "doc" | "rtf" | "odt" => FileKind::Word,
             "hwp" | "hwpx" => FileKind::Hwp,
+            "png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff" => FileKind::Image,
             _ => return None,
         })
     }
@@ -98,6 +103,10 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_
     // a .hwpx a ZIP package.
     if FileKind::from_path(name) == Some(FileKind::Hwp) {
         return Ok((crate::docs::hwp_workbook(name), vec![]));
+    }
+    // A picture too: the interface reads and shows it.
+    if FileKind::from_path(name) == Some(FileKind::Image) {
+        return Ok((crate::docs::image_workbook(name), vec![]));
     }
     if monun_xlsx::sniff(bytes) != monun_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
@@ -355,6 +364,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Pdf => Err(EngineError::Other("Make a PDF with File › Export › Export as PDF.".into())),
         FileKind::Word => Err(EngineError::Other(crate::docs::WORD_IN_TAB.into())),
         FileKind::Hwp => Err(EngineError::Other(crate::docs::HWP_IN_TAB.into())),
+        FileKind::Image => Err(EngineError::Other(crate::docs::IMAGE_READ_ONLY.into())),
     }
 }
 

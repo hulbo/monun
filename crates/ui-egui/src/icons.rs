@@ -166,29 +166,96 @@ pub enum Icon {
     Word,
     /// A 한글 document: a page with lines of text under a teal band across its top.
     Hwp,
+    /// An SQL file: a database (a cylinder of stacked disks, its top orange).
+    SqlFile,
+    /// A Markdown file: the Markdown mark, M and a down arrow in a frame, in purple.
+    MarkdownFile,
+    /// A plain text file: a page of lines.
+    TextFile,
+    /// A picture: a frame with hills and a sun.
+    ImageFile,
     /// A document's text and the document side by side: a page split down the middle, lines of
     /// text on the left and a heading over lines on the right.
     SideBySide,
 }
 
-/// A PDF file (a page with a red band across it), a Word document (a page of lines with a blue
-/// band down its left edge) or a 한글 document (a page of lines under a teal band).
-fn paint_file_kind(g: &G<'_>, icon: Icon, c: Color32, (red, blue, teal): (Color32, Color32, Color32)) {
-    g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
+/// A PDF file (a red page, a band across its lower half), a Word document (a blue page of lines,
+/// a band down its left edge) or a 한글 document (a teal page of lines under a band): each in its
+/// own colour, so a list of files tells them apart at a glance. No program's logo.
+fn paint_file_kind(g: &G<'_>, icon: Icon, (red, blue, teal): (Color32, Color32, Color32), paper: Color32) {
+    let colour = match icon {
+        Icon::Pdf => red,
+        Icon::Hwp => teal,
+        _ => blue,
+    };
+    g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], colour, 1.2);
     if icon == Icon::Pdf {
-        g.stroke(&[(5.5, 7.0), (10.5, 7.0)], c);
-        g.rect(1.5, 9.0, 10.0, 4.0, Some(red), None);
+        g.stroke(&[(5.5, 6.5), (10.5, 6.5)], colour);
+        g.rect(1.5, 8.5, 11.0, 5.0, Some(red), None);
+        g.stroke(&[(3.5, 11.0), (9.5, 11.0)], paper);
     } else if icon == Icon::Hwp {
-        for y in [9.0, 11.0, 13.0] {
-            g.stroke(&[(5.5, y), (10.5, y)], c);
+        g.rect(1.5, 3.0, 9.5, 4.5, Some(teal), None);
+        g.stroke(&[(3.5, 5.25), (8.5, 5.25)], paper);
+        for y in [9.5, 11.5] {
+            g.stroke(&[(5.5, y), (10.5, y)], colour);
         }
-        g.rect(1.5, 3.5, 9.0, 4.0, Some(teal), None);
     } else {
+        g.rect(1.5, 4.5, 5.0, 9.0, Some(blue), None);
+        g.stroke(&[(3.0, 7.0), (5.0, 7.0)], paper);
         for y in [7.0, 9.5, 12.0] {
-            g.stroke(&[(7.5, y), (10.5, y)], c);
+            g.stroke(&[(8.0, y), (10.5, y)], colour);
         }
-        g.rect(1.5, 5.5, 4.5, 8.0, Some(blue), None);
     }
+}
+
+/// The icon of a kind of file a tab holds: each its own colour and shape.
+fn paint_file(g: &G<'_>, icon: Icon, c: Color32, pal: &Palette) {
+    let (red, blue, green, orange, purple, yellow, paper) =
+        (pal.cat(Cat::Red), pal.cat(Cat::Blue), pal.cat(Cat::Green), pal.cat(Cat::Orange), pal.cat(Cat::Purple), pal.cat(Cat::Amber), pal.paper);
+    match icon {
+        Icon::Pdf | Icon::Word | Icon::Hwp => paint_file_kind(g, icon, (red, blue, pal.cat(Cat::Teal)), paper),
+        Icon::SqlFile => paint_database(g, c, orange),
+        Icon::MarkdownFile => {
+            g.rect(1.5, 3.5, 13.0, 9.0, None, Some(purple));
+            g.line(&[(4.0, 10.0), (4.0, 6.0), (6.0, 8.3), (8.0, 6.0), (8.0, 10.0)], c, 1.2);
+            g.line(&[(11.5, 6.0), (11.5, 10.0)], purple, 1.3);
+            g.line(&[(10.0, 8.5), (11.5, 10.0), (13.0, 8.5)], purple, 1.3);
+        }
+        Icon::TextFile => {
+            g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
+            for (y, end) in [(7.0, 10.5), (9.0, 10.5), (11.0, 8.5)] {
+                g.stroke(&[(5.5, y), (end, y)], c);
+            }
+        }
+        Icon::ImageFile => {
+            g.rect(1.5, 2.5, 13.0, 11.0, Some(paper), Some(c));
+            g.poly(&[(2.5, 12.5), (6.0, 7.5), (8.6, 10.6), (10.2, 9.0), (13.5, 12.5)], green);
+            g.circle(10.8, 5.8, 1.4, Some(yellow), None);
+        }
+        _ => {}
+    }
+}
+
+/// Points along an ellipse centred at `cx`, `cy` from angle `a0` to `a1` (radians, y down).
+fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32, a0: f32, a1: f32) -> Vec<(f32, f32)> {
+    const STEPS: usize = 16;
+    (0..=STEPS)
+        .map(|i| {
+            let a = a0 + (a1 - a0) * i as f32 / STEPS as f32;
+            (cx + rx * a.cos(), cy + ry * a.sin())
+        })
+        .collect()
+}
+
+/// An SQL file: a database cylinder, its top in `top`.
+fn paint_database(g: &G<'_>, c: Color32, top: Color32) {
+    let pi = std::f32::consts::PI;
+    g.poly(&ellipse(8.0, 3.8, 5.0, 1.9, 0.0, 2.0 * pi), top);
+    g.line(&ellipse(8.0, 3.8, 5.0, 1.9, 0.0, 2.0 * pi), c, 1.1);
+    g.line(&[(3.0, 3.8), (3.0, 12.2)], c, 1.1);
+    g.line(&[(13.0, 3.8), (13.0, 12.2)], c, 1.1);
+    g.line(&ellipse(8.0, 8.0, 5.0, 1.9, 0.0, pi), c, 1.0);
+    g.line(&ellipse(8.0, 12.2, 5.0, 1.9, 0.0, pi), c, 1.1);
 }
 
 struct G<'a> {
@@ -782,7 +849,9 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
                 g.line(&[(9.0, 12.5), (15.0, 12.5)], c, 1.3);
             }
         }
-        Icon::Pdf | Icon::Word | Icon::Hwp => paint_file_kind(&g, icon, c, (red, blue, pal.cat(Cat::Teal))),
+        Icon::Pdf | Icon::Word | Icon::Hwp | Icon::SqlFile | Icon::MarkdownFile | Icon::TextFile | Icon::ImageFile => {
+            paint_file(&g, icon, c, pal);
+        }
         Icon::NewFile => {
             g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
         }

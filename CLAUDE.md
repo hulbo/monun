@@ -33,6 +33,9 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   (`TextKind::Word`, `docs::word_workbook`) and refuses edits, saves, exports and prints of it.
   Save, Save As, Export as PDF, Print and Undo/Redo are handled by `word_view::command`, hooked into
   `SheetApp::run_command`. `word_view::tidy` mirrors the session's dirty flag onto the tab.
+- Picture tabs: `crates/ui-egui/src/image_view.rs`. The engine knows a picture only as an empty
+  read-only tab (`TextKind::Image`, `docs::image_workbook`); the tab decodes the file off the UI
+  thread with the `image` crate and shows it fitted, at 100% or at the tab's zoom.
 - 한글 tabs: `crates/ui-egui/src/hwp_view/` (feature `hwp`, desktop only). The document lives on a thread of
   its own (`thread.rs`) in rhwp's `HwpDocument` (crates.io `rhwp = "=0.9.0"`, no default features but
   `wasm-api`, whose facade holds some caret queries the core keeps crate-private; its error path panics

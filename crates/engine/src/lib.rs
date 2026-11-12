@@ -409,6 +409,10 @@ impl DocState {
     pub fn is_hwp(&self) -> bool {
         self.text_kind() == Some(docs::TextKind::Hwp)
     }
+    /// A picture opened to look at: nothing changes it, saves, exports or prints it.
+    pub fn is_image(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Image)
+    }
 }
 
 /// Engine-side preferences.
@@ -695,6 +699,7 @@ impl Session {
             docs::TextKind::Sql => "Query",
             docs::TextKind::Plain => "Text",
             docs::TextKind::Pdf => "PDF",
+            docs::TextKind::Image => "Picture",
             docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();

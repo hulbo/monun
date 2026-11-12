@@ -55,6 +55,7 @@ mod header_column_drag;
 mod host_chrome;
 mod hwp_view;
 mod hyperlink_ctrl_click;
+mod image_view;
 mod in_cell_editor_size;
 mod in_cell_editor_wrap;
 mod insert_copied_cells;

@@ -230,6 +230,26 @@ fn a_hangul_document_opens_as_a_tab_its_interface_fills() {
 }
 
 #[test]
+fn a_picture_opens_as_a_tab_to_look_at_and_nothing_writes_it() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("picture");
+    let path = dir.join("diagram.png");
+    let bytes = b"\x89PNG not read by the engine".to_vec();
+    std::fs::write(&path, &bytes).unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    let d = s.active().unwrap();
+    assert_eq!((d.text_kind(), d.is_image(), d.is_dirty()), (Some(TextKind::Image), true, false));
+    assert_eq!((d.display_title(), d.path.as_deref()), ("diagram.png".to_string(), path.to_str()));
+    for (cmd, params) in [("doc.setText", json!({"text": "x"})), ("file.save", json!({})), ("file.reload", json!({}))] {
+        let e = s.execute(cmd, params).unwrap_err().to_string();
+        assert!(e.contains(monun_engine::docs::IMAGE_READ_ONLY), "{cmd}: {e}");
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
     use monun_engine::docs::TextKind;
     let dir = temp_dir("pdf");

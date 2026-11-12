@@ -74,7 +74,9 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         // A PDF, a Word or a 한글 document is only recognised here: the interface reads the file
         // itself.
         let bytes = match crate::io::FileKind::from_path(path) {
-            Some(crate::io::FileKind::Pdf | crate::io::FileKind::Word | crate::io::FileKind::Hwp) => crate::io::read_head(path, 1024)?,
+            Some(crate::io::FileKind::Pdf | crate::io::FileKind::Word | crate::io::FileKind::Hwp | crate::io::FileKind::Image) => {
+                crate::io::read_head(path, 1024)?
+            }
             _ => crate::io::read_file(path)?,
         };
         (path.to_string(), bytes)
@@ -86,8 +88,8 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // saved as .docx, so like an import they have no save target of their own.
     let word = crate::io::FileKind::from_path(&name) == Some(crate::io::FileKind::Word);
     let word_import = word && !std::path::Path::new(&name).extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));
-    // A 한글 document is read by the interface too, as it is.
-    let hwp = crate::io::FileKind::from_path(&name) == Some(crate::io::FileKind::Hwp);
+    // So are a 한글 document and a picture, as they are.
+    let hwp = matches!(crate::io::FileKind::from_path(&name), Some(crate::io::FileKind::Hwp | crate::io::FileKind::Image));
     let encrypted = !word && !hwp && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
     let (mut wb, warnings) = crate::io::open_bytes_with(&name, &bytes, str_param(p, "password"), bool_param(p, "csvAsText").unwrap_or(false))?;
     wb.source_dir = str_param(p, "path").and_then(crate::io::source_dir);
@@ -203,6 +205,9 @@ fn reload(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.documents().iter().find(|d| d.uid == uid).ok_or_else(|| bad("document", format!("no open document {uid}")))?;
     if d.is_pdf() {
         return Err(crate::EngineError::Other(crate::docs::PDF_READ_ONLY.into()));
+    }
+    if d.is_image() {
+        return Err(crate::EngineError::Other(crate::docs::IMAGE_READ_ONLY.into()));
     }
     if d.is_word() {
         return Err(crate::EngineError::Other(crate::docs::WORD_IN_TAB.into()));

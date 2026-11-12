@@ -102,6 +102,7 @@ pub fn writable(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     match s.active() {
         Some(d) if d.is_pdf() => Err(crate::docs::PDF_READ_ONLY.into()),
+        Some(d) if d.is_image() => Err(crate::docs::IMAGE_READ_ONLY.into()),
         Some(d) if d.is_word() => Err(crate::docs::WORD_IN_TAB.into()),
         Some(d) if d.is_hwp() => Err(crate::docs::HWP_IN_TAB.into()),
         _ => Ok(()),
@@ -388,6 +389,9 @@ fn wall_clock() -> std::time::Duration {
 pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
     if d.is_pdf() {
         return Err(EngineError::Other(crate::docs::PDF_READ_ONLY.into()));
+    }
+    if d.is_image() {
+        return Err(EngineError::Other(crate::docs::IMAGE_READ_ONLY.into()));
     }
     if d.is_word() {
         return Err(EngineError::Other(crate::docs::WORD_IN_TAB.into()));
