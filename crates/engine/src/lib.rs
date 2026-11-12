@@ -399,6 +399,11 @@ impl DocState {
     pub fn is_pdf(&self) -> bool {
         self.text_kind() == Some(docs::TextKind::Pdf)
     }
+    /// A Word document: the interface reads, edits, saves, exports and prints it; the engine's own
+    /// commands leave it alone.
+    pub fn is_word(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Word)
+    }
 }
 
 /// Engine-side preferences.
@@ -685,13 +690,14 @@ impl Session {
             docs::TextKind::Sql => "Query",
             docs::TextKind::Plain => "Text",
             docs::TextKind::Pdf => "PDF",
+            docs::TextKind::Word => "Document",
         };
         let prefix = prefix.trim();
         let prefix = if prefix.is_empty() { fallback } else { prefix };
         let ext = kind.extension();
         let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("{prefix}{n}.{ext}") && d.path.is_none())).unwrap_or(1);
         let title = format!("{prefix}{n}.{ext}");
-        let wb = docs::markdown_workbook(&title, b"");
+        let wb = if kind == docs::TextKind::Word { docs::word_workbook(&title) } else { docs::markdown_workbook(&title, b"") };
         self.add_document(DocState::new(wb, None, title, Trust::Local))
     }
 

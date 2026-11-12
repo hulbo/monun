@@ -1,19 +1,19 @@
-//! Where a PDF's pages go in its tab: one or two across (Two Pages: 1–2, 3–4, …), each row
-//! centred, with room around them and between them. In egui points from the top-left of the
-//! scrolled content, at a scale of egui points per PDF point.
+//! Where the pages of a PDF or a Word document go in its tab: one or two across (Two Pages: 1–2,
+//! 3–4, …), each row centred, with room around them and between them. In egui points from the
+//! top-left of the scrolled content, at a scale of egui points per point (1/72 inch) of the page.
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 
 /// Room around the pages (egui points).
-pub(super) const MARGIN: f32 = 16.0;
+pub(crate) const MARGIN: f32 = 16.0;
 /// Room between rows and between the two pages of a row (egui points).
-pub(super) const GAP: f32 = 12.0;
+pub(crate) const GAP: f32 = 12.0;
 /// egui points per PDF point at 100%: a PDF point is 1/72 inch, an egui point 1/96.
-pub(super) const POINTS_PER_PT: f32 = 96.0 / 72.0;
+pub(crate) const POINTS_PER_PT: f32 = 96.0 / 72.0;
 
 /// The pages laid out.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct Layout {
+pub(crate) struct Layout {
     /// Each page's rectangle.
     pub pages: Vec<Rect>,
     /// The rows from top to bottom.
@@ -39,7 +39,7 @@ fn rows_of(n: usize, spread: bool) -> impl Iterator<Item = (usize, usize)> {
 
 /// Lays out pages of `sizes` (PDF points, as shown: rotation applied) at `scale` egui points per
 /// PDF point, one or two across, centred in at least `min_width`.
-pub(super) fn lay_out(sizes: &[[f32; 2]], scale: f32, spread: bool, min_width: f32) -> Layout {
+pub(crate) fn lay_out(sizes: &[[f32; 2]], scale: f32, spread: bool, min_width: f32) -> Layout {
     let size_of = |i: usize| sizes.get(i).map_or(Vec2::ZERO, |s| vec2(s[0].max(1.0) * scale, s[1].max(1.0) * scale));
     let row_width = |(a, b): (usize, usize)| (a..=b).map(|i| size_of(i).x).sum::<f32>() + GAP * (b - a) as f32;
     let widest = rows_of(sizes.len(), spread).map(row_width).fold(0.0, f32::max);
@@ -66,7 +66,7 @@ pub(super) fn lay_out(sizes: &[[f32; 2]], scale: f32, spread: bool, min_width: f
 
 /// The scale (egui points per PDF point) that makes the widest row of pages as wide as `width`
 /// less the margins: Fit Width. `None` without pages.
-pub(super) fn fit_scale(sizes: &[[f32; 2]], spread: bool, width: f32) -> Option<f32> {
+pub(crate) fn fit_scale(sizes: &[[f32; 2]], spread: bool, width: f32) -> Option<f32> {
     rows_of(sizes.len(), spread)
         .filter_map(|(a, b)| {
             let points: f32 = (a..=b).filter_map(|i| sizes.get(i)).map(|s| s[0].max(1.0)).sum();

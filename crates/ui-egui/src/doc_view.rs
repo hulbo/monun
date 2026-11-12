@@ -564,7 +564,7 @@ fn sync_draft(app: &mut SheetApp, ctx: &egui::Context, uid: u64, sheet: usize, t
 /// Draws the active document tab: its tool bar, then the document in the chosen mode.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some((uid, sheet, text)) = active_document(app) else { return };
-    if text_kind(app) == TextKind::Pdf {
+    if matches!(text_kind(app), TextKind::Pdf | TextKind::Word) {
         // Another document's typing goes to its workbook first, as when switching between texts.
         if app.doc_view.draft.is_some() {
             if let Err(e) = app.commit_doc_draft() {
@@ -572,7 +572,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             }
             app.doc_view.draft = None;
         }
-        return crate::pdf_view::show(app, ui);
+        return if text_kind(app) == TextKind::Pdf { crate::pdf_view::show(app, ui) } else { crate::word_view::show(app, ui) };
     }
     let zoom = app.session.active().and_then(|d| d.wb.active()).map_or(100, |sh| sh.zoom);
     let z = f32::from(zoom.clamp(10, 400)) / 100.0;
@@ -972,6 +972,30 @@ pub(crate) fn tool_strip<R>(ui: &mut Ui, t: &Tokens, items: impl FnOnce(&mut Ui)
         .inner
 }
 
+/// One of the tool bar's mode buttons (Edit, View…): its icon and label, `on` for the mode the
+/// document shows in. Returns whether it was clicked.
+pub(crate) fn mode_button(ui: &mut Ui, t: &Tokens, on: bool, icon: Icon, (label, tip): (&str, &str)) -> bool {
+    let ink = if on { t.accent } else { t.text };
+    let w = ui.painter().layout_no_wrap(label.to_owned(), theme::ui_font(13.0), ink).size().x;
+    let (r, resp) = ui.allocate_exact_size(vec2((w + 36.0).max(60.0), 28.0), Sense::click());
+    if on {
+        ui.painter().rect_filled(r, 4.0, t.pressed);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0)),
+        icon,
+        if on { t.accent } else { t.text_dim },
+    );
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), theme::ui_font(13.0), ink);
+    ui.painter().galley(pos2(r.left() + 28.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+    let resp = resp.on_hover_text(tip);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+    resp.clicked()
+}
+
 /// A thin upright line between groups of the tool bar's items.
 pub(crate) fn separator(ui: &mut Ui, t: &Tokens) {
     ui.add_space(6.0);
@@ -996,25 +1020,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
     ];
     for (m, icon, label, tip) in modes {
         let on = mode == m;
-        let text = egui::RichText::new(lang.tr(label)).font(theme::ui_font(13.0)).color(if on { t.accent } else { t.text });
-        let w = ui.painter().layout_no_wrap(text.text().to_owned(), theme::ui_font(13.0), t.text).size().x;
-        let (r, resp) = ui.allocate_exact_size(vec2((w + 36.0).max(60.0), 28.0), Sense::click());
-        if on {
-            ui.painter().rect_filled(r, 4.0, t.pressed);
-        } else if resp.hovered() {
-            ui.painter().rect_filled(r, 4.0, t.hover);
-        }
-        icons::paint(
-            ui.painter(),
-            Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(16.0, 16.0)),
-            icon,
-            if on { t.accent } else { t.text_dim },
-        );
-        let galley = ui.painter().layout_no_wrap(text.text().to_owned(), theme::ui_font(13.0), if on { t.accent } else { t.text });
-        ui.painter().galley(pos2(r.left() + 28.0, r.center().y - galley.size().y / 2.0), galley, t.text);
-        let resp = resp.on_hover_text(lang.tr(tip));
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, lang.tr(label)));
-        if resp.clicked() && !on {
+        if mode_button(ui, t, on, icon, (lang.tr(label), lang.tr(tip))) && !on {
             if let Err(e) = app.commit_doc_draft() {
                 app.alert(e);
             }

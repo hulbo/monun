@@ -124,8 +124,13 @@ impl SheetApp {
     /// read again; one with unsaved changes asks first, in the bar under the ribbon, rather than
     /// lose either.
     pub(super) fn watch_files(&mut self, ctx: &egui::Context) {
-        let open: Vec<(u64, bool)> =
-            self.session.documents().iter().filter(|d| d.is_text_file() && !d.is_pdf() && d.path.is_some()).map(|d| (d.uid, d.is_dirty())).collect();
+        let open: Vec<(u64, bool)> = self
+            .session
+            .documents()
+            .iter()
+            .filter(|d| d.is_text_file() && !d.is_pdf() && !d.is_word() && d.path.is_some())
+            .map(|d| (d.uid, d.is_dirty()))
+            .collect();
         if open.is_empty() {
             return;
         }

@@ -27,6 +27,12 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   from a pinned PdfCraft commit; its patched hayro and vello crates are patched in from the same
   commit in the root `Cargo.toml`. Bump all of them together. The engine knows a PDF only as an
   empty read-only document tab (`TextKind::Pdf`, `docs::pdf_workbook`).
+- Word tabs: `crates/ui-egui/src/word_view/` (feature `word`, desktop only). The document lives in a
+  WordCraft `Session` (`wordcraft-engine`, `-render`, `-pdf` from a pinned WordCraft commit; its
+  Krilla patch is copied into the root `Cargo.toml`). The engine knows only an empty tab
+  (`TextKind::Word`, `docs::word_workbook`) and refuses edits, saves, exports and prints of it.
+  Save, Save As, Export as PDF, Print and Undo/Redo are handled by `word_view::command`, hooked into
+  `SheetApp::run_command`. `word_view::tidy` mirrors the session's dirty flag onto the tab.
 
 ## Rules
 - Never crash: no `unwrap()`, `expect()`, `panic!`, indexing on input-derived data or `unsafe` in

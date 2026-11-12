@@ -33,6 +33,7 @@ impl SheetApp {
             text_box_editor: None,
             doc_view: Default::default(),
             pdf: Default::default(),
+            word: Default::default(),
             memos: Default::default(),
             dialog: None,
             backstage: None,
@@ -318,6 +319,8 @@ impl SheetApp {
             crate::doc_view::lay_out_ahead(self, &ctx);
             // Closed PDFs' render threads and pages go; those not shown stop drawing.
             crate::pdf_view::tidy(self, &ctx);
+            // Closed Word documents go; open ones show their unsaved changes on their tabs.
+            crate::word_view::tidy(self, &ctx);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

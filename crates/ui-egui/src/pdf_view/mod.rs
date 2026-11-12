@@ -11,7 +11,6 @@
 //! screen's pixels (zoom × 96/72 × pixels per point) and placed on whole pixels, so they are
 //! sharp; while the zoom changes the old pixels are stretched, and drawn anew once it rests.
 
-mod layout;
 mod outline;
 mod render;
 mod text;
@@ -27,8 +26,8 @@ use serde_json::{Value as Json, json};
 use crate::SheetApp;
 use crate::doc_view::{self, Mode};
 use crate::icons::Icon;
+use crate::page_layout::{self as layout, GAP, Layout, POINTS_PER_PT};
 use crate::theme::{self, Tokens};
-use layout::{GAP, Layout, POINTS_PER_PT};
 use render::Raster;
 use text::{Hits, Selection, Spot};
 

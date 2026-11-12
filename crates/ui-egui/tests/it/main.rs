@@ -116,4 +116,5 @@ mod validation_input_message;
 mod wheel_zoom;
 mod whole_line_shortcuts;
 mod widgets;
+mod word_view;
 mod zoom_dialog;

@@ -236,7 +236,10 @@ fn services() -> Services {
         paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Spreadsheets and documents", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf"])
+                .add_filter(
+                    "Spreadsheets and documents",
+                    &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt"],
+                )
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
                 .add_filter("Excel 97-2003 Workbook (import)", &["xls"])
                 .add_filter("Excel Binary Workbook (data import)", &["xlsb"])
@@ -245,6 +248,7 @@ fn services() -> Services {
                 .add_filter("Markdown document", &["md", "markdown"])
                 .add_filter("SQL file", &["sql"])
                 .add_filter("Text document", &["txt"])
+                .add_filter("Word document", &["docx", "dotx", "doc", "rtf", "odt"])
                 .add_filter("PDF document (read only)", &["pdf"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
@@ -260,8 +264,9 @@ fn services() -> Services {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
             // The suggested name's type (an export asks for .pdf, .csv or .html) comes first.
-            const TYPES: [(&str, &str); 7] = [
+            const TYPES: [(&str, &str); 8] = [
                 ("Excel Workbook (.xlsx)", "xlsx"),
+                ("Word Document (.docx)", "docx"),
                 ("CSV (.csv)", "csv"),
                 ("Web Page (.html)", "html"),
                 ("PDF (.pdf)", "pdf"),

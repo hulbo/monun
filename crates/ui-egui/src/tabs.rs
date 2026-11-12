@@ -533,7 +533,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     ui.add_space(10.0);
                     // A PDF says which page shows.
-                    if let Some(status) = crate::pdf_view::status(app) {
+                    if let Some(status) = crate::pdf_view::status(app).or_else(|| crate::word_view::status(app)) {
                         text(ui, egui::RichText::new(status).font(theme::ui_font(12.5)).color(t.text_dim));
                         return;
                     }

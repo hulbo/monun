@@ -56,6 +56,8 @@ pub enum TextKind {
     Plain,
     /// A PDF file, shown read-only by the interface: its document tab holds no text.
     Pdf,
+    /// A Word document, read, edited and saved by the interface: its document tab holds no text.
+    Word,
 }
 
 impl TextKind {
@@ -67,6 +69,7 @@ impl TextKind {
             Some("md" | "markdown") => TextKind::Markdown,
             Some("sql") => TextKind::Sql,
             Some("pdf") => TextKind::Pdf,
+            Some("docx" | "dotx" | "doc" | "rtf" | "odt") => TextKind::Word,
             _ => TextKind::Plain,
         }
     }
@@ -78,6 +81,7 @@ impl TextKind {
             TextKind::Sql => "sql",
             TextKind::Plain => "txt",
             TextKind::Pdf => "pdf",
+            TextKind::Word => "docx",
         }
     }
 
@@ -87,6 +91,7 @@ impl TextKind {
             "markdown" | "md" => Some(TextKind::Markdown),
             "sql" => Some(TextKind::Sql),
             "text" | "txt" | "plain" => Some(TextKind::Plain),
+            "word" | "docx" => Some(TextKind::Word),
             _ => None,
         }
     }
@@ -116,6 +121,21 @@ pub fn text_file_bytes(doc: &Document) -> Vec<u8> {
 
 /// Refused for every change to a PDF file and for saving, exporting or printing it.
 pub const PDF_READ_ONLY: &str = "A PDF file can only be read in Monun.";
+
+/// Refused for changes to a Word document's tab and for saving, exporting or printing it through
+/// the engine: its tab does those.
+pub const WORD_IN_TAB: &str = "A Word document is edited, saved, exported and printed in its tab.";
+
+/// A workbook of one document tab standing for a Word document, named after it: no text, shown read
+/// (View) and as wide as the window until its tab is set otherwise. The interface reads, draws and
+/// edits the document in it.
+pub fn word_workbook(name: &str) -> Workbook {
+    let mut wb = pdf_workbook(name);
+    if let Some(sh) = wb.sheets.first_mut() {
+        Arc::make_mut(sh).name = name_from_path(name).unwrap_or_else(|| "Document1".into());
+    }
+    wb
+}
 
 /// Whether `bytes` are a PDF file: `%PDF-` within its first kilobyte, where readers look for it.
 pub fn is_pdf(bytes: &[u8]) -> bool {

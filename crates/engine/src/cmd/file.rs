@@ -7,7 +7,7 @@ use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql` or plain text `Text1.txt`, or `{prefix}1.md` and so on)", always, new_workbook),
+        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\"|\"word\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql`, plain text `Text1.txt` or a Word document `Document1.docx`, or `{prefix}1.md` and so on)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", writable, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", writable, save_as),
@@ -43,7 +43,9 @@ pub fn specs() -> Vec<CommandSpec> {
 fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "document").unwrap_or(false) {
         let kind = match str_param(p, "kind") {
-            Some(k) => crate::docs::TextKind::parse(k).ok_or_else(|| bad("file.new", format!("`kind` must be markdown, sql or text, not `{k}`")))?,
+            Some(k) => {
+                crate::docs::TextKind::parse(k).ok_or_else(|| bad("file.new", format!("`kind` must be markdown, sql, text or word, not `{k}`")))?
+            }
             None => crate::docs::TextKind::Markdown,
         };
         let i = s.new_text_file(kind, str_param(p, "prefix").unwrap_or(""));
@@ -69,9 +71,9 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
             s.set_active(i);
             return Ok(json!({"index": i, "alreadyOpen": true}));
         }
-        // A PDF is only recognised here: the interface reads the file itself to show it.
+        // A PDF or a Word document is only recognised here: the interface reads the file itself.
         let bytes = match crate::io::FileKind::from_path(path) {
-            Some(crate::io::FileKind::Pdf) => crate::io::read_head(path, 1024)?,
+            Some(crate::io::FileKind::Pdf | crate::io::FileKind::Word) => crate::io::read_head(path, 1024)?,
             _ => crate::io::read_file(path)?,
         };
         (path.to_string(), bytes)
@@ -79,7 +81,11 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         s.ui_requests.push(crate::UiRequest::Dialog("open".into(), json!({})));
         return ok();
     };
-    let encrypted = monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
+    // A Word document is read by the interface, password and all; .doc, .dotx, .rtf and .odt are
+    // saved as .docx, so like an import they have no save target of their own.
+    let word = crate::io::FileKind::from_path(&name) == Some(crate::io::FileKind::Word);
+    let word_import = word && !std::path::Path::new(&name).extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));
+    let encrypted = !word && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
     let (mut wb, warnings) = crate::io::open_bytes_with(&name, &bytes, str_param(p, "password"), bool_param(p, "csvAsText").unwrap_or(false))?;
     wb.source_dir = str_param(p, "path").and_then(crate::io::source_dir);
     // What `CELL("filename")` reports (#1489). A workbook opened from bytes knows its name but
@@ -89,10 +95,12 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         Some(path) => crate::io::source_path(path),
         None => Some(std::path::PathBuf::from(&name)),
     };
-    let imported =
-        matches!(crate::io::FileKind::from_path(&name), Some(crate::io::FileKind::Ods | crate::io::FileKind::Xlsb | crate::io::FileKind::Xls))
-            || matches!(monun_xlsx::sniff(&bytes), monun_xlsx::Format::Ods | monun_xlsx::Format::Xlsb | monun_xlsx::Format::Xls);
-    let title = if imported {
+    let imported = !word
+        && (matches!(crate::io::FileKind::from_path(&name), Some(crate::io::FileKind::Ods | crate::io::FileKind::Xlsb | crate::io::FileKind::Xls))
+            || matches!(monun_xlsx::sniff(&bytes), monun_xlsx::Format::Ods | monun_xlsx::Format::Xlsb | monun_xlsx::Format::Xls));
+    let title = if word_import {
+        format!("{}.docx", std::path::Path::new(&name).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Document"))
+    } else if imported {
         format!("{} (imported).xlsx", std::path::Path::new(&name).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book"))
     } else {
         std::path::Path::new(&name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or("Book").to_string()
@@ -100,7 +108,7 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // An import has no save target: ordinary Save must ask for a new destination. Neither does a
     // workbook decrypted with its password, so Save never replaces the encrypted original with
     // an unprotected copy.
-    let path = str_param(p, "path").filter(|_| !imported && !encrypted).map(str::to_string);
+    let path = str_param(p, "path").filter(|_| !imported && !encrypted && !word_import).map(str::to_string);
     // Replace an untouched blank Book1 like Excel does.
     if s.documents().len() == 1
         && s.active().is_some_and(|d| d.path.is_none() && !d.is_dirty() && d.undo.is_empty() && d.wb.sheets.iter().all(|sh| sh.cells.is_empty()))
@@ -191,6 +199,9 @@ fn reload(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.documents().iter().find(|d| d.uid == uid).ok_or_else(|| bad("document", format!("no open document {uid}")))?;
     if d.is_pdf() {
         return Err(crate::EngineError::Other(crate::docs::PDF_READ_ONLY.into()));
+    }
+    if d.is_word() {
+        return Err(crate::EngineError::Other(crate::docs::WORD_IN_TAB.into()));
     }
     if !d.is_text_file() {
         return Err(crate::EngineError::Other(RELOAD_TEXT_ONLY.into()));

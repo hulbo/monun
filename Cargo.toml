@@ -59,6 +59,16 @@ pdfcraft-render = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c
 # The parser alone, to lay out a PDF's pages before the first raster (the patched one, below).
 hayro = "0.7.1"
 
+# Word files (desktop): WordCraft's engine (.docx read and write, layout, editing commands, undo),
+# its page renderer and PDF export, from one reviewed WordCraft commit. Its own interface isn't
+# used: the tab is drawn by `crates/ui-egui/src/word_view`. Its Krilla patch is copied below.
+wordcraft-engine = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+wordcraft-layout = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+wordcraft-render = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+wordcraft-pdf = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+wordcraft-doc = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+wordcraft-fonts = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+
 # ui
 egui = "0.37"
 egui_extras = { version = "0.37", default-features = false }
@@ -131,3 +141,6 @@ hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec
 lopdf = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
 vello_common = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
 vello_cpu = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+# WordCraft's PDF export (wordcraft-pdf, through craft-pdf) needs craft-libs' Krilla, as WordCraft
+# patches it: its own `[patch]` doesn't reach a workspace that depends on it.
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b" }

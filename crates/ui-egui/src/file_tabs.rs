@@ -396,9 +396,12 @@ fn open_files_list(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], t: &Tokens
 /// The icon of the file at `path`: a workbook's, or a text file's of the kind its name says.
 pub(crate) fn path_icon(path: &str) -> Icon {
     let kind = match monun_engine::io::FileKind::from_path(path) {
-        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text | monun_engine::io::FileKind::Pdf) => {
-            Some(TextKind::of_name(path))
-        }
+        Some(
+            monun_engine::io::FileKind::Markdown
+            | monun_engine::io::FileKind::Text
+            | monun_engine::io::FileKind::Pdf
+            | monun_engine::io::FileKind::Word,
+        ) => Some(TextKind::of_name(path)),
         _ => None,
     };
     file_icon(kind)
@@ -410,6 +413,7 @@ fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Sql) => Icon::Script,
         Some(TextKind::Markdown | TextKind::Plain) => Icon::Document,
         Some(TextKind::Pdf) => Icon::Pdf,
+        Some(TextKind::Word) => Icon::Word,
     }
 }
 
@@ -432,6 +436,9 @@ fn new_file_menu(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         if ui.button(lang.tr("New Text File")).clicked() {
             new_text(app, TextKind::Plain);
         }
+        if cfg!(feature = "word") && ui.button(lang.tr("New Word Document")).clicked() {
+            new_text(app, TextKind::Word);
+        }
         ui.separator();
         if ui.button(lang.tr("Open…")).clicked() {
             app.run_or_alert("file.open", json!({}));
@@ -448,9 +455,14 @@ fn new_markdown(app: &mut SheetApp) {
     app.run_or_alert("file.new", json!({"document": true, "prefix": prefix}));
 }
 
-/// A new SQL or plain text file, `Query1.sql` or `Text1.txt` in the interface's language.
+/// A new SQL, plain text or Word file, `Query1.sql`, `Text1.txt` or `Document1.docx` in the
+/// interface's language.
 fn new_text(app: &mut SheetApp, kind: TextKind) {
-    let (prefix, name) = if kind == TextKind::Sql { ("Query", "sql") } else { ("Text", "text") };
+    let (prefix, name) = match kind {
+        TextKind::Sql => ("Query", "sql"),
+        TextKind::Word => ("Document", "word"),
+        _ => ("Text", "text"),
+    };
     let prefix = app.ui.language.tr(prefix).to_string();
     app.run_or_alert("file.new", json!({"document": true, "kind": name, "prefix": prefix}));
 }
@@ -582,6 +594,9 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     if start_button(ui, Icon::Document, lang.tr("New Text File"), &t).clicked() {
                         new_text(app, TextKind::Plain);
+                    }
+                    if cfg!(feature = "word") && start_button(ui, Icon::Word, lang.tr("New Word Document"), &t).clicked() {
+                        new_text(app, TextKind::Word);
                     }
                     if start_button(ui, Icon::Folder, lang.tr("Open…"), &t).clicked() {
                         app.run_or_alert("file.open", json!({}));

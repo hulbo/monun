@@ -438,7 +438,7 @@ fn job_of(text: &str, (kind, wide): (TextKind, Wide), font: &FontId, colors: &Co
     let mut job = match kind {
         TextKind::Markdown => markdown_job(text, font, colors, wrap),
         TextKind::Sql => code_editor::layout_job(text, Lang::Sql, font, colors.text, &colors.syntax, wrap),
-        TextKind::Plain | TextKind::Pdf => code_editor::layout_job(text, Lang::Plain, font, colors.text, &colors.syntax, wrap),
+        TextKind::Plain | TextKind::Pdf | TextKind::Word => code_editor::layout_job(text, Lang::Plain, font, colors.text, &colors.syntax, wrap),
     };
     if kind != TextKind::Markdown {
         even_rows(&mut job, code_line_height(font), wide);

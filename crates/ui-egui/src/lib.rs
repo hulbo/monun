@@ -35,6 +35,8 @@ pub mod macro_editor;
 pub mod macro_ui;
 pub mod memos;
 pub mod outline;
+#[cfg(any(feature = "pdf", feature = "word"))]
+pub(crate) mod page_layout;
 pub mod panes;
 pub mod paper_view;
 #[cfg(feature = "pdf")]
@@ -53,6 +55,11 @@ pub mod text_box;
 pub mod theme;
 pub mod widgets;
 mod window_ui;
+#[cfg(feature = "word")]
+pub mod word_view;
+#[cfg(not(feature = "word"))]
+#[path = "word_view_off.rs"]
+pub mod word_view;
 
 pub use window_ui::WindowUi;
 
@@ -337,6 +344,8 @@ pub struct SheetApp {
     pub doc_view: doc_view::State,
     /// PDF tabs: each open PDF's pages, text and render threads.
     pub pdf: pdf_view::State,
+    /// Word tabs: each open document's session, pages and input method.
+    pub word: word_view::State,
     /// The memo panel's memo being written and the one picked.
     pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,

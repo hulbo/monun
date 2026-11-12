@@ -29,6 +29,10 @@ pub enum FileKind {
     /// A PDF file: opens as a document tab the interface shows read-only ([`crate::docs::pdf_workbook`]);
     /// the engine never reads its contents and never writes it.
     Pdf,
+    /// A Word document (.docx, .dotx; also .doc, .rtf and .odt, saved as .docx): opens as a document
+    /// tab the interface reads, edits, saves and exports itself ([`crate::docs::word_workbook`]);
+    /// the engine never reads or writes its contents.
+    Word,
 }
 
 impl FileKind {
@@ -46,6 +50,7 @@ impl FileKind {
             "html" | "htm" => FileKind::Html,
             "md" | "markdown" => FileKind::Markdown,
             "pdf" => FileKind::Pdf,
+            "docx" | "dotx" | "doc" | "rtf" | "odt" => FileKind::Word,
             _ => return None,
         })
     }
@@ -78,6 +83,12 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
 /// the text it holds, with no number, date or boolean conversion (identifiers such as GTINs, SKUs
 /// and ZIP codes survive). It does not apply to other formats.
 pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_text: bool) -> Result<(Workbook, Vec<String>)> {
+    // A Word document goes by its name before its bytes: a .docx is a ZIP package (read as a
+    // workbook's otherwise), a .doc a compound file, and either may be encrypted with Word's own
+    // password. The interface reads it.
+    if FileKind::from_path(name) == Some(FileKind::Word) {
+        return Ok((crate::docs::word_workbook(name), vec![]));
+    }
     if monun_xlsx::sniff(bytes) != monun_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
         fit_imported_rows(&mut wb);
@@ -332,6 +343,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         // Save and Save As make a PDF by printing the sheet (`file.exportPdf`) before reaching
         // here; a PDF file opened to read is never written.
         FileKind::Pdf => Err(EngineError::Other("Make a PDF with File › Export › Export as PDF.".into())),
+        FileKind::Word => Err(EngineError::Other(crate::docs::WORD_IN_TAB.into())),
     }
 }
 

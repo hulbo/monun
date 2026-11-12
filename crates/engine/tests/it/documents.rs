@@ -165,6 +165,40 @@ fn a_markdown_file_opens_as_a_document_and_saves_back() {
 }
 
 #[test]
+fn a_word_document_opens_as_a_tab_its_interface_fills() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("word");
+    // A .docx is a ZIP package, as a workbook is: it still opens as a Word document.
+    let docx = dir.join("spec.docx");
+    let bytes = b"PK\x03\x04 not read by the engine".to_vec();
+    std::fs::write(&docx, &bytes).unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": docx.to_str().unwrap()})).unwrap();
+    let d = s.active().unwrap();
+    assert_eq!((d.text_kind(), d.is_word(), d.is_dirty()), (Some(TextKind::Word), true, false));
+    assert_eq!((d.display_title(), d.path.as_deref()), ("spec.docx".to_string(), docx.to_str()));
+    // The engine leaves it to its tab: no edit, save, export or print goes through.
+    for (cmd, params) in
+        [("doc.setText", json!({"text": "x"})), ("file.save", json!({})), ("file.exportPdf", json!({"path": dir.join("p.pdf").to_str().unwrap()}))]
+    {
+        let e = s.execute(cmd, params).unwrap_err().to_string();
+        assert!(e.contains(monun_engine::docs::WORD_IN_TAB), "{cmd}: {e}");
+    }
+    assert_eq!(std::fs::read(&docx).unwrap(), bytes);
+    // An older or other format opens as Word too, titled .docx and with no file of its own yet.
+    let rtf = dir.join("letter.rtf");
+    std::fs::write(&rtf, "{\\rtf1 hi}").unwrap();
+    s.execute("file.open", json!({"path": rtf.to_str().unwrap()})).unwrap();
+    let d = s.active().unwrap();
+    assert_eq!((d.display_title(), d.path.clone(), d.is_word()), ("letter.docx".to_string(), None, true));
+    assert_eq!(d.wb.source_path.as_deref(), Some(rtf.as_path()));
+    // A new one.
+    s.execute("file.new", json!({"document": true, "kind": "word"})).unwrap();
+    assert_eq!((s.active().unwrap().display_title(), s.active().unwrap().is_word()), ("Document1.docx".to_string(), true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
     use monun_engine::docs::TextKind;
     let dir = temp_dir("pdf");

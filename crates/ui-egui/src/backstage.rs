@@ -694,15 +694,25 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     let lang = app.ui.language;
     dim(ui, lang.tr("Save the workbook under another name or in another folder."));
     ui.add_space(14.0);
+    // A Word document saves as itself (.docx) or as a PDF.
+    let word = app.session.active().is_some_and(monun_engine::DocState::is_word);
+    if word && !matches!(bs.save_format, "xlsx" | "pdf") {
+        bs.save_format = "xlsx";
+    }
     let fmt = bs.save_format;
-    let current = SAVE_TYPES.iter().find(|(ext, _)| *ext == fmt).map_or("Excel Workbook (*.xlsx)", |(_, label)| *label);
+    let types: Vec<(&'static str, &'static str)> = SAVE_TYPES
+        .into_iter()
+        .filter(|(ext, _)| !word || matches!(*ext, "xlsx" | "pdf"))
+        .map(|(ext, label)| if word && ext == "xlsx" { (ext, "Word Document (*.docx)") } else { (ext, label) })
+        .collect();
+    let current = types.iter().find(|(ext, _)| *ext == fmt).map_or("Excel Workbook (*.xlsx)", |(_, label)| *label);
     ui.horizontal(|ui| {
         let label = ui.label(lang.tr("Save as type"));
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(280.0)
             .selected_text(lang.tr(current))
             .show_ui(ui, |ui| {
-                for (ext, label) in SAVE_TYPES {
+                for (ext, label) in types.iter().copied() {
                     if ui.selectable_label(fmt == ext, lang.tr(label)).clicked() {
                         bs.save_format = ext;
                     }
@@ -711,7 +721,7 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
             .response
             .labelled_by(label.id);
     });
-    if matches!(fmt, "html" | "pdf") {
+    if matches!(fmt, "html" | "pdf") && !word {
         ui.add_space(10.0);
         sheets_choice(app, ui, bs);
     }

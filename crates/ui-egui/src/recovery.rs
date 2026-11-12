@@ -57,15 +57,32 @@ impl Recovery {
         }
     }
 
-    /// Writes a copy of every workbook whose unsaved changes its copy doesn't hold yet.
-    pub fn write(&mut self, session: &monun_engine::Session) {
+    /// Writes a copy of every workbook whose unsaved changes its copy doesn't hold yet. A Word
+    /// document's copy is the .docx its tab makes of it (`word`: its revision, then its bytes,
+    /// made only when the copy is behind).
+    pub fn write(&mut self, session: &monun_engine::Session, word: WordCopies<'_>) {
         self.tidy(session);
         for d in session.documents().iter().filter(|d| d.is_dirty()) {
-            if self.written.get(&d.uid) == Some(&d.revision) {
+            let (ext, revision) = if d.is_word() {
+                let Some(revision) = (word.0)(d.uid) else { continue };
+                ("docx", revision)
+            } else {
+                (if d.wb.vba_project.is_some() { "xlsm" } else { "xlsx" }, d.revision)
+            };
+            if self.written.get(&d.uid) == Some(&revision) {
                 continue;
             }
-            let ext = if d.wb.vba_project.is_some() { "xlsm" } else { "xlsx" };
-            let Ok(bytes) = monun_engine::io::save_bytes(&d.wb, &format!("recovery.{ext}")) else { continue };
+            let bytes = if d.is_word() {
+                match (word.1)(d.uid) {
+                    Some(bytes) => bytes,
+                    None => continue,
+                }
+            } else {
+                match monun_engine::io::save_bytes(&d.wb, &format!("recovery.{ext}")) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                }
+            };
             let base = self.dir.join(d.uid.to_string());
             // Written aside and then renamed, so a copy is never left half written.
             let tmp = base.with_extension("tmp");
@@ -73,12 +90,12 @@ impl Recovery {
                 continue;
             }
             let _ = fs::write(base.with_extension("json"), json!({"title": d.display_title()}).to_string());
-            self.written.insert(d.uid, d.revision);
+            self.written.insert(d.uid, revision);
         }
     }
 
     fn remove(&self, uid: u64) {
-        for ext in ["xlsx", "xlsm", "json", "tmp"] {
+        for ext in ["xlsx", "xlsm", "docx", "json", "tmp"] {
             let _ = fs::remove_file(self.dir.join(format!("{uid}.{ext}")));
         }
     }
@@ -105,6 +122,7 @@ impl Recovery {
                 let ext = match copy.extension().and_then(|e| e.to_str()) {
                     Some("xlsx") => "xlsx",
                     Some("xlsm") => "xlsm",
+                    Some("docx") => "docx",
                     _ => continue,
                 };
                 let Ok(bytes) = fs::read(&copy) else { continue };
@@ -117,6 +135,9 @@ impl Recovery {
         (books, dirs)
     }
 }
+
+/// What AutoRecover asks a Word document's tab: its document's revision, and its .docx bytes.
+pub type WordCopies<'a> = (&'a dyn Fn(u64) -> Option<u64>, &'a dyn Fn(u64) -> Option<Vec<u8>>);
 
 impl SheetApp {
     /// Starts AutoRecover with its folders in `root` and reopens, as unsaved copies, the
@@ -133,8 +154,18 @@ impl SheetApp {
             if self.session.run("file.open", json!({"name": name, "base64": base64})).is_err() {
                 continue;
             }
+            // A Word document's tab reads its copy from these bytes.
+            if book.ext == "docx"
+                && let Some(uid) = self.session.active().map(|d| d.uid)
+            {
+                crate::word_view::adopt(self, uid, book.bytes.clone());
+            }
             if let Some(d) = self.session.active_mut() {
                 d.title = lang.tr("{title} (Recovered)").replace("{title}", &stem);
+                // A Word document keeps its type, which Save As goes by.
+                if book.ext == "docx" {
+                    d.title.push_str(".docx");
+                }
                 // Unsaved, so closing it asks first and AutoRecover keeps a copy.
                 d.saved = std::sync::Arc::new((*d.wb).clone());
             }
@@ -143,7 +174,10 @@ impl SheetApp {
         self.after_engine();
         // The old folders go once this run holds copies of what they had.
         if let Some(r) = self.recovery.as_mut() {
-            r.write(&self.session);
+            r.write(
+                &self.session,
+                (&|uid| crate::word_view::recovery_rev(&self.word, uid), &|uid| crate::word_view::recovery_bytes(&self.word, uid)),
+            );
             for dir in dirs {
                 let _ = fs::remove_dir_all(dir);
             }
@@ -167,7 +201,7 @@ impl SheetApp {
             return;
         }
         r.last = now;
-        r.write(&self.session);
+        r.write(&self.session, (&|uid| crate::word_view::recovery_rev(&self.word, uid), &|uid| crate::word_view::recovery_bytes(&self.word, uid)));
     }
 
     /// Ends AutoRecover on a clean exit, removing this run's copies.
@@ -180,6 +214,9 @@ impl SheetApp {
 
 #[cfg(test)]
 mod tests {
+    /// No Word documents to copy.
+    const NO_WORD: super::WordCopies<'static> = (&|_| None, &|_| None);
+
     use super::*;
 
     fn root(name: &str) -> PathBuf {
@@ -199,7 +236,7 @@ mod tests {
     fn a_clean_exit_leaves_nothing_and_a_live_run_is_left_alone() {
         let root = root("clean");
         let mut r = Recovery::start(&root).unwrap();
-        r.write(&edited_session());
+        r.write(&edited_session(), NO_WORD);
         // Another start sees a folder whose lock is held: a run still going.
         assert!(Recovery::left_over(&root).0.is_empty());
         let dir = r.dir.clone();
@@ -214,7 +251,7 @@ mod tests {
         let root = root("tidy");
         let mut r = Recovery::start(&root).unwrap();
         let mut s = edited_session();
-        r.write(&s);
+        r.write(&s, NO_WORD);
         let copies = |r: &Recovery| fs::read_dir(&r.dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "xlsx")).count();
         assert_eq!(copies(&r), 1);
         s.execute("file.close", json!({"force": true})).unwrap();
@@ -228,7 +265,7 @@ mod tests {
     fn a_run_that_ended_abnormally_is_reopened_unsaved() {
         let root = root("crash");
         let mut r = Recovery::start(&root).unwrap();
-        r.write(&edited_session());
+        r.write(&edited_session(), NO_WORD);
         // The process "dies": its lock goes with it, its folder stays.
         drop(r);
         let mut app = SheetApp::new(monun_engine::Session::new(), crate::Services::default());
@@ -243,6 +280,36 @@ mod tests {
         assert!(Recovery::left_over(&root).0.is_empty(), "this run holds it");
         app.finish_recovery();
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(feature = "word")]
+    #[test]
+    fn a_word_document_a_crash_left_is_reopened_and_its_copy_kept_at_once() {
+        let root = root("word-crash");
+        // What a run that died left: a Word document's copy, in a folder no run holds.
+        let old = root.join("1-1");
+        fs::create_dir_all(&old).unwrap();
+        let doc = wordcraft_engine::blank_document(&wordcraft_engine::Region::default());
+        let bytes = wordcraft_engine::io::save_bytes("x.docx", &doc).unwrap();
+        fs::write(old.join("7.docx"), &bytes).unwrap();
+        fs::write(old.join("7.json"), json!({"title": "spec.docx"}).to_string()).unwrap();
+        let mut app = SheetApp::new(monun_engine::Session::new(), crate::Services::default());
+        app.start_recovery(&root);
+        let d = app.session.active().unwrap();
+        assert!(d.is_word() && d.is_dirty(), "a recovered document is unsaved");
+        assert_eq!(d.title, "spec (Recovered).docx");
+        // Its copy is in this run's folder before the old one goes, though its tab hasn't shown.
+        assert!(!old.exists());
+        let copies: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .flat_map(|dir| fs::read_dir(dir.path()).into_iter().flatten().flatten())
+            .filter(|f| f.path().extension().is_some_and(|e| e == "docx"))
+            .collect();
+        assert_eq!(copies.len(), 1);
+        assert_eq!(fs::read(copies[0].path()).unwrap(), bytes);
+        app.finish_recovery();
         let _ = fs::remove_dir_all(&root);
     }
 }
