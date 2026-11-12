@@ -353,7 +353,7 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Blank workbook", "空白のブック"),
     ("Recent", "最近使ったアイテム"),
     ("No recent workbooks yet.", "最近使ったブックはまだありません。"),
-    ("More workbooks", "その他のブック"),
+    ("More files", "その他のファイル"),
     ("Modified", "更新日時"),
     ("Not available", "利用できません"),
     ("Just now", "たった今"),

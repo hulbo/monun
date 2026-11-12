@@ -357,7 +357,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "Pasta de trabalho em branco",
         "Recent" => "Recentes",
         "No recent workbooks yet." => "Ainda não há pastas de trabalho recentes.",
-        "More workbooks" => "Mais pastas de trabalho",
+        "More files" => "Mais arquivos",
         "Modified" => "Modificado",
         "Not available" => "Indisponível",
         "Just now" => "Agora mesmo",

@@ -349,7 +349,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "Порожня книга",
         "Recent" => "Останні",
         "No recent workbooks yet." => "Нещодавніх книг поки немає.",
-        "More workbooks" => "Інші книги",
+        "More files" => "Інші файли",
         "Modified" => "Змінено",
         "Not available" => "Недоступно",
         "Just now" => "Щойно",

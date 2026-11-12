@@ -349,7 +349,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "Lege werkmap",
         "Recent" => "Recent",
         "No recent workbooks yet." => "Nog geen recente werkmappen.",
-        "More workbooks" => "Meer werkmappen",
+        "More files" => "Meer bestanden",
         "Modified" => "Gewijzigd",
         "Not available" => "Niet beschikbaar",
         "Just now" => "Zojuist",

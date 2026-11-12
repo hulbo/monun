@@ -355,7 +355,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "Prazna radna sveska",
         "Recent" => "Nedavno",
         "No recent workbooks yet." => "Još nema nedavnih radnih svezaka.",
-        "More workbooks" => "Više radnih svezaka",
+        "More files" => "Više datoteka",
         "Modified" => "Izmenjeno",
         "Not available" => "Nije dostupno",
         "Just now" => "Upravo sada",

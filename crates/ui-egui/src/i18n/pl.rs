@@ -345,7 +345,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "Pusty skoroszyt",
         "Recent" => "Ostatnie",
         "No recent workbooks yet." => "Nie masz jeszcze ostatnio używanych skoroszytów.",
-        "More workbooks" => "Więcej skoroszytów",
+        "More files" => "Więcej plików",
         "Modified" => "Zmodyfikowano",
         "Not available" => "Niedostępne",
         "Just now" => "Przed chwilą",

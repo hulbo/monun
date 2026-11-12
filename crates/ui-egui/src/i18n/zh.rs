@@ -361,7 +361,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "空白工作簿",
         "Recent" => "最近",
         "No recent workbooks yet." => "还没有最近使用的工作簿。",
-        "More workbooks" => "更多工作簿",
+        "More files" => "更多文件",
         "Modified" => "修改时间",
         "Not available" => "不可用",
         "Just now" => "刚刚",

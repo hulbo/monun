@@ -364,7 +364,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Blank workbook" => "새 통합 문서",
         "Recent" => "최근 항목",
         "No recent workbooks yet." => "최근 통합 문서가 아직 없습니다.",
-        "More workbooks" => "더 많은 통합 문서",
+        "More files" => "더 많은 파일",
         "Modified" => "수정한 날짜",
         "Not available" => "사용할 수 없음",
         "Just now" => "방금",

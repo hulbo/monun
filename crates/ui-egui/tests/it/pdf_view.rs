@@ -212,6 +212,8 @@ fn find_counts_the_matches_and_goes_to_each() {
     h.input_mut().events.push(Event::Text("ALPHA".into()));
     h.run_steps(2);
     wait(&mut h, "every page searched", |v| v["hits"] == 2 && v["texts"].as_array().is_some_and(|t| t.len() == 4));
+    // The last page's matches can arrive after the frame drew the find bar: it shows them next.
+    h.run_steps(2);
     assert!(h.query_by_label("-/2").is_some());
     key(&mut h, Key::Enter, Modifiers::NONE);
     assert_eq!(inspect(&h)["hit"].as_u64(), Some(0));

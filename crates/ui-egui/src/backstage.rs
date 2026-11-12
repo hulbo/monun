@@ -641,7 +641,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
     recent_list(app, ui, bs, out, 8);
     if app.ui.recent.len() > 8 {
         ui.add_space(6.0);
-        if ui.link(lang.tr("More workbooks")).clicked() {
+        if ui.link(lang.tr("More files")).clicked() {
             out.page = Some(Page::Open);
         }
     }
