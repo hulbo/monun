@@ -115,15 +115,24 @@ pub enum Align {
     Right,
 }
 
-/// The blocks of `text`.
+/// The blocks of `text`. Front matter (a YAML block between `---` lines at the very top, as
+/// documents written for static sites and by AI tools begin) is the document's data, not its
+/// text: it shows in the source, not in the view.
 pub fn parse(text: &str) -> Vec<Block> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     let mut b = Builder::new(text);
+    let mut front_matter = false;
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
-        b.event(event, range.start);
+        match event {
+            Event::Start(Tag::MetadataBlock(_)) => front_matter = true,
+            Event::End(TagEnd::MetadataBlock(_)) => front_matter = false,
+            _ if front_matter => {}
+            event => b.event(event, range.start),
+        }
     }
     b.finish()
 }

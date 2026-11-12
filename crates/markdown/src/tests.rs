@@ -117,3 +117,19 @@ fn filled_columns_reach_the_room() {
     assert!(fill_columns(&[], 100.0, 10.0).is_empty());
     assert_eq!(fill_columns(&[0.0, 0.0], 100.0, 10.0), vec![0.0, 0.0]);
 }
+
+#[test]
+fn front_matter_is_left_out_of_the_view() {
+    let text = "---\ntitle: 재이관 설계서\nversion: 2\n---\n\n# 개요\n\n본문";
+    let blocks = parse(text);
+    let [Block::Heading { level: 1, text: title, line: 5 }, Block::Paragraph { text: body, line: 7 }] = blocks.as_slice() else {
+        panic!("{blocks:?}");
+    };
+    assert_eq!(plain(title), "개요");
+    assert_eq!(plain(body), "본문");
+    // Only at the very top: further down, `---` is a rule (or a heading's underline) as before.
+    let blocks = parse("# 개요\n\n---\n\n본문\n");
+    assert!(blocks.iter().any(|b| matches!(b, Block::Rule { line: 2 })), "{blocks:?}");
+    let blocks = parse("본문\n---\n");
+    assert!(matches!(blocks.as_slice(), [Block::Heading { level: 2, .. }]), "{blocks:?}");
+}
