@@ -34,6 +34,7 @@ impl SheetApp {
             doc_view: Default::default(),
             pdf: Default::default(),
             word: Default::default(),
+            hwp: Default::default(),
             memos: Default::default(),
             dialog: None,
             backstage: None,
@@ -321,6 +322,8 @@ impl SheetApp {
             crate::pdf_view::tidy(self, &ctx);
             // Closed Word documents go; open ones show their unsaved changes on their tabs.
             crate::word_view::tidy(self, &ctx);
+            // So do 한글 documents; their prints and exports finish here.
+            crate::hwp_view::tidy(self, &ctx);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

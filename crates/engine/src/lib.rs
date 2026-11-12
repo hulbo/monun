@@ -404,6 +404,11 @@ impl DocState {
     pub fn is_word(&self) -> bool {
         self.text_kind() == Some(docs::TextKind::Word)
     }
+    /// A 한글 document (.hwp, .hwpx): the interface reads, edits, saves and prints it; the
+    /// engine's own commands leave it alone.
+    pub fn is_hwp(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Hwp)
+    }
 }
 
 /// Engine-side preferences.
@@ -690,14 +695,18 @@ impl Session {
             docs::TextKind::Sql => "Query",
             docs::TextKind::Plain => "Text",
             docs::TextKind::Pdf => "PDF",
-            docs::TextKind::Word => "Document",
+            docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();
         let prefix = if prefix.is_empty() { fallback } else { prefix };
         let ext = kind.extension();
         let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("{prefix}{n}.{ext}") && d.path.is_none())).unwrap_or(1);
         let title = format!("{prefix}{n}.{ext}");
-        let wb = if kind == docs::TextKind::Word { docs::word_workbook(&title) } else { docs::markdown_workbook(&title, b"") };
+        let wb = match kind {
+            docs::TextKind::Word => docs::word_workbook(&title),
+            docs::TextKind::Hwp => docs::hwp_workbook(&title),
+            _ => docs::markdown_workbook(&title, b""),
+        };
         self.add_document(DocState::new(wb, None, title, Trust::Local))
     }
 

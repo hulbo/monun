@@ -19,7 +19,7 @@ const CAPABILITIES: &str = r"Software\Monun\Capabilities";
 
 /// The file types 모눈 opens (`FileKind` in the engine), each with the type name Explorer shows
 /// for files whose default app is 모눈.
-const TYPES: [(&str, &str); 17] = [
+const TYPES: [(&str, &str); 19] = [
     (".xlsx", "모눈 워크시트"),
     (".xlsm", "모눈 매크로 사용 워크시트"),
     (".xltx", "모눈 서식 파일"),
@@ -37,6 +37,8 @@ const TYPES: [(&str, &str); 17] = [
     (".doc", "모눈 Word 97-2003 문서"),
     (".rtf", "모눈 서식 있는 텍스트 문서"),
     (".odt", "모눈 OpenDocument 텍스트"),
+    (".hwp", "모눈 한글 문서"),
+    (".hwpx", "모눈 한글 문서 (HWPX)"),
 ];
 
 /// One string value under `HKEY_CURRENT_USER`: its key, its name (empty for the key's default

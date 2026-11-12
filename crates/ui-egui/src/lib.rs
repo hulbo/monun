@@ -27,6 +27,11 @@ pub mod formula_bar;
 mod formula_locale;
 pub mod grid;
 pub mod groups;
+#[cfg(feature = "hwp")]
+pub mod hwp_view;
+#[cfg(not(feature = "hwp"))]
+#[path = "hwp_view_off.rs"]
+pub mod hwp_view;
 pub mod i18n;
 pub mod icons;
 pub mod keymap;
@@ -346,6 +351,8 @@ pub struct SheetApp {
     pub pdf: pdf_view::State,
     /// Word tabs: each open document's session, pages and input method.
     pub word: word_view::State,
+    /// 한글 tabs: each open document's thread, pages and input method.
+    pub hwp: hwp_view::State,
     /// The memo panel's memo being written and the one picked.
     pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,

@@ -57,23 +57,23 @@ impl Recovery {
         }
     }
 
-    /// Writes a copy of every workbook whose unsaved changes its copy doesn't hold yet. A Word
-    /// document's copy is the .docx its tab makes of it (`word`: its revision, then its bytes,
-    /// made only when the copy is behind).
-    pub fn write(&mut self, session: &monun_engine::Session, word: WordCopies<'_>) {
+    /// Writes a copy of every workbook whose unsaved changes its copy doesn't hold yet. A Word or
+    /// 한글 document's copy is the file its tab makes of it (`held`: its revision, then its bytes,
+    /// made only when the copy is behind): a .docx, or a .hwp or .hwpx as the tab's own.
+    pub fn write(&mut self, session: &monun_engine::Session, held: HeldCopies<'_>) {
         self.tidy(session);
         for d in session.documents().iter().filter(|d| d.is_dirty()) {
-            let (ext, revision) = if d.is_word() {
-                let Some(revision) = (word.0)(d.uid) else { continue };
-                ("docx", revision)
+            let (ext, revision) = if let Some(ext) = held_ext(d) {
+                let Some(revision) = (held.0)(d.uid) else { continue };
+                (ext, revision)
             } else {
                 (if d.wb.vba_project.is_some() { "xlsm" } else { "xlsx" }, d.revision)
             };
             if self.written.get(&d.uid) == Some(&revision) {
                 continue;
             }
-            let bytes = if d.is_word() {
-                match (word.1)(d.uid) {
+            let bytes = if held_ext(d).is_some() {
+                match (held.1)(d.uid) {
                     Some(bytes) => bytes,
                     None => continue,
                 }
@@ -95,7 +95,7 @@ impl Recovery {
     }
 
     fn remove(&self, uid: u64) {
-        for ext in ["xlsx", "xlsm", "docx", "json", "tmp"] {
+        for ext in ["xlsx", "xlsm", "docx", "hwp", "hwpx", "json", "tmp"] {
             let _ = fs::remove_file(self.dir.join(format!("{uid}.{ext}")));
         }
     }
@@ -123,6 +123,8 @@ impl Recovery {
                     Some("xlsx") => "xlsx",
                     Some("xlsm") => "xlsm",
                     Some("docx") => "docx",
+                    Some("hwp") => "hwp",
+                    Some("hwpx") => "hwpx",
                     _ => continue,
                 };
                 let Ok(bytes) = fs::read(&copy) else { continue };
@@ -136,8 +138,17 @@ impl Recovery {
     }
 }
 
-/// What AutoRecover asks a Word document's tab: its document's revision, and its .docx bytes.
-pub type WordCopies<'a> = (&'a dyn Fn(u64) -> Option<u64>, &'a dyn Fn(u64) -> Option<Vec<u8>>);
+/// What AutoRecover asks a Word or 한글 document's tab: its document's revision, and its file's bytes.
+pub type HeldCopies<'a> = (&'a dyn Fn(u64) -> Option<u64>, &'a dyn Fn(u64) -> Option<Vec<u8>>);
+
+/// The extension of the copy of a document its tab holds (Word, 한글): `None` for any other.
+fn held_ext(d: &monun_engine::DocState) -> Option<&'static str> {
+    if d.is_word() {
+        return Some("docx");
+    }
+    let hwp = Path::new(&d.display_title()).extension().is_some_and(|e| e.eq_ignore_ascii_case("hwp"));
+    d.is_hwp().then_some(if hwp { "hwp" } else { "hwpx" })
+}
 
 impl SheetApp {
     /// Starts AutoRecover with its folders in `root` and reopens, as unsaved copies, the
@@ -154,17 +165,20 @@ impl SheetApp {
             if self.session.run("file.open", json!({"name": name, "base64": base64})).is_err() {
                 continue;
             }
-            // A Word document's tab reads its copy from these bytes.
-            if book.ext == "docx"
-                && let Some(uid) = self.session.active().map(|d| d.uid)
-            {
-                crate::word_view::adopt(self, uid, book.bytes.clone());
+            // A Word or 한글 document's tab reads its copy from these bytes.
+            if let Some(uid) = self.session.active().map(|d| d.uid) {
+                match book.ext {
+                    "docx" => crate::word_view::adopt(self, uid, book.bytes.clone()),
+                    "hwp" | "hwpx" => crate::hwp_view::adopt(self, uid, book.bytes.clone()),
+                    _ => {}
+                }
             }
             if let Some(d) = self.session.active_mut() {
                 d.title = lang.tr("{title} (Recovered)").replace("{title}", &stem);
-                // A Word document keeps its type, which Save As goes by.
-                if book.ext == "docx" {
-                    d.title.push_str(".docx");
+                // A Word or 한글 document keeps its type, which Save As goes by.
+                if matches!(book.ext, "docx" | "hwp" | "hwpx") {
+                    d.title.push('.');
+                    d.title.push_str(book.ext);
                 }
                 // Unsaved, so closing it asks first and AutoRecover keeps a copy.
                 d.saved = std::sync::Arc::new((*d.wb).clone());
@@ -173,14 +187,13 @@ impl SheetApp {
         }
         self.after_engine();
         // The old folders go once this run holds copies of what they had.
-        if let Some(r) = self.recovery.as_mut() {
-            r.write(
-                &self.session,
-                (&|uid| crate::word_view::recovery_rev(&self.word, uid), &|uid| crate::word_view::recovery_bytes(&self.word, uid)),
-            );
+        // (Taken out while it writes: the tabs it asks are in `self` too.)
+        if let Some(mut r) = self.recovery.take() {
+            r.write(&self.session, (&|uid| self.held_rev(uid), &|uid| self.held_bytes(uid)));
             for dir in dirs {
                 let _ = fs::remove_dir_all(dir);
             }
+            self.recovery = Some(r);
         }
         if reopened > 0 {
             let text = lang
@@ -201,7 +214,20 @@ impl SheetApp {
             return;
         }
         r.last = now;
-        r.write(&self.session, (&|uid| crate::word_view::recovery_rev(&self.word, uid), &|uid| crate::word_view::recovery_bytes(&self.word, uid)));
+        if let Some(mut r) = self.recovery.take() {
+            r.write(&self.session, (&|uid| self.held_rev(uid), &|uid| self.held_bytes(uid)));
+            self.recovery = Some(r);
+        }
+    }
+
+    /// The revision of the Word or 한글 document tab `uid` holds.
+    fn held_rev(&self, uid: u64) -> Option<u64> {
+        crate::word_view::recovery_rev(&self.word, uid).or_else(|| crate::hwp_view::recovery_rev(&self.hwp, uid))
+    }
+
+    /// The file of the Word or 한글 document tab `uid` holds, for its AutoRecover copy.
+    fn held_bytes(&self, uid: u64) -> Option<Vec<u8>> {
+        crate::word_view::recovery_bytes(&self.word, uid).or_else(|| crate::hwp_view::recovery_bytes(&self.hwp, uid))
     }
 
     /// Ends AutoRecover on a clean exit, removing this run's copies.
@@ -215,7 +241,7 @@ impl SheetApp {
 #[cfg(test)]
 mod tests {
     /// No Word documents to copy.
-    const NO_WORD: super::WordCopies<'static> = (&|_| None, &|_| None);
+    const NO_WORD: super::HeldCopies<'static> = (&|_| None, &|_| None);
 
     use super::*;
 
@@ -306,6 +332,38 @@ mod tests {
             .flatten()
             .flat_map(|dir| fs::read_dir(dir.path()).into_iter().flatten().flatten())
             .filter(|f| f.path().extension().is_some_and(|e| e == "docx"))
+            .collect();
+        assert_eq!(copies.len(), 1);
+        assert_eq!(fs::read(copies[0].path()).unwrap(), bytes);
+        app.finish_recovery();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(feature = "hwp")]
+    #[test]
+    fn a_hangul_document_a_crash_left_is_reopened_as_its_own_type() {
+        let root = root("hwp-crash");
+        // What a run that died left: a 한글 document's copy, in a folder no run holds.
+        let old = root.join("1-1");
+        fs::create_dir_all(&old).unwrap();
+        let mut core = rhwp::DocumentCore::new_empty();
+        core.create_blank_document_native().unwrap();
+        core.insert_text_native(0, 0, 0, "kept").unwrap();
+        let bytes = core.export_hwpx_native().unwrap();
+        fs::write(old.join("9.hwpx"), &bytes).unwrap();
+        fs::write(old.join("9.json"), json!({"title": "plan.hwpx"}).to_string()).unwrap();
+        let mut app = SheetApp::new(monun_engine::Session::new(), crate::Services::default());
+        app.start_recovery(&root);
+        let d = app.session.active().unwrap();
+        assert!(d.is_hwp() && d.is_dirty(), "a recovered document is unsaved");
+        assert_eq!(d.title, "plan (Recovered).hwpx");
+        // Its copy is in this run's folder before the old one goes, though its tab hasn't shown.
+        assert!(!old.exists());
+        let copies: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .flat_map(|dir| fs::read_dir(dir.path()).into_iter().flatten().flatten())
+            .filter(|f| f.path().extension().is_some_and(|e| e == "hwpx"))
             .collect();
         assert_eq!(copies.len(), 1);
         assert_eq!(fs::read(copies[0].path()).unwrap(), bytes);

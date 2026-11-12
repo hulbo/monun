@@ -323,10 +323,11 @@ fn dim(ui: &mut Ui, text: &str) {
 }
 
 /// What File › New makes: a workbook, or a new file of each kind a document tab edits.
-const NEW_KINDS: [(Option<TextKind>, &str); 5] = [
+const NEW_KINDS: [(Option<TextKind>, &str); 6] = [
     (None, "Excel Workbook"),
     (Some(TextKind::Markdown), "Markdown Document"),
     (Some(TextKind::Word), "Word Document"),
+    (Some(TextKind::Hwp), "Hangul Document"),
     (Some(TextKind::Sql), "SQL File"),
     (Some(TextKind::Plain), "Text File"),
 ];
@@ -393,6 +394,19 @@ fn page_sketch(p: &egui::Painter, inner: Rect, kind: TextKind, t: &Tokens) {
                 bar(row, 9.0, w, false, ink);
             }
         }
+        TextKind::Hwp => {
+            // A title in a box over paragraphs, as a public document opens.
+            p.rect_stroke(
+                Rect::from_min_size(pos2(inner.left(), inner.top()), vec2(full, 14.0)),
+                0.0,
+                Stroke::new(1.0, t.cat(theme::Cat::Teal)),
+                StrokeKind::Inside,
+            );
+            bar(0, full * 0.2, 0.6, true, t.cat(theme::Cat::Teal));
+            for (row, w) in [(3, 1.0), (4, 0.95), (5, 0.7), (7, 1.0), (8, 0.5)] {
+                bar(row, 0.0, w, false, ink);
+            }
+        }
         TextKind::Word => {
             bar(0, full * 0.25, 0.5, true, t.cat(theme::Cat::Blue));
             for (row, w) in [(2, 1.0), (3, 1.0), (4, 0.6), (6, 1.0), (7, 1.0), (8, 0.45)] {
@@ -424,7 +438,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(16.0, 14.0);
         for (kind, label) in NEW_KINDS {
-            if kind == Some(TextKind::Word) && !cfg!(feature = "word") {
+            if kind == Some(TextKind::Word) && !cfg!(feature = "word") || kind == Some(TextKind::Hwp) && !cfg!(feature = "hwp") {
                 continue;
             }
             if tile(ui, lang.tr(label), kind).clicked() {
@@ -757,16 +771,24 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     let lang = app.ui.language;
     dim(ui, lang.tr("Save the workbook under another name or in another folder."));
     ui.add_space(14.0);
-    // A Word document saves as itself (.docx) or as a PDF.
-    let word = app.session.active().is_some_and(monun_engine::DocState::is_word);
-    if word && !matches!(bs.save_format, "xlsx" | "pdf") {
+    // A Word document saves as itself (.docx) or as a PDF; a 한글 document as itself (.hwpx or
+    // .hwp, chosen in the Save dialog) or as a PDF.
+    let active = app.session.active();
+    let (word, hwp) = (active.is_some_and(monun_engine::DocState::is_word), active.is_some_and(monun_engine::DocState::is_hwp));
+    let held = word || hwp;
+    // (A 한글 document is printed rather than made a PDF.)
+    if held && !matches!(bs.save_format, "xlsx" | "pdf") || hwp && bs.save_format == "pdf" {
         bs.save_format = "xlsx";
     }
     let fmt = bs.save_format;
     let types: Vec<(&'static str, &'static str)> = SAVE_TYPES
         .into_iter()
-        .filter(|(ext, _)| !word || matches!(*ext, "xlsx" | "pdf"))
-        .map(|(ext, label)| if word && ext == "xlsx" { (ext, "Word Document (*.docx)") } else { (ext, label) })
+        .filter(|(ext, _)| !held || *ext == "xlsx" || word && *ext == "pdf")
+        .map(|(ext, label)| match ext {
+            "xlsx" if word => (ext, "Word Document (*.docx)"),
+            "xlsx" if hwp => (ext, "Hangul Document (*.hwpx, *.hwp)"),
+            _ => (ext, label),
+        })
         .collect();
     let current = types.iter().find(|(ext, _)| *ext == fmt).map_or("Excel Workbook (*.xlsx)", |(_, label)| *label);
     ui.horizontal(|ui| {
@@ -784,7 +806,7 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
             .response
             .labelled_by(label.id);
     });
-    if matches!(fmt, "html" | "pdf") && !word {
+    if matches!(fmt, "html" | "pdf") && !held {
         ui.add_space(10.0);
         sheets_choice(app, ui, bs);
     }
@@ -810,6 +832,11 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
 
 fn export(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let lang = app.ui.language;
+    // A 한글 document is printed rather than exported: a PDF printer makes its PDF.
+    if app.session.active().is_some_and(monun_engine::DocState::is_hwp) {
+        dim(ui, lang.tr("A Hangul document isn't exported as a PDF in Monun. Print it (Ctrl+P) and choose Microsoft Print to PDF to make one."));
+        return;
+    }
     if sheets_choice(app, ui, bs) {
         ui.add_space(12.0);
     }

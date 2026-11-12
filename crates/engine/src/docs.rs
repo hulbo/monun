@@ -58,6 +58,9 @@ pub enum TextKind {
     Pdf,
     /// A Word document, read, edited and saved by the interface: its document tab holds no text.
     Word,
+    /// A 한글 document (.hwp, .hwpx), read, edited and saved by the interface: its document tab
+    /// holds no text.
+    Hwp,
 }
 
 impl TextKind {
@@ -70,6 +73,7 @@ impl TextKind {
             Some("sql") => TextKind::Sql,
             Some("pdf") => TextKind::Pdf,
             Some("docx" | "dotx" | "doc" | "rtf" | "odt") => TextKind::Word,
+            Some("hwp" | "hwpx") => TextKind::Hwp,
             _ => TextKind::Plain,
         }
     }
@@ -82,6 +86,7 @@ impl TextKind {
             TextKind::Plain => "txt",
             TextKind::Pdf => "pdf",
             TextKind::Word => "docx",
+            TextKind::Hwp => "hwpx",
         }
     }
 
@@ -92,6 +97,7 @@ impl TextKind {
             "sql" => Some(TextKind::Sql),
             "text" | "txt" | "plain" => Some(TextKind::Plain),
             "word" | "docx" => Some(TextKind::Word),
+            "hwp" | "hwpx" | "hangul" => Some(TextKind::Hwp),
             _ => None,
         }
     }
@@ -125,6 +131,16 @@ pub const PDF_READ_ONLY: &str = "A PDF file can only be read in Monun.";
 /// Refused for changes to a Word document's tab and for saving, exporting or printing it through
 /// the engine: its tab does those.
 pub const WORD_IN_TAB: &str = "A Word document is edited, saved, exported and printed in its tab.";
+
+/// Refused for changes to a 한글 document's tab and for saving, exporting or printing it through
+/// the engine: its tab does those.
+pub const HWP_IN_TAB: &str = "A Hangul document is edited, saved and printed in its tab.";
+
+/// A workbook of one document tab standing for a 한글 document, named after it, as
+/// [`word_workbook`] is for a Word document.
+pub fn hwp_workbook(name: &str) -> Workbook {
+    word_workbook(name)
+}
 
 /// A workbook of one document tab standing for a Word document, named after it: no text, shown read
 /// (View) and as wide as the window until its tab is set otherwise. The interface reads, draws and

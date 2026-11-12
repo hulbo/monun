@@ -7,7 +7,7 @@ use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\"|\"word\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql`, plain text `Text1.txt` or a Word document `Document1.docx`, or `{prefix}1.md` and so on)", always, new_workbook),
+        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\"|\"word\"|\"hwp\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql`, plain text `Text1.txt`, a Word document `Document1.docx` or a 한글 document `Document1.hwpx`, or `{prefix}1.md` and so on)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", writable, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", writable, save_as),
@@ -71,9 +71,10 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
             s.set_active(i);
             return Ok(json!({"index": i, "alreadyOpen": true}));
         }
-        // A PDF or a Word document is only recognised here: the interface reads the file itself.
+        // A PDF, a Word or a 한글 document is only recognised here: the interface reads the file
+        // itself.
         let bytes = match crate::io::FileKind::from_path(path) {
-            Some(crate::io::FileKind::Pdf | crate::io::FileKind::Word) => crate::io::read_head(path, 1024)?,
+            Some(crate::io::FileKind::Pdf | crate::io::FileKind::Word | crate::io::FileKind::Hwp) => crate::io::read_head(path, 1024)?,
             _ => crate::io::read_file(path)?,
         };
         (path.to_string(), bytes)
@@ -85,7 +86,9 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // saved as .docx, so like an import they have no save target of their own.
     let word = crate::io::FileKind::from_path(&name) == Some(crate::io::FileKind::Word);
     let word_import = word && !std::path::Path::new(&name).extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"));
-    let encrypted = !word && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
+    // A 한글 document is read by the interface too, as it is.
+    let hwp = crate::io::FileKind::from_path(&name) == Some(crate::io::FileKind::Hwp);
+    let encrypted = !word && !hwp && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
     let (mut wb, warnings) = crate::io::open_bytes_with(&name, &bytes, str_param(p, "password"), bool_param(p, "csvAsText").unwrap_or(false))?;
     wb.source_dir = str_param(p, "path").and_then(crate::io::source_dir);
     // What `CELL("filename")` reports (#1489). A workbook opened from bytes knows its name but
@@ -96,6 +99,7 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         None => Some(std::path::PathBuf::from(&name)),
     };
     let imported = !word
+        && !hwp
         && (matches!(crate::io::FileKind::from_path(&name), Some(crate::io::FileKind::Ods | crate::io::FileKind::Xlsb | crate::io::FileKind::Xls))
             || matches!(monun_xlsx::sniff(&bytes), monun_xlsx::Format::Ods | monun_xlsx::Format::Xlsb | monun_xlsx::Format::Xls));
     let title = if word_import {
@@ -202,6 +206,9 @@ fn reload(s: &mut Session, p: &Json) -> Result<Json> {
     }
     if d.is_word() {
         return Err(crate::EngineError::Other(crate::docs::WORD_IN_TAB.into()));
+    }
+    if d.is_hwp() {
+        return Err(crate::EngineError::Other(crate::docs::HWP_IN_TAB.into()));
     }
     if !d.is_text_file() {
         return Err(crate::EngineError::Other(RELOAD_TEXT_ONLY.into()));

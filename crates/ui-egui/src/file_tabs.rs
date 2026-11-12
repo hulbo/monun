@@ -400,7 +400,8 @@ pub(crate) fn path_icon(path: &str) -> Icon {
             monun_engine::io::FileKind::Markdown
             | monun_engine::io::FileKind::Text
             | monun_engine::io::FileKind::Pdf
-            | monun_engine::io::FileKind::Word,
+            | monun_engine::io::FileKind::Word
+            | monun_engine::io::FileKind::Hwp,
         ) => Some(TextKind::of_name(path)),
         _ => None,
     };
@@ -414,6 +415,7 @@ pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Markdown | TextKind::Plain) => Icon::Document,
         Some(TextKind::Pdf) => Icon::Pdf,
         Some(TextKind::Word) => Icon::Word,
+        Some(TextKind::Hwp) => Icon::Hwp,
     }
 }
 
@@ -439,6 +441,9 @@ fn new_file_menu(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         if cfg!(feature = "word") && ui.button(lang.tr("New Word Document")).clicked() {
             new_text(app, TextKind::Word);
         }
+        if cfg!(feature = "hwp") && ui.button(lang.tr("New Hangul Document")).clicked() {
+            new_text(app, TextKind::Hwp);
+        }
         ui.separator();
         if ui.button(lang.tr("Open…")).clicked() {
             app.run_or_alert("file.open", json!({}));
@@ -461,6 +466,7 @@ pub(crate) fn new_text(app: &mut SheetApp, kind: TextKind) {
     let (prefix, name) = match kind {
         TextKind::Sql => ("Query", "sql"),
         TextKind::Word => ("Document", "word"),
+        TextKind::Hwp => ("Document", "hwp"),
         _ => ("Text", "text"),
     };
     let prefix = app.ui.language.tr(prefix).to_string();
@@ -597,6 +603,9 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     if cfg!(feature = "word") && start_button(ui, Icon::Word, lang.tr("New Word Document"), &t).clicked() {
                         new_text(app, TextKind::Word);
+                    }
+                    if cfg!(feature = "hwp") && start_button(ui, Icon::Hwp, lang.tr("New Hangul Document"), &t).clicked() {
+                        new_text(app, TextKind::Hwp);
                     }
                     if start_button(ui, Icon::Folder, lang.tr("Open…"), &t).clicked() {
                         app.run_or_alert("file.open", json!({}));

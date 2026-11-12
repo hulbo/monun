@@ -53,6 +53,10 @@ impl SheetApp {
         if let Some(r) = crate::word_view::command(self, id, &params) {
             return r;
         }
+        // So does a 한글 tab, on its document's thread.
+        if let Some(r) = crate::hwp_view::command(self, id, &params) {
+            return r;
+        }
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
         }
@@ -127,7 +131,10 @@ impl SheetApp {
         let line = crate::doc_view::top_line(self, (uid, sheet)).unwrap_or(kept);
         let mode = doc.mode.map(|m| m.name().to_string()).unwrap_or_default();
         let kept_spread = self.ui.doc_views.iter().find(|v| v.path == path).is_some_and(|v| v.spread);
-        let spread = crate::pdf_view::spread(self, uid).or_else(|| crate::word_view::spread(self, uid)).unwrap_or(kept_spread);
+        let spread = crate::pdf_view::spread(self, uid)
+            .or_else(|| crate::word_view::spread(self, uid))
+            .or_else(|| crate::hwp_view::spread(self, uid))
+            .unwrap_or(kept_spread);
         let memory = crate::DocViewMemory { path, mode, fit_width: doc.fit_width, zoom: sh.zoom, line, spread };
         self.ui.doc_views.retain(|v| v.path != memory.path);
         self.ui.doc_views.insert(0, memory);

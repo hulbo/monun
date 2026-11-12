@@ -199,6 +199,37 @@ fn a_word_document_opens_as_a_tab_its_interface_fills() {
 }
 
 #[test]
+fn a_hangul_document_opens_as_a_tab_its_interface_fills() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("hwp");
+    let mut s = session();
+    // A .hwp is a compound file and a .hwpx a ZIP package, as old and new workbooks are: both
+    // still open as 한글 documents, each keeping its own file.
+    for (name, bytes) in [("plan.hwp", b"\xD0\xCF\x11\xE0 not read".to_vec()), ("plan.hwpx", b"PK\x03\x04 not read".to_vec())] {
+        let path = dir.join(name);
+        std::fs::write(&path, &bytes).unwrap();
+        s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+        let d = s.active().unwrap();
+        assert_eq!((d.text_kind(), d.is_hwp(), d.is_dirty()), (Some(TextKind::Hwp), true, false), "{name}");
+        assert_eq!((d.display_title(), d.path.as_deref()), (name.to_string(), path.to_str()));
+        // The engine leaves it to its tab: no edit, save, export or print goes through.
+        for (cmd, params) in [
+            ("doc.setText", json!({"text": "x"})),
+            ("file.save", json!({})),
+            ("file.exportPdf", json!({"path": dir.join("p.pdf").to_str().unwrap()})),
+        ] {
+            let e = s.execute(cmd, params).unwrap_err().to_string();
+            assert!(e.contains(monun_engine::docs::HWP_IN_TAB), "{name} {cmd}: {e}");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    // A new one is a .hwpx.
+    s.execute("file.new", json!({"document": true, "kind": "hwp"})).unwrap();
+    assert_eq!((s.active().unwrap().display_title(), s.active().unwrap().is_hwp()), ("Document1.hwpx".to_string(), true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
     use monun_engine::docs::TextKind;
     let dir = temp_dir("pdf");

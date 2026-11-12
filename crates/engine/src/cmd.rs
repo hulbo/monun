@@ -103,6 +103,7 @@ pub fn writable(s: &Session) -> std::result::Result<(), String> {
     match s.active() {
         Some(d) if d.is_pdf() => Err(crate::docs::PDF_READ_ONLY.into()),
         Some(d) if d.is_word() => Err(crate::docs::WORD_IN_TAB.into()),
+        Some(d) if d.is_hwp() => Err(crate::docs::HWP_IN_TAB.into()),
         _ => Ok(()),
     }
 }
@@ -390,6 +391,9 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     }
     if d.is_word() {
         return Err(EngineError::Other(crate::docs::WORD_IN_TAB.into()));
+    }
+    if d.is_hwp() {
+        return Err(EngineError::Other(crate::docs::HWP_IN_TAB.into()));
     }
     // `MONUN_PROFILE` timing, never on wasm where the clock traps. `elapsed` on the epoch
     // reads the wall clock without the (disallowed) `now`.

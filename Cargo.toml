@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/monun", "apps/monun-cli", "xtask"]
 
 [workspace.package]
-version = "0.13.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -68,6 +68,15 @@ wordcraft-render = { git = "https://github.com/storytold/wordcraft.git", rev = "
 wordcraft-pdf = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
 wordcraft-doc = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
 wordcraft-fonts = { git = "https://github.com/storytold/wordcraft.git", rev = "07f977372d3767e4abf7f3b0cc77c351289013f2" }
+
+# 한글 files (desktop): rhwp's engine (.hwp/.hwpx read and write, layout, editing, page SVG and
+# PDF), from crates.io at one reviewed version. Its own web editor isn't used: the tab is drawn by
+# `crates/ui-egui/src/hwp_view`. Without its default features: no PDF import, no JS start hook;
+# `wasm-api` is its facade (`wasm_api::HwpDocument`), which holds some caret and selection
+# queries the core doesn't make public.
+rhwp = { version = "=0.9.0", default-features = false, features = ["wasm-api"] }
+# Joins the print PDF a 한글 tab makes in parts on several threads (the PdfCraft-patched lopdf).
+lopdf = { version = "0.45", default-features = false }
 
 # ui
 egui = "0.37"

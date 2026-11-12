@@ -33,6 +33,10 @@ pub enum FileKind {
     /// tab the interface reads, edits, saves and exports itself ([`crate::docs::word_workbook`]);
     /// the engine never reads or writes its contents.
     Word,
+    /// A 한글 (Hangul word processor) document, .hwp or .hwpx: opens as a document tab the
+    /// interface reads, edits, saves and prints itself ([`crate::docs::hwp_workbook`]); the engine
+    /// never reads or writes its contents.
+    Hwp,
 }
 
 impl FileKind {
@@ -51,6 +55,7 @@ impl FileKind {
             "md" | "markdown" => FileKind::Markdown,
             "pdf" => FileKind::Pdf,
             "docx" | "dotx" | "doc" | "rtf" | "odt" => FileKind::Word,
+            "hwp" | "hwpx" => FileKind::Hwp,
             _ => return None,
         })
     }
@@ -88,6 +93,11 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_
     // password. The interface reads it.
     if FileKind::from_path(name) == Some(FileKind::Word) {
         return Ok((crate::docs::word_workbook(name), vec![]));
+    }
+    // So does a 한글 document: a .hwp is a compound file (an old binary workbook's otherwise) and
+    // a .hwpx a ZIP package.
+    if FileKind::from_path(name) == Some(FileKind::Hwp) {
+        return Ok((crate::docs::hwp_workbook(name), vec![]));
     }
     if monun_xlsx::sniff(bytes) != monun_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
@@ -344,6 +354,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         // here; a PDF file opened to read is never written.
         FileKind::Pdf => Err(EngineError::Other("Make a PDF with File › Export › Export as PDF.".into())),
         FileKind::Word => Err(EngineError::Other(crate::docs::WORD_IN_TAB.into())),
+        FileKind::Hwp => Err(EngineError::Other(crate::docs::HWP_IN_TAB.into())),
     }
 }
 

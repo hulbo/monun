@@ -2131,6 +2131,25 @@ const MORE: &[(&str, &str)] = &[
     ("Replaced {count}.", "{count}개를 바꿨습니다."),
     ("Headings (Heading 1, 2, …) show here.", "제목 스타일(제목 1, 2, …) 문단이 여기에 나옵니다."),
     ("New Word Document", "새 Word 문서"),
+    // 한글 documents (hwp_view).
+    ("New Hangul Document", "새 한글 문서"),
+    ("Hangul Document", "한글 문서"),
+    ("Hangul Document (*.hwpx, *.hwp)", "한글 문서 (*.hwpx, *.hwp)"),
+    ("This version of Monun can't show Hangul documents.", "이 버전의 모눈에서는 한글 문서를 볼 수 없습니다."),
+    ("A Hangul document is edited, saved and printed in its tab.", "한글 문서는 문서 탭에서 편집하고 저장·인쇄합니다."),
+    ("A Hangul document is saved as .hwpx or .hwp.", "한글 문서는 .hwpx나 .hwp로 저장합니다."),
+    ("Monun stopped reading this document. Close it and open it again.", "모눈이 이 문서를 더 읽지 못했습니다. 닫았다가 다시 여세요."),
+    (
+        "Saving would leave out parts of this document Monun can't keep, so its file was left as it was. Save a copy under another name (File › Save As) to keep your changes:",
+        "저장하면 모눈이 보존하지 못하는 내용이 빠지므로 원래 파일은 그대로 두었습니다. 고친 내용은 다른 이름으로 저장(파일 › 다른 이름으로 저장)하세요:",
+    ),
+    ("A print is already being prepared. Wait for it to finish.", "인쇄를 준비하는 중입니다. 끝난 뒤에 다시 하세요."),
+    (
+        "A Hangul document isn't exported as a PDF in Monun. Print it (Ctrl+P) and choose Microsoft Print to PDF to make one.",
+        "모눈에서는 한글 문서를 PDF로 내보내지 않습니다. 인쇄(Ctrl+P)에서 Microsoft Print to PDF를 고르면 PDF가 만들어집니다.",
+    ),
+    ("Preparing to print", "인쇄 준비 중"),
+    ("Outline headings show here.", "개요 문단이 여기에 나옵니다."),
     // File › New: what each tile makes.
     ("Excel Workbook", "Excel 통합 문서"),
     ("Markdown Document", "Markdown 문서"),

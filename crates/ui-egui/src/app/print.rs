@@ -50,9 +50,19 @@ impl SheetApp {
         if self.services.print_native.is_some() && !self.printing.ready() {
             return Err("Select an available printer in File > Print before submitting.".into());
         }
+        // A 한글 tab makes its print PDF in the background, and sends it on when it is ready
+        // ([`Self::submit_pdf`]).
+        if let Some(r) = crate::hwp_view::print(self) {
+            return r;
+        }
         let pdf = self.run("file.print", params)?;
         let encoded = pdf.get("base64").and_then(Json::as_str).ok_or("The print command did not produce a PDF.")?;
         let bytes = monun_engine::io::base64_decode(encoded).ok_or("Couldn't decode the generated PDF.")?;
+        self.submit_pdf(bytes)
+    }
+
+    /// Hands a print-ready PDF to the desktop worker or the browser.
+    pub(crate) fn submit_pdf(&mut self, bytes: Vec<u8>) -> Result<Json, String> {
         let len = bytes.len();
         if let Some(submit) = &self.services.print_native {
             self.printing.begin(submit(bytes, self.printing.settings.clone())).map_err(|_| "A print job is already being submitted.".to_owned())?;
