@@ -23,6 +23,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are
   rendered from it (see `assets/app-icon/README.md`).
+- PDF tabs: `crates/ui-egui/src/pdf_view/` (feature `pdf`, desktop only), drawn by `pdfcraft-render`
+  from a pinned PdfCraft commit; its patched hayro and vello crates are patched in from the same
+  commit in the root `Cargo.toml`. Bump all of them together. The engine knows a PDF only as an
+  empty read-only document tab (`TextKind::Pdf`, `docs::pdf_workbook`).
 
 ## Rules
 - Never crash: no `unwrap()`, `expect()`, `panic!`, indexing on input-derived data or `unsafe` in
@@ -37,6 +41,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   `interaction::column_autocomplete_folds_case_beyond_ascii`,
   `interaction::language_switch_renders_the_ribbon_and_persists`) need an embedded font set this
   machine lacks, and `monun-engine`'s unit tests use a unix-only API and don't build on Windows.
+- The antivirus on this machine blocks serde's build script as the dev profile builds it
+  ("access denied" running `build-script-build`). Release builds are unaffected. In a worktree,
+  add `debug-assertions = false` for `[profile.dev.package.serde]` and `serde_core` to
+  `.cargo/config.toml` locally, with `git update-index --skip-worktree` so it isn't committed.
 
 ## Running and looking at the app
 - `cargo build --release -p monun -p monun-cli`; the desktop shortcut runs

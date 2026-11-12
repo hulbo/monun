@@ -160,6 +160,8 @@ pub enum Icon {
     Document,
     /// New document: the document page with a plus at its corner.
     NewDocument,
+    /// A PDF file: a page with a red band across its lower half.
+    Pdf,
     /// A document's text and the document side by side: a page split down the middle, lines of
     /// text on the left and a heading over lines on the right.
     SideBySide,
@@ -755,6 +757,11 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
                 g.line(&[(12.0, 9.5), (12.0, 15.5)], c, 1.3);
                 g.line(&[(9.0, 12.5), (15.0, 12.5)], c, 1.3);
             }
+        }
+        Icon::Pdf => {
+            g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);
+            g.stroke(&[(5.5, 7.0), (10.5, 7.0)], c);
+            g.rect(1.5, 9.0, 10.0, 4.0, Some(red), None);
         }
         Icon::NewFile => {
             g.line(&[(9.5, 1.5), (3.5, 1.5), (3.5, 14.5), (12.5, 14.5), (12.5, 4.5), (9.5, 1.5), (9.5, 4.5), (12.5, 4.5)], c, 1.1);

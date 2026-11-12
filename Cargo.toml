@@ -22,7 +22,8 @@ monun-xlsx = { path = "crates/xlsx" }
 monun-chart = { path = "crates/chart" }
 monun-markdown = { path = "crates/markdown" }
 monun-engine = { path = "crates/engine" }
-monun-ui-egui = { path = "crates/ui-egui" }
+# Features chosen by each app: the desktop turns on `diagrams` and `pdf`, the web build neither.
+monun-ui-egui = { path = "crates/ui-egui", default-features = false }
 monun-mcp = { path = "crates/mcp" }
 monun-pdf = { path = "crates/pdf" }
 # foundation
@@ -50,6 +51,13 @@ sha1 = { version = "0.11", default-features = false }
 # Korean code page 949 CSV and text files (read and written back as they came), pure Rust (wasm-safe).
 encoding_rs = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# PDF viewing (desktop): PdfCraft's renderer (page rasters on a pool of threads, the text layer
+# for find and copy, bookmarks), from one reviewed PdfCraft commit. It is built on PdfCraft's
+# patched hayro stack, patched in below: crates.io hayro has no cancellation or render-into.
+pdfcraft-render = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+# The parser alone, to lay out a PDF's pages before the first raster (the patched one, below).
+hayro = "0.7.1"
 
 # ui
 egui = "0.37"
@@ -111,3 +119,15 @@ eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc79968157
 egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
+
+# PdfCraft's patched hayro and vello stack (see pdfcraft-render above): its own `[patch]` doesn't
+# reach a workspace that depends on it, so the same crates come from the same commit here.
+hayro = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+hayro-interpret = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+hayro-syntax = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+hayro-cmap = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+hayro-postscript = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+lopdf = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+vello_common = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }
+vello_cpu = { git = "https://github.com/storytold/pdfcraft.git", rev = "8c99ec4e084a02af89ab9b20f5502be15ca04a47" }

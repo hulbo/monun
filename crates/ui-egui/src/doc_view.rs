@@ -65,10 +65,10 @@ pub struct State {
     fields: Option<((u64, u64, usize), Arc<Fields>)>,
     /// Each document's first line in view as last shown (workbook, sheet), to remember where it
     /// was being read.
-    tops: HashMap<(u64, usize), usize>,
+    pub(crate) tops: HashMap<(u64, usize), usize>,
     /// Lines to bring to the top of documents once they show: where a file just opened was being
     /// read last time.
-    restore: HashMap<(u64, usize), usize>,
+    pub(crate) restore: HashMap<(u64, usize), usize>,
     /// Where the rendered document's top-level blocks start (first line, offset from the top of
     /// the scrolled page), as drawn last frame.
     positions: Vec<(usize, f32)>,
@@ -85,7 +85,7 @@ pub struct State {
     /// Text the editor selects and shows next frame (char indices), for a found match.
     select: Option<(usize, usize)>,
     /// The find bar, when open.
-    find: Option<Find>,
+    pub(crate) find: Option<Find>,
 }
 
 /// The find bar: what is looked for, what replaces it, and which match is current.
@@ -95,9 +95,9 @@ pub struct Find {
     pub replace: String,
     /// The replace field and buttons show.
     pub replacing: bool,
-    current: usize,
+    pub(crate) current: usize,
     /// The query field takes the keyboard next frame.
-    focus: bool,
+    pub(crate) focus: bool,
 }
 
 /// The byte ranges of `query` in `text`, without overlaps; letters A–Z match either case.
@@ -564,6 +564,16 @@ fn sync_draft(app: &mut SheetApp, ctx: &egui::Context, uid: u64, sheet: usize, t
 /// Draws the active document tab: its tool bar, then the document in the chosen mode.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some((uid, sheet, text)) = active_document(app) else { return };
+    if text_kind(app) == TextKind::Pdf {
+        // Another document's typing goes to its workbook first, as when switching between texts.
+        if app.doc_view.draft.is_some() {
+            if let Err(e) = app.commit_doc_draft() {
+                app.alert(e);
+            }
+            app.doc_view.draft = None;
+        }
+        return crate::pdf_view::show(app, ui);
+    }
     let zoom = app.session.active().and_then(|d| d.wb.active()).map_or(100, |sh| sh.zoom);
     let z = f32::from(zoom.clamp(10, 400)) / 100.0;
     let started = sync_draft(app, ui.ctx(), uid, sheet, &text);
@@ -598,7 +608,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
     let area = ui.available_rect_before_wrap();
     let body = if app.ui.doc_outline && kind == TextKind::Markdown {
-        let side = Rect::from_min_max(area.min, pos2(area.left() + (area.width() * 0.25).clamp(140.0, 260.0), area.bottom()));
+        let side = Rect::from_min_max(area.min, pos2(area.left() + contents_width(area), area.bottom()));
         outline(app, ui, side, mode, &t);
         Rect::from_min_max(pos2(side.right(), area.top()), area.max)
     } else {
@@ -628,37 +638,64 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
 fn outline(app: &mut SheetApp, ui: &mut Ui, rect: Rect, mode: Mode, t: &Tokens) {
     let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
     let headings = headings(&app.doc_view.blocks(&text));
-    ui.painter().rect_filled(rect, 0.0, t.ribbon);
-    ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, t.ribbon_border));
-    let mut side = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 8.0))).layout(egui::Layout::top_down(egui::Align::Min)));
-    side.label(egui::RichText::new(app.ui.language.tr("Contents")).font(theme::ui_bold(13.0)).color(t.text_dim));
-    side.add_space(4.0);
-    if headings.is_empty() {
-        side.label(egui::RichText::new(app.ui.language.tr("Headings (# Title) show here.")).font(theme::ui_font(12.5)).color(t.text_dim));
-    }
-    let mut chosen = None;
-    egui::ScrollArea::vertical().id_salt("monun.doc_outline").auto_shrink([false, false]).show(&mut side, |ui| {
-        for (level, title, line) in &headings {
-            ui.horizontal(|ui| {
-                ui.add_space(f32::from(level.saturating_sub(1)) * 12.0);
-                let font = if *level == 1 { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
-                let resp = ui.add(egui::Label::new(egui::RichText::new(title).font(font).color(t.text)).sense(Sense::click()).truncate());
-                if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                if resp.clicked() {
-                    chosen = Some(*line);
-                }
-            });
-        }
-    });
-    if let Some(line) = chosen {
+    let lang = app.ui.language;
+    let entries: Vec<Entry<'_>> =
+        headings.iter().map(|(level, title, _)| Entry { indent: level.saturating_sub(1), title, bold: *level == 1 }).collect();
+    let chosen = contents_panel(ui, rect, t, lang.tr("Contents"), lang.tr("Headings (# Title) show here."), &entries);
+    if let Some(line) = chosen.and_then(|i| headings.get(i)).map(|(_, _, line)| *line) {
         app.doc_view.scroll_to = Some(line);
         if mode != Mode::View {
             app.doc_view.goto_line = Some(line);
             app.doc_view.focus_editor = true;
         }
     }
+}
+
+/// One line of the contents beside a document: a heading, or a PDF's bookmark.
+pub(crate) struct Entry<'a> {
+    /// Steps in from the left (12 px each).
+    pub indent: u8,
+    pub title: &'a str,
+    pub bold: bool,
+}
+
+/// The contents beside a document, in `rect`: its title, then `entries` indented by level, or
+/// `empty` when there are none. Returns the entry clicked.
+pub(crate) fn contents_panel(ui: &mut Ui, rect: Rect, t: &Tokens, title: &str, empty: &str, entries: &[Entry<'_>]) -> Option<usize> {
+    ui.painter().rect_filled(rect, 0.0, t.ribbon);
+    ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, t.ribbon_border));
+    let mut side = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 8.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+    side.label(egui::RichText::new(title).font(theme::ui_bold(13.0)).color(t.text_dim));
+    side.add_space(4.0);
+    if entries.is_empty() {
+        side.label(egui::RichText::new(empty).font(theme::ui_font(12.5)).color(t.text_dim));
+    }
+    let mut chosen = None;
+    // Rows of one height, so only those in view are laid out (a book's thousands of bookmarks).
+    const ROW: f32 = 20.0;
+    egui::ScrollArea::vertical().id_salt("monun.doc_outline").auto_shrink([false, false]).show_rows(&mut side, ROW, entries.len(), |ui, rows| {
+        for i in rows {
+            let Some(entry) = entries.get(i) else { continue };
+            ui.horizontal(|ui| {
+                ui.set_height(ROW);
+                ui.add_space(f32::from(entry.indent) * 12.0);
+                let font = if entry.bold { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
+                let resp = ui.add(egui::Label::new(egui::RichText::new(entry.title).font(font).color(t.text)).sense(Sense::click()).truncate());
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    chosen = Some(i);
+                }
+            });
+        }
+    });
+    chosen
+}
+
+/// The width of the contents beside a document in `area`.
+pub(crate) fn contents_width(area: Rect) -> f32 {
+    (area.width() * 0.25).clamp(140.0, 260.0)
 }
 
 /// Every heading of `blocks` (in lists and quotes too): level, text, line.
@@ -683,11 +720,7 @@ fn headings(blocks: &[Block]) -> Vec<(u8, String, usize)> {
 fn find_bar(app: &mut SheetApp, ui: &mut Ui, mode: Mode, t: &Tokens) {
     let lang = app.ui.language;
     let text = app.doc_view.draft.as_ref().map(|d| d.text.clone()).unwrap_or_default();
-    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().rect_filled(bar, 0.0, t.ribbon);
-    ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.ribbon_border));
-    let mut child =
-        ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let mut child = find_strip(ui, t);
     let ui = &mut child;
     let Some(find) = app.doc_view.find.as_mut() else { return };
     let query_id = egui::Id::unique("monun.doc_find");
@@ -756,6 +789,14 @@ fn find_bar(app: &mut SheetApp, ui: &mut Ui, mode: Mode, t: &Tokens) {
     }
 }
 
+/// The find bar's strip under the tool bar, and a row in it for its fields and buttons.
+pub(crate) fn find_strip(ui: &mut Ui, t: &Tokens) -> Ui {
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().rect_filled(bar, 0.0, t.ribbon);
+    ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.ribbon_border));
+    ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)))
+}
+
 /// Shows the current match: selected in the editor (when it shows), scrolled to in the document.
 fn reveal(app: &mut SheetApp, text: &str, hits: &[std::ops::Range<usize>], mode: Mode) {
     let Some(find) = &app.doc_view.find else { return };
@@ -801,7 +842,7 @@ fn idle_commit(app: &mut SheetApp, ctx: &egui::Context) {
 
 /// The workbook shortcuts a document tab keeps (the grid, which has the rest, isn't drawn).
 /// Undo and redo are the editor's own while it has focus.
-fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode, kind: TextKind) {
+pub(crate) fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode, kind: TextKind) {
     let ctx = ui.ctx().clone();
     if app.dialog.is_some() || app.message.is_some() || app.grid.tab_menu.is_some() || app.grid.renaming_tab.is_some() {
         return;
@@ -896,6 +937,12 @@ fn keyboard(app: &mut SheetApp, ui: &mut Ui, mode: Mode, kind: TextKind) {
 /// Find, and while the text shows the formatting buttons. In a window too narrow for them all it
 /// scrolls sideways, with the wheel as the sheet tabs do. Returns the mode to draw this frame.
 fn toolbar(app: &mut SheetApp, ui: &mut Ui, ids: (u64, usize), mode: Mode, t: &Tokens) -> Mode {
+    tool_strip(ui, t, |ui| toolbar_items(app, ui, ids, mode, t))
+}
+
+/// The strip above a document, its items laid out by `items` in a row that scrolls sideways (with
+/// the wheel, as the sheet tabs do) when the window is too narrow for them all.
+pub(crate) fn tool_strip<R>(ui: &mut Ui, t: &Tokens, items: impl FnOnce(&mut Ui) -> R) -> R {
     let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     ui.painter().rect_filled(bar, 0.0, t.ribbon);
     ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.ribbon_border));
@@ -916,24 +963,29 @@ fn toolbar(app: &mut SheetApp, ui: &mut Ui, ids: (u64, usize), mode: Mode, t: &T
             if wheel.abs() > 0.0 {
                 ui.scroll_with_delta(vec2(wheel, 0.0));
             }
-            ui.horizontal_centered(|ui| toolbar_items(app, ui, ids, mode, t)).inner
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                items(ui)
+            })
+            .inner
         })
         .inner
 }
 
+/// A thin upright line between groups of the tool bar's items.
+pub(crate) fn separator(ui: &mut Ui, t: &Tokens) {
+    ui.add_space(6.0);
+    let (sep, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
+    ui.painter().rect_filled(sep, 0.0, t.separator);
+    ui.add_space(6.0);
+}
+
 fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mut mode: Mode, t: &Tokens) -> Mode {
     let lang = app.ui.language;
-    ui.spacing_mut().item_spacing.x = 2.0;
-    let separator = |ui: &mut Ui| {
-        ui.add_space(6.0);
-        let (sep, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
-        ui.painter().rect_filled(sep, 0.0, t.separator);
-        ui.add_space(6.0);
-    };
     let kind = text_kind(app);
     if kind != TextKind::Markdown {
         text_file_items(app, ui, kind, t);
-        separator(ui);
+        separator(ui, t);
         find_button(app, ui);
         return Mode::Edit;
     }
@@ -975,7 +1027,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
             }
         }
     }
-    separator(ui);
+    separator(ui, t);
     let on = app.ui.doc_outline;
     let outline =
         ui.add(egui::Button::selectable(on, egui::RichText::new(lang.tr("Contents")).font(theme::ui_font(13.0))).min_size(vec2(28.0, 26.0)));
@@ -991,7 +1043,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
     }
     find_button(app, ui);
     if mode != Mode::View {
-        separator(ui);
+        separator(ui, t);
         // A Markdown file has no cells for Cell value to show.
         let markdown = markdown_file(app);
         for (i, (f, label, tip)) in editor::BUTTONS.iter().enumerate() {
@@ -1043,7 +1095,7 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
 }
 
 /// Find (Ctrl+F): opens the find bar.
-fn find_button(app: &mut SheetApp, ui: &mut Ui) {
+pub(crate) fn find_button(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let find = ui.add(
         egui::Button::new(egui::RichText::new(lang.tr("Find")).font(theme::ui_font(13.0))).frame_when_inactive(false).min_size(vec2(28.0, 26.0)),

@@ -165,6 +165,81 @@ fn a_markdown_file_opens_as_a_document_and_saves_back() {
 }
 
 #[test]
+fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("pdf");
+    let path = dir.join("design.pdf");
+    let bytes = b"%PDF-1.7
+% not drawn by the engine
+%%EOF
+"
+    .to_vec();
+    std::fs::write(&path, &bytes).unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    let d = s.active().unwrap();
+    assert_eq!((d.text_kind(), d.is_pdf(), d.is_dirty()), (Some(TextKind::Pdf), true, false));
+    let doc = d.wb.active().unwrap().document.clone().unwrap();
+    assert_eq!((doc.text.as_str(), doc.fit_width), ("", true), "no text; as wide as the window");
+    // How it shows is no change to it.
+    s.execute("view.zoom", json!({"percent": 150})).unwrap();
+    s.execute("doc.view", json!({"fitWidth": false})).unwrap();
+    assert!(!s.active().unwrap().is_dirty());
+    // Nothing changes, saves, exports or prints it.
+    for (cmd, params) in [
+        ("doc.setText", json!({"text": "x"})),
+        ("file.save", json!({})),
+        ("file.saveAs", json!({"path": dir.join("copy.pdf").to_str().unwrap()})),
+        ("file.saveAs", json!({"path": dir.join("copy.xlsx").to_str().unwrap()})),
+        ("file.exportPdf", json!({"path": dir.join("print.pdf").to_str().unwrap()})),
+        ("file.print", json!({})),
+    ] {
+        let e = s.execute(cmd, params).unwrap_err().to_string();
+        assert!(e.contains(monun_engine::docs::PDF_READ_ONLY), "{cmd}: {e}");
+    }
+    let e = s.execute("doc.export", json!({"path": dir.join("out.md").to_str().unwrap()})).unwrap_err().to_string();
+    assert!(e.contains(monun_engine::docs::PDF_READ_ONLY), "{e}");
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(!dir.join("copy.xlsx").exists() && !dir.join("print.pdf").exists() && !dir.join("out.md").exists());
+    // Another program's change to a text file behind it still reads in, and the PDF itself
+    // never reloads.
+    let md = dir.join("notes.md");
+    std::fs::write(
+        &md, "# one
+",
+    )
+    .unwrap();
+    s.execute("file.open", json!({"path": md.to_str().unwrap()})).unwrap();
+    let md_uid = s.active().unwrap().uid;
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    assert!(s.active().unwrap().is_pdf());
+    std::fs::write(
+        &md, "# two
+",
+    )
+    .unwrap();
+    s.execute("file.reload", json!({"document": md_uid})).unwrap();
+    let reread = s.documents().iter().find(|d| d.uid == md_uid).unwrap().wb.sheet(0).unwrap().document.clone().unwrap();
+    assert_eq!(
+        reread.text,
+        "# two
+"
+    );
+    assert!(s.execute("file.reload", json!({})).unwrap_err().to_string().contains(monun_engine::docs::PDF_READ_ONLY));
+    // A file named .pdf that isn't one is refused.
+    let fake = dir.join("fake.pdf");
+    std::fs::write(
+        &fake, "a,b
+1,2
+",
+    )
+    .unwrap();
+    let e = s.execute("file.open", json!({"path": fake.to_str().unwrap()})).unwrap_err().to_string();
+    assert!(e.contains("is not a PDF file"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn sql_and_text_files_open_as_text_and_save_back_as_they_came() {
     use monun_engine::docs::TextKind;
     // Windows line breaks and code page 949 (an older Korean file) come back as they were.

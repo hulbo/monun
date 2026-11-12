@@ -26,6 +26,9 @@ pub enum FileKind {
     /// as it came (its encoding and line breaks). A workbook saved as .txt is its sheet's values
     /// separated by tabs, as Excel's Text (Tab delimited).
     Text,
+    /// A PDF file: opens as a document tab the interface shows read-only ([`crate::docs::pdf_workbook`]);
+    /// the engine never reads its contents and never writes it.
+    Pdf,
 }
 
 impl FileKind {
@@ -42,6 +45,7 @@ impl FileKind {
             "json" | "scjson" => FileKind::Json,
             "html" | "htm" => FileKind::Html,
             "md" | "markdown" => FileKind::Markdown,
+            "pdf" => FileKind::Pdf,
             _ => return None,
         })
     }
@@ -180,6 +184,9 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
     match kind {
         Some(FileKind::Markdown) => Ok((crate::docs::markdown_workbook(name, bytes), vec![])),
         Some(FileKind::Text) => Ok((crate::docs::text_workbook(name, bytes), vec![])),
+        // Only checked to be a PDF: the interface reads it itself to show it.
+        Some(FileKind::Pdf) if crate::docs::is_pdf(bytes) => Ok((crate::docs::pdf_workbook(name), vec![])),
+        Some(FileKind::Pdf) => Err(EngineError::Other(format!("'{name}' is not a PDF file."))),
         Some(FileKind::Json) => {
             let mut wb: Workbook = serde_json::from_slice(bytes).map_err(|e| EngineError::Other(format!("not a Monun JSON workbook: {e}")))?;
             wb.styles.rebuild_index();
@@ -322,6 +329,9 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
             Some(doc) => Ok(doc.text.clone().into_bytes()),
             None => Err(EngineError::Other(crate::docs::NOT_A_DOCUMENT.into())),
         },
+        // Save and Save As make a PDF by printing the sheet (`file.exportPdf`) before reaching
+        // here; a PDF file opened to read is never written.
+        FileKind::Pdf => Err(EngineError::Other("Make a PDF with File › Export › Export as PDF.".into())),
     }
 }
 
@@ -790,6 +800,26 @@ pub fn read_file(path: &str) -> Result<Vec<u8>> {
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
     script_sandbox_check(path)?;
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
+}
+
+/// The first `n` bytes of the regular file at `path` (fewer for a shorter file): for a file only
+/// recognised here (a PDF, which the interface reads itself), so a large one isn't read twice.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_head(path: &str, n: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    script_sandbox_check(path)?;
+    let f = std::fs::File::open(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    if !f.metadata().map_err(|e| EngineError::Other(format!("{path}: {e}")))?.is_file() {
+        return Err(EngineError::Other(format!("{path}: only regular files can be opened")));
+    }
+    let mut buf = Vec::new();
+    (&f).take(n).read_to_end(&mut buf).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    Ok(buf)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn read_head(path: &str, _n: u64) -> Result<Vec<u8>> {
+    read_file(path)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

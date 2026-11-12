@@ -97,6 +97,11 @@ pub fn always(_: &Session) -> std::result::Result<(), String> {
 pub fn has_doc(s: &Session) -> std::result::Result<(), String> {
     s.active().map(|_| ()).ok_or_else(|| "no workbook open".into())
 }
+/// A document that can be saved, exported or printed: not a PDF file, which is only read.
+pub fn writable(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    if s.active().is_some_and(crate::DocState::is_pdf) { Err(crate::docs::PDF_READ_ONLY.into()) } else { Ok(()) }
+}
 /// A document tab can go into the active workbook: not with workbooks and Markdown files apart
 /// ([`Session::separate_files`]).
 pub fn documents_allowed(s: &Session) -> std::result::Result<(), String> {
@@ -376,6 +381,9 @@ fn wall_clock() -> std::time::Duration {
 }
 
 pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
+    if d.is_pdf() {
+        return Err(EngineError::Other(crate::docs::PDF_READ_ONLY.into()));
+    }
     // `MONUN_PROFILE` timing, never on wasm where the clock traps. `elapsed` on the epoch
     // reads the wall clock without the (disallowed) `now`.
     let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("MONUN_PROFILE").map(|_| wall_clock()) };

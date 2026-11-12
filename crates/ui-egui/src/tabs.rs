@@ -532,6 +532,11 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                         app.run_or_alert("view.zoom", json!({"percent": z}));
                     }
                     ui.add_space(10.0);
+                    // A PDF says which page shows.
+                    if let Some(status) = crate::pdf_view::status(app) {
+                        text(ui, egui::RichText::new(status).font(theme::ui_font(12.5)).color(t.text_dim));
+                        return;
+                    }
                     // A document tab has no page views and no selection: its size instead.
                     if let Some(dr) = app.doc_view.draft.as_ref().filter(|_| crate::doc_view::is_active(app)) {
                         let (lines, chars) = crate::doc_view::text_size(&dr.text);

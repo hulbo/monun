@@ -395,6 +395,10 @@ impl DocState {
     pub fn text_kind(&self) -> Option<docs::TextKind> {
         self.is_text_file().then(|| docs::TextKind::of_name(&self.display_title()))
     }
+    /// A PDF file opened to read: nothing changes it, saves, exports or prints it.
+    pub fn is_pdf(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Pdf)
+    }
 }
 
 /// Engine-side preferences.
@@ -680,6 +684,7 @@ impl Session {
             docs::TextKind::Markdown => "Doc",
             docs::TextKind::Sql => "Query",
             docs::TextKind::Plain => "Text",
+            docs::TextKind::Pdf => "PDF",
         };
         let prefix = prefix.trim();
         let prefix = if prefix.is_empty() { fallback } else { prefix };

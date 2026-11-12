@@ -2,7 +2,7 @@
 
 use serde_json::{Value as Json, json};
 
-use super::{CommandSpec, EngineError, PROTECTED, Result, Session, bad, cmd, documents_allowed, edit, has_doc, str_param, target_sheet};
+use super::{CommandSpec, EngineError, PROTECTED, Result, Session, bad, cmd, documents_allowed, edit, has_doc, str_param, target_sheet, writable};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -35,7 +35,7 @@ pub fn specs() -> Vec<CommandSpec> {
             documents_allowed,
             import
         ),
-        cmd!(noundo "doc.export", "Export as Markdown", [], None, "{path, sheet?}: writes a document tab's text to a Markdown file (UTF-8)", has_doc, export),
+        cmd!(noundo "doc.export", "Export as Markdown", [], None, "{path, sheet?}: writes a document tab's text to a Markdown file (UTF-8)", writable, export),
         cmd!(
             "doc.picture",
             "Insert Picture",

@@ -122,7 +122,9 @@ impl SheetApp {
         let kept = self.ui.doc_views.iter().find(|v| v.path == path).map_or(0, |v| v.line);
         let line = crate::doc_view::top_line(self, (uid, sheet)).unwrap_or(kept);
         let mode = doc.mode.map(|m| m.name().to_string()).unwrap_or_default();
-        let memory = crate::DocViewMemory { path, mode, fit_width: doc.fit_width, zoom: sh.zoom, line };
+        let kept_spread = self.ui.doc_views.iter().find(|v| v.path == path).is_some_and(|v| v.spread);
+        let spread = crate::pdf_view::spread(self, uid).unwrap_or(kept_spread);
+        let memory = crate::DocViewMemory { path, mode, fit_width: doc.fit_width, zoom: sh.zoom, line, spread };
         self.ui.doc_views.retain(|v| v.path != memory.path);
         self.ui.doc_views.insert(0, memory);
         self.ui.doc_views.truncate(crate::DOC_VIEWS_MAX);

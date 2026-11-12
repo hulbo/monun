@@ -396,7 +396,9 @@ fn open_files_list(app: &mut SheetApp, ui: &mut Ui, tabs: &[FileTab], t: &Tokens
 /// The icon of the file at `path`: a workbook's, or a text file's of the kind its name says.
 pub(crate) fn path_icon(path: &str) -> Icon {
     let kind = match monun_engine::io::FileKind::from_path(path) {
-        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text) => Some(TextKind::of_name(path)),
+        Some(monun_engine::io::FileKind::Markdown | monun_engine::io::FileKind::Text | monun_engine::io::FileKind::Pdf) => {
+            Some(TextKind::of_name(path))
+        }
         _ => None,
     };
     file_icon(kind)
@@ -407,6 +409,7 @@ fn file_icon(kind: Option<TextKind>) -> Icon {
         None => Icon::Sheet,
         Some(TextKind::Sql) => Icon::Script,
         Some(TextKind::Markdown | TextKind::Plain) => Icon::Document,
+        Some(TextKind::Pdf) => Icon::Pdf,
     }
 }
 

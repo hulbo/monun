@@ -37,6 +37,11 @@ pub mod memos;
 pub mod outline;
 pub mod panes;
 pub mod paper_view;
+#[cfg(feature = "pdf")]
+pub mod pdf_view;
+#[cfg(not(feature = "pdf"))]
+#[path = "pdf_view_off.rs"]
+pub mod pdf_view;
 pub mod pivot_pane;
 pub mod printing;
 pub mod projects;
@@ -160,8 +165,10 @@ pub struct DocViewMemory {
     pub mode: String,
     pub fit_width: bool,
     pub zoom: u16,
-    /// The first line in view (0-based), to read on from there.
+    /// The first line in view (0-based), to read on from there; a PDF's first page in view.
     pub line: usize,
+    /// A PDF shown two pages across.
+    pub spread: bool,
 }
 
 /// The most Markdown files whose view is remembered.
@@ -328,6 +335,8 @@ pub struct SheetApp {
     pub text_box_editor: Option<text_box::EditState>,
     /// Document tabs: the draft being typed, each document's mode.
     pub doc_view: doc_view::State,
+    /// PDF tabs: each open PDF's pages, text and render threads.
+    pub pdf: pdf_view::State,
     /// The memo panel's memo being written and the one picked.
     pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,

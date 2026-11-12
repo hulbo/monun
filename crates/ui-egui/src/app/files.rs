@@ -125,7 +125,7 @@ impl SheetApp {
     /// lose either.
     pub(super) fn watch_files(&mut self, ctx: &egui::Context) {
         let open: Vec<(u64, bool)> =
-            self.session.documents().iter().filter(|d| d.is_text_file() && d.path.is_some()).map(|d| (d.uid, d.is_dirty())).collect();
+            self.session.documents().iter().filter(|d| d.is_text_file() && !d.is_pdf() && d.path.is_some()).map(|d| (d.uid, d.is_dirty())).collect();
         if open.is_empty() {
             return;
         }

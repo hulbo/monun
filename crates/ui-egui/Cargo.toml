@@ -9,6 +9,9 @@ description = "Monun egui frontend (Excel-style UI); swappable — nothing below
 workspace = true
 
 [features]
+default = ["pdf"]
+# PDF files shown in their tab (desktop; the web build says it can't show them).
+pdf = ["dep:pdfcraft-render", "dep:hayro"]
 # Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
 diagrams = ["monun-markdown/diagrams", "monun-engine/diagrams"]
 
@@ -29,6 +32,8 @@ log = { workspace = true }
 image = { workspace = true }
 skrifa = { workspace = true }
 web-time = { workspace = true }
+pdfcraft-render = { workspace = true, optional = true }
+hayro = { workspace = true, optional = true }
 
 # Linux only, where winit reports no system theme: the desktop portal's light/dark answer (see
 # `desktop_theme.rs`). Already in the tree, with these features, through egui's own

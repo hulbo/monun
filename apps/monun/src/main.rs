@@ -236,7 +236,7 @@ fn services() -> Services {
         paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Spreadsheets and documents", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql"])
+                .add_filter("Spreadsheets and documents", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf"])
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
                 .add_filter("Excel 97-2003 Workbook (import)", &["xls"])
                 .add_filter("Excel Binary Workbook (data import)", &["xlsb"])
@@ -245,6 +245,7 @@ fn services() -> Services {
                 .add_filter("Markdown document", &["md", "markdown"])
                 .add_filter("SQL file", &["sql"])
                 .add_filter("Text document", &["txt"])
+                .add_filter("PDF document (read only)", &["pdf"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),

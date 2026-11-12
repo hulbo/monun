@@ -19,7 +19,7 @@ use monun_model::{
 use monun_pdf::{Font, Page, PdfDoc, Point, Rect, Rgb};
 use serde_json::{Value as Json, json};
 
-use super::{CommandSpec, Result, Session, bad, bool_param, cmd, edit, f64_param, has_doc, split_sheet, str_param, target_sheet, u32_param};
+use super::{CommandSpec, Result, Session, bad, bool_param, cmd, edit, f64_param, split_sheet, str_param, target_sheet, u32_param, writable};
 
 mod document;
 mod draw;
@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["File", "Export"],
             None,
             "{path?, sheets?: active|all, range?: \"A1:F40\" (active sheet), fitToPage?: bool, fitWidth?: bool} → {pages, bytes, path} or {pages, bytes, base64} when no path. Honours each sheet's Page Setup; all prints every visible sheet, one after another; fitWidth: document tabs' tables and diagrams as wide as the page.",
-            has_doc,
+            writable,
             export_pdf
         ),
         cmd!(
@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["File"],
             Some("Cmd+P"),
             "{path?, sheets?: active|all, range?, fitToPage?: bool} → {pages, bytes, base64} — the PDF the UI hands to the system print dialog",
-            has_doc,
+            writable,
             print
         ),
         cmd!(
@@ -71,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["File"],
             None,
             "{page? (1-based), sheets?: active|all, range?, fitToPage?} → {pages, pageList: [{page, sheet, range, rows, columns, scale, paper, orientation, width, height}]}",
-            has_doc,
+            writable,
             print_preview
         ),
         cmd!(
@@ -80,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Page Layout", "Page Setup"],
             None,
             "{sheet?, orientation?: portrait|landscape, paper?: Letter|Legal|A4|A3|A5|A6|Tabloid|Executive|Ledger|B4|B5|B6|B4 (ISO)|B5 (ISO)|B6 (ISO)|Japanese Postcard|Japanese Double Postcard|Japanese Envelope #3|Japanese Envelope #4|Japanese Envelope Kaku #2|Japanese Envelope Kaku #3 (B4/B5/B6 are the JIS sizes), margins?: {left,right,top,bottom,header,footer} (inches; also accepted as top-level keys), scale?: 10..400, fitWidth?, fitHeight? (pages; 0 = automatic), fitToPage?: bool, centerH?, centerV?, gridlines?, headings?, header?: \"&L&A&RPage &P of &N\", footer?, printArea?: \"A1:F50\" (\"\" clears), titleRows?: \"1:2\", titleCols?: \"A:A\", rowBreaks?: [46, 91], colBreaks?: [\"K\"]} → the sheet's print settings",
-            has_doc,
+            writable,
             page_setup
         ),
     ]

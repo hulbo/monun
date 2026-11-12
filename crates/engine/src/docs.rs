@@ -54,6 +54,8 @@ pub enum TextKind {
     Markdown,
     Sql,
     Plain,
+    /// A PDF file, shown read-only by the interface: its document tab holds no text.
+    Pdf,
 }
 
 impl TextKind {
@@ -64,6 +66,7 @@ impl TextKind {
         match ext.as_deref() {
             Some("md" | "markdown") => TextKind::Markdown,
             Some("sql") => TextKind::Sql,
+            Some("pdf") => TextKind::Pdf,
             _ => TextKind::Plain,
         }
     }
@@ -74,6 +77,7 @@ impl TextKind {
             TextKind::Markdown => "md",
             TextKind::Sql => "sql",
             TextKind::Plain => "txt",
+            TextKind::Pdf => "pdf",
         }
     }
 
@@ -108,6 +112,30 @@ pub fn text_file_bytes(doc: &Document) -> Vec<u8> {
     let file = doc.file.unwrap_or(TextFile { encoding: TextEncoding::Utf8, crlf: false });
     let text = if file.crlf { doc.text.replace('\n', "\r\n") } else { doc.text.clone() };
     monun_xlsx::encode_text(text.into_bytes(), file.encoding)
+}
+
+/// Refused for every change to a PDF file and for saving, exporting or printing it.
+pub const PDF_READ_ONLY: &str = "A PDF file can only be read in Monun.";
+
+/// Whether `bytes` are a PDF file: `%PDF-` within its first kilobyte, where readers look for it.
+pub fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.get(..bytes.len().min(1024)).is_some_and(|head| head.windows(5).any(|w| w == b"%PDF-"))
+}
+
+/// A workbook of one document tab standing for a PDF file, named after it: no text, shown read
+/// (View) and as wide as the window (Fit Width) until its tab is set otherwise. The interface draws
+/// the file's pages in it.
+pub fn pdf_workbook(name: &str) -> Workbook {
+    let mut wb = Workbook::new();
+    let tab = name_from_path(name).unwrap_or_else(|| "PDF1".into());
+    let mut sheet = Sheet::new_document(tab, String::new());
+    if let Some(doc) = sheet.document.as_mut() {
+        doc.mode = Some(monun_model::DocMode::View);
+        doc.fit_width = true;
+    }
+    wb.sheets = vec![Arc::new(sheet)];
+    wb.set_active_sheet(0);
+    wb
 }
 
 /// A workbook of one document tab holding a text file (.sql, .txt), named after it, that saves

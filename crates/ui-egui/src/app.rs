@@ -32,6 +32,7 @@ impl SheetApp {
             editor: None,
             text_box_editor: None,
             doc_view: Default::default(),
+            pdf: Default::default(),
             memos: Default::default(),
             dialog: None,
             backstage: None,
@@ -315,6 +316,8 @@ impl SheetApp {
             control::issue_screenshots(self, &ctx);
             // Long documents' editor text, a slice a frame, before their tabs are shown.
             crate::doc_view::lay_out_ahead(self, &ctx);
+            // Closed PDFs' render threads and pages go; those not shown stop drawing.
+            crate::pdf_view::tidy(self, &ctx);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

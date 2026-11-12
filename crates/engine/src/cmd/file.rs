@@ -2,20 +2,20 @@
 
 use serde_json::{Value as Json, json};
 
-use super::{CommandSpec, Result, Session, always, bad, bool_param, cmd, edit, has_doc, ok, str_param, target_sheet, u32_param};
+use super::{CommandSpec, Result, Session, always, bad, bool_param, cmd, edit, has_doc, ok, str_param, target_sheet, u32_param, writable};
 use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql` or plain text `Text1.txt`, or `{prefix}1.md` and so on)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
-        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|cp949, sheets?: active|all, fitWidth?: bool} → {base64} (encoding: csv and tsv only, see file.exportCsv; sheets and fitWidth: html only, see file.exportHtml)", has_doc, save_bytes),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", writable, save),
+        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", writable, save_as),
+        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|cp949, sheets?: active|all, fitWidth?: bool} → {base64} (encoding: csv and tsv only, see file.exportCsv; sheets and fitWidth: html only, see file.exportHtml)", writable, save_bytes),
         cmd!(noundo "file.close", "Close", ["File"], Some("Cmd+W"), "{force?: bool, document?: bool} (closes the active window, or with `document` the workbook and all its windows; the workbook closes with its last window)", has_doc, close),
-        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, encoding?: utf-8|cp949} (utf-8 is Excel's CSV UTF-8, with a byte order mark; cp949 its plain CSV on Korean Windows; without it a workbook read from CSV or text keeps that file's encoding, any other is CSV UTF-8)", has_doc, |s, p| export(s, p, "csv")),
-        cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path, sheet?, sheets?: active|all, fitWidth?: bool} (all: every visible sheet on one page, behind a menu of their names; fitWidth: document tabs' tables and diagrams as wide as the page)", has_doc, |s, p| export(s, p, "html")),
-        cmd!("file.properties", "Properties", ["File"], None, "{title?, subject?, author?, company?, keywords?, description?}", has_doc, properties),
+        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, encoding?: utf-8|cp949} (utf-8 is Excel's CSV UTF-8, with a byte order mark; cp949 its plain CSV on Korean Windows; without it a workbook read from CSV or text keeps that file's encoding, any other is CSV UTF-8)", writable, |s, p| export(s, p, "csv")),
+        cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path, sheet?, sheets?: active|all, fitWidth?: bool} (all: every visible sheet on one page, behind a menu of their names; fitWidth: document tabs' tables and diagrams as wide as the page)", writable, |s, p| export(s, p, "html")),
+        cmd!("file.properties", "Properties", ["File"], None, "{title?, subject?, author?, company?, keywords?, description?}", writable, properties),
         cmd!(
             query "file.options",
             "Options",
@@ -69,7 +69,12 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
             s.set_active(i);
             return Ok(json!({"index": i, "alreadyOpen": true}));
         }
-        (path.to_string(), crate::io::read_file(path)?)
+        // A PDF is only recognised here: the interface reads the file itself to show it.
+        let bytes = match crate::io::FileKind::from_path(path) {
+            Some(crate::io::FileKind::Pdf) => crate::io::read_head(path, 1024)?,
+            _ => crate::io::read_file(path)?,
+        };
+        (path.to_string(), bytes)
     } else {
         s.ui_requests.push(crate::UiRequest::Dialog("open".into(), json!({})));
         return ok();
@@ -184,6 +189,9 @@ fn reload(s: &mut Session, p: &Json) -> Result<Json> {
         None => s.doc()?.uid,
     };
     let d = s.documents().iter().find(|d| d.uid == uid).ok_or_else(|| bad("document", format!("no open document {uid}")))?;
+    if d.is_pdf() {
+        return Err(crate::EngineError::Other(crate::docs::PDF_READ_ONLY.into()));
+    }
     if !d.is_text_file() {
         return Err(crate::EngineError::Other(RELOAD_TEXT_ONLY.into()));
     }
