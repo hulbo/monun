@@ -75,10 +75,20 @@ pub fn svg(source: &str, dark: bool) -> Result<String, String> {
     }
 }
 
-/// The renderer's own steps (parse, lay out, write SVG), a flowchart laid out as Mermaid lays it
-/// out ([`layered`]): `|"text"|` without its quotes, and each label on its arrow over a plain
-/// background.
+/// The renderer's own steps (parse, lay out, write SVG), a flowchart or an ER diagram laid out as
+/// Mermaid lays it out ([`layered`]): `|"text"|` without its quotes, and each label on its arrow
+/// over a plain background.
 fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_renderer::ParseError> {
+    let (layout, config, kind) = laid_out(source, options)?;
+    let svg = cylinders(&mermaid_rs_renderer::render_svg(&layout, &options.theme, &config));
+    Ok(if matches!(kind, DiagramKind::Flowchart | DiagramKind::Er) { without_label_borders(&svg) } else { svg })
+}
+
+/// The diagram parsed and laid out, with the layout settings it was laid out with, and its kind.
+fn laid_out(
+    source: &str,
+    options: &RenderOptions,
+) -> Result<(mermaid_rs_renderer::Layout, mermaid_rs_renderer::LayoutConfig, DiagramKind), mermaid_rs_renderer::ParseError> {
     // A flowchart's chains an arrow a line, as the renderer reads them whole that way.
     let split = if is_flowchart(source) { split_chains(source) } else { None };
     let parsed = match split.as_deref().map(mermaid_rs_renderer::parse_mermaid_strict) {
@@ -87,26 +97,150 @@ fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_rend
     };
     let mut graph = parsed.graph;
     let flowchart = graph.kind == DiagramKind::Flowchart;
-    if flowchart {
-        for edge in &mut graph.edges {
-            for label in [&mut edge.label, &mut edge.start_label, &mut edge.end_label].into_iter().flatten() {
+    let er = graph.kind == DiagramKind::Er;
+    // `&lt;`, `#quot;` and the like as the characters they stand for, as Mermaid shows them (the
+    // renderer escaped them again: `List&lt;Dto&gt;` showed so).
+    for node in graph.nodes.values_mut() {
+        node.label = entities(&node.label);
+    }
+    for sub in &mut graph.subgraphs {
+        sub.label = entities(&sub.label);
+    }
+    for edge in &mut graph.edges {
+        for label in [&mut edge.label, &mut edge.start_label, &mut edge.end_label].into_iter().flatten() {
+            *label = entities(label);
+            if flowchart || er {
                 *label = unquote(label);
             }
         }
     }
-    // A flowchart's boxes hug their text as Mermaid's do (its padding is 15; the renderer's 30 made
-    // wide drawings, small once fitted to the page).
     let mut config = options.layout.clone();
     if flowchart {
+        // A flowchart's boxes hug their text as Mermaid's do (its padding is 15; the renderer's 30
+        // made wide drawings, small once fitted to the page).
         config.node_padding_x = FLOWCHART_PADDING_X;
     }
+    if er {
+        // A table's columns a line each: the renderer wrapped a long one and then read each piece
+        // as a column of its own (`NUMBER` alone, then `PK SN`).
+        config.max_label_width_chars = config.max_label_width_chars.max(ER_LINE_CHARS);
+        for node in graph.nodes.values_mut() {
+            node.label = er_comments(&node.label);
+        }
+    }
     let mut layout = mermaid_rs_renderer::compute_layout(&graph, &options.theme, &config);
-    if flowchart {
+    if er {
+        fit_tables(&mut layout, options.theme.font_size, options.theme.font_size * config.label_line_height);
+    }
+    if flowchart || er {
         layered::relayout(&graph, &mut layout);
     }
     readable_text(&mut layout);
-    let svg = cylinders(&mermaid_rs_renderer::render_svg(&layout, &options.theme, &config));
-    Ok(if flowchart { without_label_borders(&svg) } else { svg })
+    Ok((layout, config, graph.kind))
+}
+
+/// Each table (an ER diagram's entity with columns) as tall as its title and rows as the renderer
+/// draws them: it measured the label's lines, its divider among them, and left room below the
+/// last row.
+fn fit_tables(layout: &mut mermaid_rs_renderer::Layout, font_size: f32, line_height: f32) {
+    for node in layout.nodes.values_mut() {
+        let lines = &node.label.lines;
+        let Some(divider) = lines.iter().position(|l| l.trim() == "---") else { continue };
+        let rows = lines.iter().skip(divider + 1).filter(|l| !l.trim().is_empty()).count();
+        if rows == 0 {
+            continue;
+        }
+        // The renderer's title row, then a line a column, and a little below.
+        let title = (line_height + font_size * 0.6).max(line_height + 6.0);
+        let fit = title + rows as f32 * line_height + font_size * 0.5;
+        if fit < node.height {
+            node.height = fit;
+        }
+    }
+}
+
+/// The longest line of a table (an ER diagram's entity) kept on one line.
+const ER_LINE_CHARS: usize = 80;
+
+/// An entity's label (`NAME`, `---`, then a column a line) with each column's comment (`"…"`,
+/// which Mermaid shows in a column of its own) in brackets after the column's name, as the
+/// renderer shows the rest of the line as the name.
+fn er_comments(label: &str) -> String {
+    let mut body = false;
+    let lines: Vec<String> = label
+        .lines()
+        .map(|line| {
+            if line.trim() == "---" {
+                body = true;
+            }
+            match (body, line.find('"'), line.rfind('"')) {
+                (true, Some(open), Some(close)) if close > open => {
+                    let comment = line.get(open + 1..close).unwrap_or("").trim();
+                    let before = line.get(..open).unwrap_or("").trim_end();
+                    let after = line.get(close + 1..).unwrap_or("").trim();
+                    let mut out = before.to_owned();
+                    if !comment.is_empty() {
+                        out.push_str(&format!(" ({comment})"));
+                    }
+                    if !after.is_empty() {
+                        out.push(' ');
+                        out.push_str(after);
+                    }
+                    out
+                }
+                _ => line.to_owned(),
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// `text` with its character references decoded: HTML's (`&lt;`, `&amp;`, `&#39;`, `&#x2192;`) and
+/// Mermaid's own (`#lt;`, `#quot;`, `#35;`).
+fn entities(text: &str) -> String {
+    if !text.contains(['&', '#']) {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(['&', '#']) {
+        out.push_str(rest.get(..at).unwrap_or(""));
+        let tail = rest.get(at..).unwrap_or("");
+        // A reference is `&name;` or `#name;`, short, without spaces.
+        let decoded = tail.get(1..).and_then(|t| t.find(';').filter(|&end| end > 0 && end <= 10)).and_then(|end| {
+            let name = tail.get(1..=end)?;
+            let c = match name {
+                "lt" => '<',
+                "gt" => '>',
+                "amp" => '&',
+                "quot" => '"',
+                "apos" => '\'',
+                "nbsp" => '\u{a0}',
+                // `&#39;` and `&#x2192;`; Mermaid's `#35;`.
+                _ => {
+                    let number = if tail.starts_with('&') { name.strip_prefix('#')? } else { name };
+                    let code = match number.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => number.parse::<u32>().ok()?,
+                    };
+                    char::from_u32(code).filter(|c| !c.is_control())?
+                }
+            };
+            Some((c, end + 2))
+        });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = tail.get(len..).unwrap_or("");
+            }
+            None => {
+                out.push_str(tail.get(..1).unwrap_or(""));
+                rest = tail.get(1..).unwrap_or("");
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Text on a box or group given a fill (`style X fill:#…`) but no text colour: dark on a light
@@ -480,6 +614,40 @@ mod tests {
         assert!(!is_flowchart("sequenceDiagram\n    A->>B: 안녕"));
         // Drawn, a chain keeps its arrows.
         assert!(svg(source, false).is_ok_and(|svg| svg.contains("D1")));
+    }
+
+    #[test]
+    fn character_references_show_as_their_characters() {
+        assert_eq!(entities("List&lt;Dto&gt; #lt;b#gt; &amp; &quot;q&quot; &#39;x&#39; &#x2192; #35;"), "List<Dto> <b> & \"q\" 'x' → #");
+        // Not references: left as they are.
+        assert_eq!(entities("C# code; A & B; &unknown; #1; &#;"), "C# code; A & B; &unknown; #1; &#;");
+        assert_eq!(entities("한글 & 영어"), "한글 & 영어");
+        let source = "flowchart LR\n    A[\"List&lt;Dto&gt;\"] -->|\"x &lt; y\"| B";
+        assert!(svg(source, false).is_ok_and(|svg| svg.contains("List&lt;Dto&gt;") && !svg.contains("&amp;lt;")));
+    }
+
+    #[test]
+    fn a_table_shows_a_column_a_row_with_its_comment() {
+        assert_eq!(
+            er_comments("T\n---\nVARCHAR UNQ_NO \"고유 번호\"\nNUMBER SN PK \"일련\"\nCHAR DEL_YN"),
+            "T\n---\nVARCHAR UNQ_NO (고유 번호)\nNUMBER SN PK (일련)\nCHAR DEL_YN"
+        );
+        let source = "erDiagram\n    RCPT ||--o{ LINK : \"APLY_RCPT_NO\"\n    LINK ||--o{ DAT : \"SN (FK)\"\n    LINK {\n        NUMBER  ORDER_LINK_SN PK\n        VARCHAR APLY_RCPT_NO FK\n        VARCHAR SEND_CK_VL \"Y인 경우 외부 송신, 아니면 보내지 않음\"\n        CHAR    DEL_YN\n    }\n    DAT {\n        NUMBER LINK_DATA_SN PK\n        VARCHAR LINK_SE_CD \"A/B/C/D\"\n    }";
+        let (layout, _, _) = laid_out(source, &RenderOptions::default()).unwrap_or_else(|e| panic!("{e}"));
+        // Each column one line (title, divider, columns): none wrapped into a row of its own.
+        let lines = |id: &str| layout.nodes.get(id).map(|n| n.label.lines.clone()).unwrap_or_default();
+        assert_eq!(lines("LINK").len(), 2 + 4, "{:?}", lines("LINK"));
+        assert!(lines("LINK").iter().any(|l| l.contains("SEND_CK_VL (Y인 경우 외부 송신, 아니면 보내지 않음)")));
+        assert_eq!(lines("DAT").len(), 2 + 2, "{:?}", lines("DAT"));
+        // A relationship's label without its quotes.
+        assert!(layout.edges.iter().all(|e| e.label.as_ref().is_some_and(|l| l.lines.iter().all(|t| !t.contains('"')))));
+        // Laid out in layers: each table after the one it hangs from, none overlapping.
+        let top = |id: &str| layout.nodes.get(id).map(|n| (n.y, n.y + n.height)).unwrap_or_default();
+        assert!(top("RCPT").1 < top("LINK").0 && top("LINK").1 < top("DAT").0);
+        // As tall as its rows: no room left below the last.
+        let options = RenderOptions::default();
+        let line = options.theme.font_size * options.layout.label_line_height;
+        assert!(top("LINK").1 - top("LINK").0 < 6.0 * line, "{:?}", top("LINK"));
     }
 
     #[test]

@@ -50,8 +50,6 @@ const GROUP_PAD: f32 = 16.0;
 const TITLE_BELOW: f32 = 10.0;
 /// Between two ranks with a group's frame between them and no label, outside the frames.
 const FRAME_GAP: f32 = 28.0;
-/// Passes moving what isn't a group's out of its frame.
-const CLEAR_PASSES: usize = 24;
 /// How far an arrow to its own node goes out of the node, and how far apart it leaves and comes back.
 const LOOP_OUT: f32 = 22.0;
 const LOOP_HALF: f32 = 20.0;
@@ -709,57 +707,13 @@ fn frame_of(layers: &Layers, mains: &[f32], g: usize) -> Option<[f32; 4]> {
     Some(frame)
 }
 
-/// Moves whatever isn't a group's out of its frame (and the rest of its rank on that side with it),
-/// until no frame holds anything not its own; then keeps the frames.
+/// Makes each group's frame hold only its own: the groups inside a group packed first, then each
+/// group taken whole, as one block, with the items beside it. Then keeps the frames.
 fn clear_groups(layers: &mut Layers, mains: &[f32]) {
     if layers.groups.is_empty() {
         return;
     }
-    for _ in 0..CLEAR_PASSES {
-        let mut moved = false;
-        for g in 0..layers.groups.len() {
-            let Some(frame) = frame_of(layers, mains, g) else { continue };
-            let middle = (frame[1] + frame[3]) / 2.0;
-            for r in 0..layers.ranks.len() {
-                let Some(rank) = layers.ranks.get(r).cloned() else { continue };
-                let main = mains.get(r).copied().unwrap_or(0.0);
-                // Where the group's own items are in this rank, if it has any: what isn't its goes
-                // out on the side it is on of them.
-                let own = rank.iter().position(|&i| layers.items.get(i).is_some_and(|it| it.groups.contains(&g)));
-                for (pos, &i) in rank.iter().enumerate() {
-                    let Some(item) = layers.items.get(i) else { continue };
-                    if item.groups.contains(&g) {
-                        continue;
-                    }
-                    let (lo, hi) = (main - item.size.main / 2.0, main + item.size.main / 2.0);
-                    if hi <= frame[0] || lo >= frame[2] {
-                        continue;
-                    }
-                    let (a, b) = (item.cross - item.size.cross / 2.0, item.cross + item.size.cross / 2.0 + item.room);
-                    let clear = if item.stand_in { PASS_GAP } else { NODE_GAP / 2.0 };
-                    if b + clear <= frame[1] || a - clear >= frame[3] {
-                        continue;
-                    }
-                    // Out of the nearer side, and the rest of the rank beyond it with it.
-                    let low = own.map_or(item.cross < middle, |own| pos < own);
-                    let (shift, range): (f32, Vec<usize>) = if low {
-                        (frame[1] - clear - b, rank.iter().take(pos + 1).copied().collect())
-                    } else {
-                        (frame[3] + clear - a, rank.iter().skip(pos).copied().collect())
-                    };
-                    for j in range {
-                        if let Some(it) = layers.items.get_mut(j) {
-                            it.cross += shift;
-                        }
-                    }
-                    moved = true;
-                }
-            }
-        }
-        if !moved {
-            break;
-        }
-    }
+    pack(layers, mains, None);
     for g in 0..layers.groups.len() {
         if let Some(frame) = frame_of(layers, mains, g)
             && let Some(group) = layers.groups.get_mut(g)
@@ -767,6 +721,123 @@ fn clear_groups(layers: &mut Layers, mains: &[f32]) {
             group.frame = frame;
         }
     }
+}
+
+/// What [`pack`] moves across the flow: a group's frame (and all that is in it), or an item.
+struct Block {
+    /// Along the flow, and across it, low and high.
+    main: (f32, f32),
+    cross: (f32, f32),
+    group: Option<usize>,
+    item: Option<usize>,
+    /// A stand-in carrying no label: an arrow passing.
+    thin: bool,
+}
+
+/// Packs what is directly in `parent` (the drawing, for `None`): the groups in it, each packed inside
+/// first and then moved whole, and its own items. Taken across the flow in order, each block moves
+/// on past any before it that it meets along the flow, so none overlaps another and nothing keeps
+/// moving.
+fn pack(layers: &mut Layers, mains: &[f32], parent: Option<usize>) {
+    let children: Vec<usize> = layers.groups.iter().enumerate().filter(|(_, g)| g.parent == parent).map(|(c, _)| c).collect();
+    for &c in &children {
+        pack(layers, mains, Some(c));
+    }
+    let mut blocks: Vec<Block> = Vec::new();
+    for &c in &children {
+        if let Some(f) = frame_of(layers, mains, c) {
+            blocks.push(Block { main: (f[0], f[2]), cross: (f[1], f[3]), group: Some(c), item: None, thin: false });
+        }
+    }
+    for (i, item) in layers.items.iter().enumerate().filter(|(_, it)| it.groups.last().copied() == parent) {
+        let main = mains.get(item.rank).copied().unwrap_or(0.0);
+        blocks.push(Block {
+            main: (main - item.size.main / 2.0, main + item.size.main / 2.0),
+            cross: (item.cross - item.size.cross / 2.0, item.cross + item.size.cross / 2.0 + item.room),
+            group: None,
+            item: Some(i),
+            thin: item.stand_in && item.size.main <= 0.0,
+        });
+    }
+    let mut placed: Vec<Block> = Vec::with_capacity(blocks.len());
+    for mut block in in_rank_order(layers, blocks) {
+        let mut low = block.cross.0;
+        for p in placed.iter().filter(|p| p.main.0 < block.main.1 - 0.5 && block.main.0 < p.main.1 - 0.5) {
+            let clear = match (p.thin || block.thin, p.group.is_some() || block.group.is_some()) {
+                (true, _) => PASS_GAP,
+                (false, true) => NODE_GAP / 2.0,
+                (false, false) => NODE_GAP,
+            };
+            low = low.max(p.cross.1 + clear);
+        }
+        let shift = low - block.cross.0;
+        if shift > 0.0 {
+            for (i, item) in layers.items.iter_mut().enumerate() {
+                let moves = match block.group {
+                    Some(g) => item.groups.contains(&g),
+                    None => block.item == Some(i),
+                };
+                if moves {
+                    item.cross += shift;
+                }
+            }
+            block.cross = (block.cross.0 + shift, block.cross.1 + shift);
+        }
+        placed.push(block);
+    }
+}
+
+/// `blocks` in the order they come across the flow: as the ranks have them where they share one (a
+/// node after a group's in its rank comes after the group), else by their middles.
+fn in_rank_order(layers: &Layers, blocks: Vec<Block>) -> Vec<Block> {
+    let n = blocks.len();
+    let block_of = |item: usize| {
+        blocks.iter().position(|b| match b.group {
+            Some(g) => layers.items.get(item).is_some_and(|it| it.groups.contains(&g)),
+            None => b.item == Some(item),
+        })
+    };
+    // Which blocks come before which, from each rank's order.
+    let mut before: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut waiting = vec![0usize; n];
+    for rank in &layers.ranks {
+        let mut seq: Vec<usize> = rank.iter().filter_map(|&i| block_of(i)).collect();
+        seq.dedup();
+        for pair in seq.windows(2) {
+            if let [a, b] = *pair
+                && a != b
+                && let Some(list) = before.get_mut(a)
+                && !list.contains(&b)
+            {
+                list.push(b);
+                if let Some(w) = waiting.get_mut(b) {
+                    *w += 1;
+                }
+            }
+        }
+    }
+    let middle = |b: usize| blocks.get(b).map_or(0.0, |b| b.cross.0 + b.cross.1);
+    let mut done = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    for _ in 0..n {
+        // The leftmost block nothing still holds back; where the ranks disagree (a loop of
+        // befores), the leftmost of the rest.
+        let free = (0..n).filter(|&b| done.get(b) == Some(&false) && waiting.get(b) == Some(&0)).min_by(|&a, &b| middle(a).total_cmp(&middle(b)));
+        let Some(next) = free.or_else(|| (0..n).filter(|&b| done.get(b) == Some(&false)).min_by(|&a, &b| middle(a).total_cmp(&middle(b)))) else {
+            break;
+        };
+        if let Some(d) = done.get_mut(next) {
+            *d = true;
+        }
+        order.push(next);
+        for &b in before.get(next).map(Vec::as_slice).unwrap_or_default() {
+            if let Some(w) = waiting.get_mut(b) {
+                *w = w.saturating_sub(1);
+            }
+        }
+    }
+    let mut slots: Vec<Option<Block>> = blocks.into_iter().map(Some).collect();
+    order.into_iter().filter_map(|b| slots.get_mut(b).and_then(Option::take)).collect()
 }
 
 /// An arrow's route in (main, cross) points, and its label's centre.
