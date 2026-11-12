@@ -362,7 +362,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "Версия, участники и модели ИИ, которые помогали",
         "Blank workbook" => "Пустая книга",
         "Recent" => "Последние",
-        "No recent workbooks yet." => "Недавних книг пока нет.",
+        "No recent files yet." => "Недавних файлов пока нет.",
         "More files" => "Другие файлы",
         "Modified" => "Изменён",
         "Not available" => "Недоступен",

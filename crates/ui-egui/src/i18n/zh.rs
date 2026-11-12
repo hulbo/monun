@@ -360,7 +360,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "版本、贡献者以及参与协助的 AI 模型",
         "Blank workbook" => "空白工作簿",
         "Recent" => "最近",
-        "No recent workbooks yet." => "还没有最近使用的工作簿。",
+        "No recent files yet." => "还没有最近使用的文件。",
         "More files" => "更多文件",
         "Modified" => "修改时间",
         "Not available" => "不可用",

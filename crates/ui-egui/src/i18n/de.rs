@@ -275,7 +275,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "Version, Mitwirkende und die KI-Modelle, die geholfen haben",
         "Blank workbook" => "Leere Arbeitsmappe",
         "Recent" => "Zuletzt verwendet",
-        "No recent workbooks yet." => "Noch keine zuletzt verwendeten Arbeitsmappen.",
+        "No recent files yet." => "Noch keine zuletzt verwendeten Dateien.",
         "More files" => "Weitere Dateien",
         "Modified" => "Geändert",
         "Not available" => "Nicht verfügbar",

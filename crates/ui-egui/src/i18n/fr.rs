@@ -360,7 +360,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "Version, contributeurs et les modèles d'IA qui ont aidé",
         "Blank workbook" => "Classeur vide",
         "Recent" => "Récent",
-        "No recent workbooks yet." => "Aucun classeur récent pour le moment.",
+        "No recent files yet." => "Aucun fichier récent pour le moment.",
         "More files" => "Plus de fichiers",
         "Modified" => "Modifié",
         "Not available" => "Indisponible",

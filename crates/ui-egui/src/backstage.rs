@@ -456,7 +456,7 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
     if app.ui.recent.is_empty() {
-        dim(ui, lang.tr("No recent workbooks yet."));
+        dim(ui, lang.tr("No recent files yet."));
         return;
     }
     let width = ui.available_width().min(CONTENT_W);

@@ -263,7 +263,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options" => "Seçenekler",
         "Blank workbook" => "Boş çalışma kitabı",
         "Recent" => "Son Kullanılanlar",
-        "No recent workbooks yet." => "Henüz son kullanılan çalışma kitabı yok.",
+        "No recent files yet." => "Henüz son kullanılan dosya yok.",
         "More files" => "Diğer dosyalar",
         "Modified" => "Değiştirilme Tarihi",
         "Not available" => "Kullanılamıyor",

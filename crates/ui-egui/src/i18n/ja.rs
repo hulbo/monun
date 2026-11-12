@@ -352,7 +352,7 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Options", "オプション"),
     ("Blank workbook", "空白のブック"),
     ("Recent", "最近使ったアイテム"),
-    ("No recent workbooks yet.", "最近使ったブックはまだありません。"),
+    ("No recent files yet.", "最近使ったファイルはまだありません。"),
     ("More files", "その他のファイル"),
     ("Modified", "更新日時"),
     ("Not available", "利用できません"),

@@ -86,6 +86,7 @@ fn new_and_open_from_the_file_tab_keep_the_ribbon_as_it_was() {
     h.get_by_label("File").click();
     h.run_steps(3);
     assert_eq!(page(&h), Some("home"), "the File tab opens the Backstage view on Home");
+    assert!(h.query_by_label("No recent files yet.").is_some(), "an empty recent list says so");
     choose(&mut h, "New");
     assert_eq!(page(&h), Some("new"));
     click(&mut h, "Excel Workbook");

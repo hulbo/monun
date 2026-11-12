@@ -257,7 +257,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options" => "Επιλογές",
         "Blank workbook" => "Κενό βιβλίο εργασίας",
         "Recent" => "Πρόσφατα",
-        "No recent workbooks yet." => "Δεν υπάρχουν ακόμη πρόσφατα βιβλία εργασίας.",
+        "No recent files yet." => "Δεν υπάρχουν ακόμη πρόσφατα αρχεία.",
         "More files" => "Περισσότερα αρχεία",
         "Modified" => "Τροποποιήθηκε",
         "Not available" => "Μη διαθέσιμο",

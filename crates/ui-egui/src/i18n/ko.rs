@@ -363,7 +363,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "버전, 기여자 및 도움을 준 AI 모델",
         "Blank workbook" => "새 통합 문서",
         "Recent" => "최근 항목",
-        "No recent workbooks yet." => "최근 통합 문서가 아직 없습니다.",
+        "No recent files yet." => "최근 파일이 아직 없습니다.",
         "More files" => "더 많은 파일",
         "Modified" => "수정한 날짜",
         "Not available" => "사용할 수 없음",

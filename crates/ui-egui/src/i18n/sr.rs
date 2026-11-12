@@ -354,7 +354,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Version, contributors and the AI models that helped" => "Verzija, saradnici i AI modeli koji su pomogli",
         "Blank workbook" => "Prazna radna sveska",
         "Recent" => "Nedavno",
-        "No recent workbooks yet." => "Još nema nedavnih radnih svezaka.",
+        "No recent files yet." => "Još nema nedavnih datoteka.",
         "More files" => "Više datoteka",
         "Modified" => "Izmenjeno",
         "Not available" => "Nije dostupno",

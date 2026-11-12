@@ -353,7 +353,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options" => "Tùy chọn",
         "Blank workbook" => "Sổ làm việc trống",
         "Recent" => "Gần đây",
-        "No recent workbooks yet." => "Chưa có sổ làm việc gần đây.",
+        "No recent files yet." => "Chưa có tệp gần đây.",
         "More files" => "Tệp khác",
         "Modified" => "Đã sửa đổi",
         "Not available" => "Không khả dụng",

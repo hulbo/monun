@@ -272,7 +272,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Licence" => "Licence",
         "Blank workbook" => "Prázdný sešit",
         "Recent" => "Naposledy použité",
-        "No recent workbooks yet." => "Zatím žádné naposledy použité sešity.",
+        "No recent files yet." => "Zatím žádné naposledy použité soubory.",
         "More files" => "Další soubory",
         "Modified" => "Změněno",
         "Not available" => "Nedostupné",
