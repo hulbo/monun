@@ -2131,6 +2131,12 @@ const MORE: &[(&str, &str)] = &[
     ("Replaced {count}.", "{count}개를 바꿨습니다."),
     ("Headings (Heading 1, 2, …) show here.", "제목 스타일(제목 1, 2, …) 문단이 여기에 나옵니다."),
     ("New Word Document", "새 Word 문서"),
+    // File › New: what each tile makes.
+    ("Excel Workbook", "Excel 통합 문서"),
+    ("Markdown Document", "Markdown 문서"),
+    ("Word Document", "Word 문서"),
+    ("SQL File", "SQL 파일"),
+    ("Text File", "텍스트 문서"),
     ("This version of Monun can't show Word documents.", "이 버전의 모눈에서는 Word 문서를 볼 수 없습니다."),
     ("A Word document is edited, saved, exported and printed in its tab.", "Word 문서는 문서 탭에서 편집하고 저장·내보내기·인쇄합니다."),
     ("Word Document (*.docx)", "Word 문서 (*.docx)"),

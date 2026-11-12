@@ -407,7 +407,7 @@ pub(crate) fn path_icon(path: &str) -> Icon {
     file_icon(kind)
 }
 
-fn file_icon(kind: Option<TextKind>) -> Icon {
+pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
     match kind {
         None => Icon::Sheet,
         Some(TextKind::Sql) => Icon::Script,
@@ -450,14 +450,14 @@ fn new_workbook(app: &mut SheetApp) {
     app.run_or_alert("file.new", json!({}));
 }
 
-fn new_markdown(app: &mut SheetApp) {
+pub(crate) fn new_markdown(app: &mut SheetApp) {
     let prefix = app.ui.language.tr("Doc").to_string();
     app.run_or_alert("file.new", json!({"document": true, "prefix": prefix}));
 }
 
 /// A new SQL, plain text or Word file, `Query1.sql`, `Text1.txt` or `Document1.docx` in the
 /// interface's language.
-fn new_text(app: &mut SheetApp, kind: TextKind) {
+pub(crate) fn new_text(app: &mut SheetApp, kind: TextKind) {
     let (prefix, name) = match kind {
         TextKind::Sql => ("Query", "sql"),
         TextKind::Word => ("Document", "word"),

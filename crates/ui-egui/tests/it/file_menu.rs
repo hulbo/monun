@@ -42,7 +42,7 @@ fn click_at(h: &mut egui_kittest::Harness<'static, SheetApp>, pos: egui::Pos2) {
 }
 
 /// Home and New are mostly blank: a click there returns to the sheet, as Esc does. File › New
-/// offers a blank workbook and the purchase list, and its tiles still take their clicks.
+/// offers a new file of each kind, not templates, and its tiles still take their clicks.
 #[test]
 fn a_click_on_the_blank_of_home_or_new_returns_to_the_sheet() {
     let mut h = harness(Services::default());
@@ -57,9 +57,11 @@ fn a_click_on_the_blank_of_home_or_new_returns_to_the_sheet() {
         assert!(h.state().backstage.is_none(), "a blank click on {page} closes the File view");
     }
     choose(&mut h, "New");
-    assert!(h.query_by_label("Purchase List").is_some());
-    assert!(h.query_by_label("Household Budget").is_none(), "the demo samples are not offered");
-    click(&mut h, "Blank workbook");
+    for kind in ["Excel Workbook", "Markdown Document", "Word Document", "SQL File", "Text File"] {
+        assert!(h.query_by_label(kind).is_some(), "{kind}");
+    }
+    assert!(h.query_by_label("Purchase List").is_none(), "templates are not offered");
+    click(&mut h, "Excel Workbook");
     assert_eq!(h.state().session.documents().len(), 2, "a tile still opens its workbook");
     // Other pages keep their blank space: Info is a form, not a gallery.
     choose(&mut h, "Info");
@@ -86,7 +88,7 @@ fn new_and_open_from_the_file_tab_keep_the_ribbon_as_it_was() {
     assert_eq!(page(&h), Some("home"), "the File tab opens the Backstage view on Home");
     choose(&mut h, "New");
     assert_eq!(page(&h), Some("new"));
-    click(&mut h, "Blank workbook");
+    click(&mut h, "Excel Workbook");
     assert_eq!(h.state().session.documents().len(), 2);
     assert!(h.state().backstage.is_none(), "creating a workbook returns to the sheet");
     choose(&mut h, "Open");
@@ -761,4 +763,21 @@ fn a_pdf_or_web_page_of_several_sheets_takes_them_all_or_this_one() {
     assert!(page(0).contains(">42</td>") && page(0).contains("<h1>Plan</h1>"));
     assert!(!page(2).contains("<nav") && page(2).contains("<h1>Plan</h1>") && !page(2).contains(">42<"));
     assert!(pages(1) == 2 && pages(3) == 1, "{} and {} pages", pages(1), pages(3));
+}
+
+/// Each File › New tile makes a new file of its kind in a tab of its own, named as the + menu
+/// names it.
+#[test]
+fn each_new_tile_makes_a_file_of_its_kind() {
+    let mut h = harness(Services::default());
+    for (label, title) in
+        [("Markdown Document", "Doc1.md"), ("Word Document", "Document1.docx"), ("SQL File", "Query1.sql"), ("Text File", "Text1.txt")]
+    {
+        h.get_by_label("File").click();
+        h.run_steps(3);
+        choose(&mut h, "New");
+        click(&mut h, label);
+        assert!(h.state().backstage.is_none(), "{label} returns to the new tab");
+        assert_eq!(h.state().session.active().map(|d| d.title.as_str()), Some(title));
+    }
 }

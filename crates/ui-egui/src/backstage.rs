@@ -19,6 +19,7 @@ use crate::SheetApp;
 use crate::i18n::{self, Language};
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
+use monun_engine::docs::TextKind;
 
 mod options;
 mod print;
@@ -321,30 +322,44 @@ fn dim(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).font(theme::ui_font(12.5)).color(t.text_dim));
 }
 
-/// A new-workbook tile: a small sheet drawn in code over its name.
-fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
+/// What File › New makes: a workbook, or a new file of each kind a document tab edits.
+const NEW_KINDS: [(Option<TextKind>, &str); 5] = [
+    (None, "Excel Workbook"),
+    (Some(TextKind::Markdown), "Markdown Document"),
+    (Some(TextKind::Word), "Word Document"),
+    (Some(TextKind::Sql), "SQL File"),
+    (Some(TextKind::Plain), "Text File"),
+];
+
+/// A File › New tile: a small page of its kind drawn in code, the kind's icon in its corner, over
+/// its name.
+fn tile(ui: &mut Ui, label: &str, kind: Option<TextKind>) -> egui::Response {
     let t = Tokens::get(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 140.0), Sense::click());
+    // Five to a row in the Backstage view's width.
+    let (rect, resp) = ui.allocate_exact_size(vec2(136.0, 136.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let p = ui.painter();
-    let thumb = Rect::from_min_size(rect.min, vec2(rect.width(), 104.0));
+    let thumb = Rect::from_min_size(rect.min, vec2(rect.width(), 100.0));
     p.rect_filled(thumb, 4.0, t.grid_bg);
     let edge = if resp.hovered() { Stroke::new(2.0, t.accent) } else { Stroke::new(1.0, t.ribbon_border) };
     let inner = thumb.shrink(10.0);
+    match kind {
+        None => sheet_sketch(p, inner, &t),
+        Some(kind) => page_sketch(p, inner, kind, &t),
+    }
+    let badge = Rect::from_min_size(pos2(thumb.right() - 32.0, thumb.bottom() - 32.0), vec2(24.0, 24.0));
+    p.rect_filled(badge.expand(4.0), 4.0, t.grid_bg);
+    icons::paint(p, badge, crate::file_tabs::file_icon(kind), t.text);
+    p.rect_stroke(thumb, 4.0, edge, StrokeKind::Inside);
+    let galley = p.layout(label.to_string(), theme::ui_font(12.5), t.text, rect.width());
+    p.galley(pos2(rect.left(), thumb.bottom() + 6.0), galley, t.text);
+    resp
+}
+
+/// An empty sheet: its grid.
+fn sheet_sketch(p: &egui::Painter, inner: Rect, t: &Tokens) {
     let (rows, cols) = (7, 4);
     let (rh, cw) = (inner.height() / rows as f32, inner.width() / cols as f32);
-    if let Some(i) = sample {
-        // A header band and a few "values" so each sample reads differently from a blank book.
-        p.rect_filled(Rect::from_min_size(inner.min, vec2(inner.width(), rh)), 0.0, t.accent_soft);
-        for r in 1..rows {
-            let len = ((r * (i + 2) * 7 + i * 3) % 10) as f32 / 10.0;
-            let bar = Rect::from_min_size(
-                pos2(inner.left() + cw + 3.0, inner.top() + r as f32 * rh + 3.0),
-                vec2((cw * 3.0 - 6.0) * (0.25 + 0.75 * len), rh - 6.0),
-            );
-            p.rect_filled(bar, 1.0, t.accent.gamma_multiply(0.75));
-        }
-    }
     for r in 0..=rows {
         let y = inner.top() + r as f32 * rh;
         p.line_segment([pos2(inner.left(), y), pos2(inner.right(), y)], Stroke::new(1.0, t.gridline));
@@ -353,24 +368,71 @@ fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
         let x = inner.left() + c as f32 * cw;
         p.line_segment([pos2(x, inner.top()), pos2(x, inner.bottom())], Stroke::new(1.0, t.gridline));
     }
-    p.rect_stroke(thumb, 4.0, edge, StrokeKind::Inside);
-    let galley = p.layout(label.to_string(), theme::ui_font(12.5), t.text, rect.width());
-    p.galley(pos2(rect.left(), thumb.bottom() + 6.0), galley, t.text);
-    resp
 }
 
-/// Blank workbook and the templates (`sample::TEMPLATES`).
+/// Lines of text as a file of `kind` sets them out: a heading and a list in Markdown, a title over
+/// justified paragraphs in Word, keywords and indents in SQL, ragged lines in plain text.
+fn page_sketch(p: &egui::Painter, inner: Rect, kind: TextKind, t: &Tokens) {
+    let ink = t.text_dim.gamma_multiply(0.45);
+    let full = inner.width();
+    // A bar on line `row`, `x` points in, `w` of the width long; the last lines stop short of the
+    // icon in the corner.
+    let bar = |row: usize, x: f32, w: f32, tall: bool, c: Color32| {
+        let at = pos2(inner.left() + x, inner.top() + 2.0 + row as f32 * 9.0);
+        let room = if row >= 6 { full - 30.0 - x } else { full - x };
+        p.rect_filled(Rect::from_min_size(at, vec2((full * w).min(room), if tall { 6.0 } else { 3.5 })), 1.0, c);
+    };
+    match kind {
+        TextKind::Markdown => {
+            bar(0, 0.0, 0.55, true, t.accent);
+            for (row, w) in [(2, 0.95), (3, 0.9), (4, 0.55)] {
+                bar(row, 0.0, w, false, ink);
+            }
+            for (row, w) in [(6, 0.5), (7, 0.6), (8, 0.4)] {
+                bar(row, 1.0, 0.03, false, ink);
+                bar(row, 9.0, w, false, ink);
+            }
+        }
+        TextKind::Word => {
+            bar(0, full * 0.25, 0.5, true, t.cat(theme::Cat::Blue));
+            for (row, w) in [(2, 1.0), (3, 1.0), (4, 0.6), (6, 1.0), (7, 1.0), (8, 0.45)] {
+                bar(row, 0.0, w, false, ink);
+            }
+        }
+        TextKind::Sql => {
+            let keyword = t.cat(theme::Cat::Purple);
+            for (row, key, rest) in [(0, 0.25, 0.45), (1, 0.0, 0.5), (2, 0.0, 0.35), (3, 0.2, 0.4), (4, 0.25, 0.3), (5, 0.0, 0.45), (7, 0.3, 0.25)] {
+                if key > 0.0 {
+                    bar(row, 0.0, key, false, keyword);
+                    bar(row, full * key + 4.0, rest, false, ink);
+                } else {
+                    bar(row, 14.0, rest, false, ink);
+                }
+            }
+        }
+        _ => {
+            for (row, w) in [(0, 0.9), (1, 0.75), (2, 0.95), (3, 0.5), (5, 0.85), (6, 0.7), (7, 0.92), (8, 0.4)] {
+                bar(row, 0.0, w, false, ink);
+            }
+        }
+    }
+}
+
+/// A new file of each kind (`NEW_KINDS`).
 fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     let lang = app.ui.language;
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(18.0, 14.0);
-        if tile(ui, lang.tr("Blank workbook"), None).clicked() {
-            app.run_or_alert("file.new", json!({}));
-            out.close = true;
-        }
-        for (i, (name, title)) in monun_engine::sample::TEMPLATES.iter().enumerate() {
-            if tile(ui, lang.tr(title), Some(i)).clicked() {
-                app.run_or_alert("file.new", json!({"sample": name}));
+        ui.spacing_mut().item_spacing = vec2(16.0, 14.0);
+        for (kind, label) in NEW_KINDS {
+            if kind == Some(TextKind::Word) && !cfg!(feature = "word") {
+                continue;
+            }
+            if tile(ui, lang.tr(label), kind).clicked() {
+                match kind {
+                    None => app.run_or_alert("file.new", json!({})),
+                    Some(TextKind::Markdown) => crate::file_tabs::new_markdown(app),
+                    Some(kind) => crate::file_tabs::new_text(app, kind),
+                }
                 out.close = true;
             }
         }
@@ -421,7 +483,8 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
         if resp.hovered() {
             p.rect_filled(rect, 4.0, t.hover);
         }
-        icons::paint(p, Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
+        let icon = crate::file_tabs::path_icon(&path);
+        icons::paint(p, Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0)), icon, t.text);
         // A long name or folder stops short of the column instead of running under it.
         let room = if modified_w > 0.0 { rect.right() - modified_w - 14.0 } else { rect.right() };
         let text = p.with_clip_rect(Rect::from_min_max(rect.min, pos2(room, rect.bottom())).intersect(p.clip_rect()));
