@@ -79,7 +79,13 @@ pub fn svg(source: &str, dark: bool) -> Result<String, String> {
 /// out ([`layered`]): `|"text"|` without its quotes, and each label on its arrow over a plain
 /// background.
 fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_renderer::ParseError> {
-    let mut graph = mermaid_rs_renderer::parse_mermaid_strict(source)?.graph;
+    // A flowchart's chains an arrow a line, as the renderer reads them whole that way.
+    let split = if is_flowchart(source) { split_chains(source) } else { None };
+    let parsed = match split.as_deref().map(mermaid_rs_renderer::parse_mermaid_strict) {
+        Some(Ok(parsed)) => parsed,
+        _ => mermaid_rs_renderer::parse_mermaid_strict(source)?,
+    };
+    let mut graph = parsed.graph;
     let flowchart = graph.kind == DiagramKind::Flowchart;
     if flowchart {
         for edge in &mut graph.edges {
@@ -98,8 +104,44 @@ fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_rend
     if flowchart {
         layered::relayout(&graph, &mut layout);
     }
+    readable_text(&mut layout);
     let svg = cylinders(&mermaid_rs_renderer::render_svg(&layout, &options.theme, &config));
     Ok(if flowchart { without_label_borders(&svg) } else { svg })
+}
+
+/// Text on a box or group given a fill (`style X fill:#…`) but no text colour: dark on a light
+/// fill, white on a dark one, whichever reads better. A style written for the light theme (pale
+/// fills) otherwise had the dark theme's pale text on it, hard to read.
+fn readable_text(layout: &mut mermaid_rs_renderer::Layout) {
+    let styles = layout.nodes.values_mut().map(|n| &mut n.style).chain(layout.subgraphs.iter_mut().map(|s| &mut s.style));
+    for style in styles {
+        if style.text_color.is_none()
+            && let Some(fill) = style.fill.as_deref().and_then(luminance)
+        {
+            // Dark text (luminance about 0.02) reads better above about 0.22, white below.
+            let text = if fill > 0.22 { "#1E293B" } else { "#F8FAFC" };
+            style.text_color = Some(text.to_owned());
+        }
+    }
+}
+
+/// The relative luminance (0 black to 1 white) of a `#rgb` or `#rrggbb` colour.
+fn luminance(color: &str) -> Option<f32> {
+    let hex = color.trim().strip_prefix('#')?;
+    let channel = |s: &str| u8::from_str_radix(s, 16).ok().map(f32::from);
+    let (r, g, b) = match hex.len() {
+        3 => {
+            let one = |i: usize| hex.get(i..=i).and_then(channel).map(|v| v * 17.0);
+            (one(0)?, one(1)?, one(2)?)
+        }
+        6 | 8 => (channel(hex.get(0..2)?)?, channel(hex.get(2..4)?)?, channel(hex.get(4..6)?)?),
+        _ => return None,
+    };
+    let linear = |v: f32| {
+        let s = v / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    Some(0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b))
 }
 
 /// The SVG with each cylinder (`[(…)]`, a database) drawn as Mermaid draws one. The renderer
@@ -219,6 +261,107 @@ fn unquote(label: &str) -> String {
     }
 }
 
+/// Whether `source` is a flowchart (`flowchart …` or `graph …` its first statement, after any front
+/// matter and comments).
+fn is_flowchart(source: &str) -> bool {
+    let mut lines = source.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("%%")).peekable();
+    if lines.peek() == Some(&"---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line == "---" {
+                break;
+            }
+        }
+    }
+    lines.next().is_some_and(|l| l.starts_with("flowchart") || l.starts_with("graph"))
+}
+
+/// A flowchart with each chain of arrows (`A --> B --> C`) written an arrow a line, when it has
+/// any: the renderer drops what follows a labelled arrow in a chain (of `C -->|Y| D -->|N| E` it
+/// kept only `C → D`).
+fn split_chains(source: &str) -> Option<String> {
+    let mut out = String::with_capacity(source.len() + 64);
+    let mut changed = false;
+    for line in source.lines() {
+        match chain(line) {
+            Some(parts) => {
+                changed = true;
+                let indent = line.get(..line.len() - line.trim_start().len()).unwrap_or("");
+                let mut steps = parts.chunks(2).peekable();
+                while let Some(step) = steps.next() {
+                    if let ([from, arrow], Some([to, ..])) = (step, steps.peek().copied()) {
+                        out.push_str(&format!("{indent}{from} {arrow} {to}\n"));
+                    }
+                }
+            }
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    changed.then_some(out)
+}
+
+/// A line's nodes and arrows (each with its `|label|`), alternately, when it chains more than one
+/// arrow; `None` for any other line, or one written in a form this leaves as it is (`A -- text --> B`,
+/// statements after `;`, an arrow's id `e1@-->`).
+fn chain(line: &str) -> Option<Vec<&str>> {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let byte = |i: usize| chars.get(i).map_or(line.len(), |c| c.0);
+    let arrow_char = |c: char| matches!(c, '-' | '=' | '~' | '.' | '<' | '>');
+    let mut parts = Vec::new();
+    let (mut depth, mut quoted, mut start, mut i) = (0i32, false, 0usize, 0usize);
+    let mut prev: Option<char> = None;
+    while let Some(&(at, c)) = chars.get(i) {
+        if quoted {
+            quoted = c != '"';
+        } else if c == '"' {
+            quoted = true;
+        } else if matches!(c, '[' | '(' | '{') || (c == '>' && depth == 0 && prev.is_some_and(|p| p.is_alphanumeric() || p == '_')) {
+            // `A>flag]` opens a shape too.
+            depth += 1;
+        } else if matches!(c, ']' | ')' | '}') {
+            depth -= 1;
+        } else if depth == 0 && matches!(c, ';' | '@') {
+            return None;
+        } else if depth == 0 && arrow_char(c) && c != '>' {
+            let mut end = i;
+            while chars.get(end).is_some_and(|&(_, c)| arrow_char(c)) {
+                end += 1;
+            }
+            let token = line.get(at..byte(end)).unwrap_or("");
+            if token.chars().filter(|c| matches!(c, '-' | '=' | '~')).count() >= 2 {
+                // An arrow opening text written inside it.
+                if matches!(token, "--" | "==" | "-.") {
+                    return None;
+                }
+                let mut next = end;
+                while chars.get(next).is_some_and(|c| c.1 == ' ') {
+                    next += 1;
+                }
+                if chars.get(next).is_some_and(|c| c.1 == '|') {
+                    let close = (next + 1..chars.len()).find(|&k| chars.get(k).is_some_and(|c| c.1 == '|'))?;
+                    end = close + 1;
+                }
+                parts.push(line.get(start..at)?.trim());
+                parts.push(line.get(at..byte(end))?.trim());
+                start = byte(end);
+                i = end;
+                prev = None;
+                continue;
+            }
+            i = end;
+            prev = chars.get(end.saturating_sub(1)).map(|c| c.1);
+            continue;
+        }
+        prev = Some(c);
+        i += 1;
+    }
+    parts.push(line.get(start..)?.trim());
+    (parts.len() >= 5 && parts.iter().step_by(2).all(|p| !p.is_empty())).then_some(parts)
+}
+
 /// The SVG with the arrow labels' backgrounds kept and their outlines taken away: Mermaid's labels
 /// sit on their arrows without a frame.
 fn without_label_borders(svg: &str) -> String {
@@ -294,6 +437,49 @@ mod tests {
             assert_eq!(image.rgba.len(), image.width as usize * image.height as usize * 4);
             assert!(image.rgba.chunks(4).any(|px| px[3] > 0), "{source}: something is drawn");
         }
+    }
+
+    #[test]
+    fn text_on_a_filled_box_or_group_reads_on_its_fill() {
+        let source = "flowchart LR\n    subgraph G[묶음]\n        A[밝은 칸] --> B[어두운 칸]\n    end\n    B --> C[글자색 지정]\n    B --> D[기본]\n    style A fill:#bbdefb\n    style B fill:#1e3a8a\n    style C fill:#bbdefb,color:#ff0000\n    style G fill:#e3f2fd";
+        let graph = mermaid_rs_renderer::parse_mermaid_strict(source).unwrap_or_else(|e| panic!("{e}")).graph;
+        let options = RenderOptions::default();
+        let mut layout = mermaid_rs_renderer::compute_layout(&graph, &options.theme, &options.layout);
+        readable_text(&mut layout);
+        let text = |id: &str| layout.nodes.get(id).and_then(|n| n.style.text_color.clone());
+        assert_eq!(text("A").as_deref(), Some("#1E293B"), "dark on a light fill");
+        assert_eq!(text("B").as_deref(), Some("#F8FAFC"), "white on a dark fill");
+        assert_eq!(text("C").as_deref(), Some("#ff0000"), "a colour given stays");
+        assert_eq!(text("D"), None, "no fill, the theme's text");
+        assert_eq!(layout.subgraphs.first().and_then(|s| s.style.text_color.as_deref()), Some("#1E293B"), "a group's title too");
+        assert_eq!(luminance("#fff"), Some(1.0));
+        assert_eq!(luminance("#000000"), Some(0.0));
+        assert_eq!(luminance("red"), None);
+        assert_eq!(luminance("#12"), None);
+    }
+
+    #[test]
+    fn a_chain_of_arrows_keeps_every_arrow() {
+        let source = "flowchart TB\n    A --> B --> C\n    C -->|Y| D[\"둘 --> 셋\"] -->|N| D1\n    G -->|Y| H --> I & J\n    K -- 글 --> L\n    M -. 점선 .-> N\n    style A fill:#fff";
+        let split = split_chains(source);
+        assert_eq!(
+            split.as_deref(),
+            Some(
+                "flowchart TB\n    A --> B\n    B --> C\n    C -->|Y| D[\"둘 --> 셋\"]\n    D[\"둘 --> 셋\"] -->|N| D1\n    G -->|Y| H\n    H --> I & J\n    K -- 글 --> L\n    M -. 점선 .-> N\n    style A fill:#fff\n"
+            )
+        );
+        let graph = mermaid_rs_renderer::parse_mermaid_strict(split.as_deref().unwrap_or_default()).unwrap_or_else(|e| panic!("{e}")).graph;
+        let arrows: Vec<(&str, &str)> = graph.edges.iter().map(|e| (e.from.as_str(), e.to.as_str())).collect();
+        for arrow in [("A", "B"), ("B", "C"), ("C", "D"), ("D", "D1"), ("G", "H"), ("H", "I"), ("H", "J"), ("K", "L"), ("M", "N")] {
+            assert!(arrows.contains(&arrow), "{arrow:?} in {arrows:?}");
+        }
+        assert_eq!(split_chains("flowchart LR\n    A --> B\n    B -->|예| C"), None, "nothing to split");
+        assert_eq!(chain("    A -- 글 --> B --> C"), None, "text inside an arrow is left as it is");
+        assert!(is_flowchart("---\ntitle: 흐름\n---\n%% 메모\nflowchart LR\n    A --> B"));
+        assert!(is_flowchart("graph TD\n    A --> B"));
+        assert!(!is_flowchart("sequenceDiagram\n    A->>B: 안녕"));
+        // Drawn, a chain keeps its arrows.
+        assert!(svg(source, false).is_ok_and(|svg| svg.contains("D1")));
     }
 
     #[test]
