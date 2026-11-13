@@ -323,13 +323,14 @@ fn dim(ui: &mut Ui, text: &str) {
 }
 
 /// What File › New makes: a workbook, or a new file of each kind a document tab edits.
-const NEW_KINDS: [(Option<TextKind>, &str); 6] = [
+const NEW_KINDS: [(Option<TextKind>, &str); 7] = [
     (None, "Excel Workbook"),
     (Some(TextKind::Markdown), "Markdown Document"),
     (Some(TextKind::Word), "Word Document"),
     (Some(TextKind::Hwp), "Hangul Document"),
     (Some(TextKind::Sql), "SQL File"),
     (Some(TextKind::Plain), "Text File"),
+    (Some(TextKind::Web), "Site Link"),
 ];
 
 /// A File › New tile: a small page of its kind drawn in code, the kind's icon in its corner, over
@@ -413,6 +414,24 @@ fn page_sketch(p: &egui::Painter, inner: Rect, kind: TextKind, t: &Tokens) {
                 bar(row, 0.0, w, false, ink);
             }
         }
+        TextKind::Web => {
+            // A browser's window: its bar of dots and address over a page of blocks.
+            let bar_h = 12.0;
+            p.rect_stroke(Rect::from_min_size(inner.min, vec2(full, inner.height() - 4.0)), 2.0, Stroke::new(1.0, ink), StrokeKind::Inside);
+            p.line_segment([pos2(inner.left(), inner.top() + bar_h), pos2(inner.right(), inner.top() + bar_h)], Stroke::new(1.0, ink));
+            for i in 0..3 {
+                p.circle_filled(pos2(inner.left() + 5.0 + i as f32 * 5.0, inner.top() + bar_h / 2.0), 1.5, ink);
+            }
+            p.rect_filled(
+                Rect::from_min_size(pos2(inner.left() + 22.0, inner.top() + 3.5), vec2(full - 28.0, 5.0)),
+                2.0,
+                t.cat(theme::Cat::Blue).gamma_multiply(0.5),
+            );
+            bar(2, 4.0, 0.5, true, t.cat(theme::Cat::Blue));
+            for (row, w) in [(4, 0.85), (5, 0.8), (6, 0.5)] {
+                bar(row, 4.0, w, false, ink);
+            }
+        }
         TextKind::Sql => {
             let keyword = t.cat(theme::Cat::Purple);
             for (row, key, rest) in [(0, 0.25, 0.45), (1, 0.0, 0.5), (2, 0.0, 0.35), (3, 0.2, 0.4), (4, 0.25, 0.3), (5, 0.0, 0.45), (7, 0.3, 0.25)] {
@@ -445,6 +464,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
                 match kind {
                     None => app.run_or_alert("file.new", json!({})),
                     Some(TextKind::Markdown) => crate::file_tabs::new_markdown(app),
+                    Some(TextKind::Web) => crate::web_view::new_link(app),
                     Some(kind) => crate::file_tabs::new_text(app, kind),
                 }
                 out.close = true;

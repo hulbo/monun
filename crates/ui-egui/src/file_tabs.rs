@@ -402,7 +402,9 @@ pub(crate) fn path_icon(path: &str) -> Icon {
             | monun_engine::io::FileKind::Pdf
             | monun_engine::io::FileKind::Word
             | monun_engine::io::FileKind::Hwp
-            | monun_engine::io::FileKind::Image,
+            | monun_engine::io::FileKind::Image
+            | monun_engine::io::FileKind::Html
+            | monun_engine::io::FileKind::Web,
         ) => Some(TextKind::of_name(path)),
         _ => None,
     };
@@ -419,6 +421,7 @@ pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Word) => Icon::Word,
         Some(TextKind::Hwp) => Icon::Hwp,
         Some(TextKind::Image) => Icon::ImageFile,
+        Some(TextKind::Web) => Icon::WebFile,
     }
 }
 
@@ -446,6 +449,9 @@ fn new_file_menu(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         }
         if cfg!(feature = "hwp") && ui.button(lang.tr("New Hangul Document")).clicked() {
             new_text(app, TextKind::Hwp);
+        }
+        if ui.button(lang.tr("New Site Link…")).clicked() {
+            crate::web_view::new_link(app);
         }
         ui.separator();
         if ui.button(lang.tr("Open…")).clicked() {
@@ -613,6 +619,9 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     if cfg!(feature = "hwp") && start_button(ui, Icon::Hwp, lang.tr("New Hangul Document"), &t).clicked() {
                         new_text(app, TextKind::Hwp);
+                    }
+                    if start_button(ui, Icon::WebFile, lang.tr("New Site Link…"), &t).clicked() {
+                        crate::web_view::new_link(app);
                     }
                     if start_button(ui, Icon::Folder, lang.tr("Open…"), &t).clicked() {
                         app.run_or_alert("file.open", json!({}));

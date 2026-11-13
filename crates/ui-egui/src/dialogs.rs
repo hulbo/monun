@@ -1018,6 +1018,7 @@ impl Dialog {
                 json!({"target": p("target"), "new": p("new"), "project": p("project"), "files": p("files"), "delete": p("delete")}),
             ),
             "newProject" => Dialog::custom("newProject", "New Project", json!({"name": ""})),
+            "siteLink" => Dialog::custom("siteLink", "Site Link", json!({"url": "", "name": ""})),
             "renameProject" => Dialog::custom("renameProject", "Rename Project", json!({"name": p("name"), "was": p("name")})),
             "deleteProject" => Dialog::custom("deleteProject", "Delete Project", json!({"name": p("name")})),
             "start" => Dialog::custom("start", "Monun", json!({})),

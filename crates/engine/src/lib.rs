@@ -413,6 +413,11 @@ impl DocState {
     pub fn is_image(&self) -> bool {
         self.text_kind() == Some(docs::TextKind::Image)
     }
+    /// A web page (an HTML file or a site link) opened to look at: nothing changes it, saves,
+    /// exports or prints it.
+    pub fn is_web(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Web)
+    }
 }
 
 /// Engine-side preferences.
@@ -700,6 +705,7 @@ impl Session {
             docs::TextKind::Plain => "Text",
             docs::TextKind::Pdf => "PDF",
             docs::TextKind::Image => "Picture",
+            docs::TextKind::Web => "Page",
             docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();

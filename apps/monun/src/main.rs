@@ -19,6 +19,8 @@ mod logging;
 mod native_menu;
 mod print;
 mod single_instance;
+#[cfg(target_os = "windows")]
+mod web;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,6 +38,9 @@ struct App {
     menu: Option<native_menu::NativeMenu>,
     #[cfg(target_os = "macos")]
     events: fmv_macos_events::Inbox,
+    /// Web tabs' pages, each a WebView2 view in the window.
+    #[cfg(target_os = "windows")]
+    web: web::Web,
 }
 
 impl eframe::App for App {
@@ -80,11 +85,18 @@ impl eframe::App for App {
             }
         }
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        // The web tabs' pages where the frame just drawn puts them.
+        #[cfg(target_os = "windows")]
+        self.web.sync(&*frame, &mut self.app.web, ui.ctx());
+        #[cfg(not(target_os = "windows"))]
+        let _ = frame;
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         print::finish_pending_jobs();
+        #[cfg(target_os = "windows")]
+        self.web.close();
         if let Some(l) = &self.instance {
             l.close();
         }
@@ -134,6 +146,21 @@ static CONTROLLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// This run writes the preferences (`ui.json`, `prefs.json`): it has them and no script drives it.
 fn persists() -> bool {
     prefs_enabled() && !CONTROLLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Where the web tabs keep sign-ins and cookies: `%LOCALAPPDATA%\Monun\WebView2`, or for a test run
+/// (which keeps nothing of the user's) one folder in the temporary folder, emptied as each test run
+/// starts and ends (WebView2's helpers may still hold it at the end, so one folder, never one a run).
+#[cfg(target_os = "windows")]
+fn web_data() -> std::path::PathBuf {
+    match std::env::var_os("LOCALAPPDATA").filter(|_| persists()) {
+        Some(local) => std::path::PathBuf::from(local).join("Monun").join("WebView2"),
+        None => {
+            let dir = std::env::temp_dir().join("monun-webview-test");
+            let _ = std::fs::remove_dir_all(&dir);
+            dir
+        }
+    }
 }
 
 /// Writes `ui.json` (the interface preferences, file groups included) now.
@@ -240,7 +267,7 @@ fn services() -> Services {
                     "Spreadsheets and documents",
                     &[
                         "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp",
-                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp",
+                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url",
                     ],
                 )
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
@@ -254,6 +281,7 @@ fn services() -> Services {
                 .add_filter("Word document", &["docx", "dotx", "doc", "rtf", "odt"])
                 .add_filter("Hangul document", &["hwp", "hwpx"])
                 .add_filter("Pictures (view only)", &["png", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "ico", "tif", "tiff"])
+                .add_filter("Web pages and site links (view only)", &["html", "htm", "url"])
                 .add_filter("PDF document (read only)", &["pdf"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
@@ -269,7 +297,7 @@ fn services() -> Services {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
             // The suggested name's type (an export asks for .pdf, .csv or .html) comes first.
-            const TYPES: [(&str, &str); 10] = [
+            const TYPES: [(&str, &str); 11] = [
                 ("Excel Workbook (.xlsx)", "xlsx"),
                 ("Word Document (.docx)", "docx"),
                 ("Hangul Document (.hwpx)", "hwpx"),
@@ -280,6 +308,7 @@ fn services() -> Services {
                 ("Markdown (.md)", "md"),
                 ("SQL (.sql)", "sql"),
                 ("Text (.txt)", "txt"),
+                ("Site Link (.url)", "url"),
             ];
             let ext = path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).filter(|e| TYPES.iter().any(|(_, x)| x == e));
             let ext = ext.unwrap_or_else(|| "xlsx".to_string());
@@ -514,6 +543,8 @@ fn main() -> eframe::Result<()> {
                 menu: None,
                 #[cfg(target_os = "macos")]
                 events: apple_events.connect(&cc.egui_ctx),
+                #[cfg(target_os = "windows")]
+                web: web::Web::new(web_data(), !persists()),
             }))
         }),
     )

@@ -41,6 +41,10 @@ pub enum FileKind {
     /// interface shows to look at ([`crate::docs::image_workbook`]); the engine never reads its
     /// contents and never writes it.
     Image,
+    /// A site link (.url, a Windows internet shortcut): opens, as an HTML file does, as a document
+    /// tab the interface shows the page of ([`crate::docs::web_workbook`]); the engine never reads
+    /// its contents and never writes it.
+    Web,
 }
 
 impl FileKind {
@@ -61,6 +65,7 @@ impl FileKind {
             "docx" | "dotx" | "doc" | "rtf" | "odt" => FileKind::Word,
             "hwp" | "hwpx" => FileKind::Hwp,
             "png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff" => FileKind::Image,
+            "url" => FileKind::Web,
             _ => return None,
         })
     }
@@ -107,6 +112,11 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_
     // A picture too: the interface reads and shows it.
     if FileKind::from_path(name) == Some(FileKind::Image) {
         return Ok((crate::docs::image_workbook(name), vec![]));
+    }
+    // And a web page, an HTML file or a site link: the interface shows the page. (A workbook is
+    // still saved as an HTML file, File › Export › Save as Web Page.)
+    if matches!(FileKind::from_path(name), Some(FileKind::Html | FileKind::Web)) {
+        return Ok((crate::docs::web_workbook(name), vec![]));
     }
     if monun_xlsx::sniff(bytes) != monun_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
@@ -365,6 +375,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Word => Err(EngineError::Other(crate::docs::WORD_IN_TAB.into())),
         FileKind::Hwp => Err(EngineError::Other(crate::docs::HWP_IN_TAB.into())),
         FileKind::Image => Err(EngineError::Other(crate::docs::IMAGE_READ_ONLY.into())),
+        FileKind::Web => Err(EngineError::Other(crate::docs::WEB_READ_ONLY.into())),
     }
 }
 

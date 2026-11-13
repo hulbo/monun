@@ -158,6 +158,7 @@ pub fn inspect(app: &SheetApp, ctx: &egui::Context) -> Json {
         "word": crate::word_view::inspect(app),
         "hwp": crate::hwp_view::inspect(app),
         "image": crate::image_view::inspect(app),
+        "web": crate::web_view::inspect(app),
         "windows": app.session.window_list(),
         "activeWindow": app.session.active_window(),
         "perf": {"frameMs": app.perf.frame_ms, "gridMs": app.perf.grid_ms, "logicMs": app.perf.logic_ms, "slowestMs": app.perf.slowest(), "fps": app.perf.fps},

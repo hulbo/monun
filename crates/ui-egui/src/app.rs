@@ -36,6 +36,7 @@ impl SheetApp {
             word: Default::default(),
             hwp: Default::default(),
             images: Default::default(),
+            web: Default::default(),
             memos: Default::default(),
             dialog: None,
             backstage: None,
@@ -240,6 +241,11 @@ impl SheetApp {
         // A script may have switched windows since the last frame.
         self.follow_active_window();
         text_box::before_ui(self, &ctx);
+        // Web tabs' pages, hidden until the tab in front is drawn: which the window shows, and
+        // an HTML file changed on disk.
+        if ctx.viewport_id() == egui::ViewportId::ROOT {
+            crate::web_view::tidy(self, &ctx);
+        }
         // Another window came forward without going through a command (which settles drafts
         // first): the draft goes into its own window instead of floating over this one. If its
         // workbook refuses it, its window comes back to the front with the draft open.
@@ -327,6 +333,8 @@ impl SheetApp {
             crate::hwp_view::tidy(self, &ctx);
             // Closed pictures' textures go.
             crate::image_view::tidy(self);
+            // A web tab closed or put behind this frame: its page goes, or hides.
+            crate::web_view::settle(self);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

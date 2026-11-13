@@ -210,6 +210,9 @@ impl SheetApp {
         if let Some(r) = crate::projects::command(self, id, p) {
             return Some(r);
         }
+        if let Some(r) = crate::web_view::command(self, id, p) {
+            return Some(r);
+        }
         let r = match id {
             "app.checkForUpdates" | "help.checkForUpdates" => {
                 self.check_for_updates();

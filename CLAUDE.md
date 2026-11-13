@@ -36,6 +36,15 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Picture tabs: `crates/ui-egui/src/image_view.rs`. The engine knows a picture only as an empty
   read-only tab (`TextKind::Image`, `docs::image_workbook`); the tab decodes the file off the UI
   thread with the `image` crate and shows it fitted, at 100% or at the tab's zoom.
+- Web tabs: `crates/ui-egui/src/web_view.rs` and `apps/monun/src/web.rs` (Windows). An HTML file or
+  a site link (`.url`, which New › Site Link writes) is an empty read-only tab to the engine
+  (`TextKind::Web`, `docs::web_workbook`). Each frame the tab lists which page shows where
+  (`web.panes`, physical pixels; hidden while a popup, dialog or the Backstage is open, since a web
+  view covers them) and what was asked of it (`web.orders`). After `ui`, the desktop app's `web::Web`
+  makes, moves, shows and hides a WebView2 view per tab with `wry` (`=0.57.2`, no default
+  features) as a child of the eframe window, and reports titles and addresses back
+  (`web.pages`). Control screenshots don't show the page (it isn't drawn by egui): `ui.inspect`'s
+  `web` says whether it loaded.
 - 한글 tabs: `crates/ui-egui/src/hwp_view/` (feature `hwp`, desktop only). The document lives on a thread of
   its own (`thread.rs`) in rhwp's `HwpDocument` (crates.io `rhwp = "=0.9.0"`, no default features but
   `wasm-api`, whose facade holds some caret queries the core keeps crate-private; its error path panics

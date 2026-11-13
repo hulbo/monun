@@ -43,6 +43,10 @@ arboard = { workspace = true, features = ["wayland-data-control"] }
 # Registers the app for its file types under the current user (`file_types.rs`); Microsoft's safe
 # registry API, already in the tree.
 windows-registry = "0.6"
+# Web tabs (`web.rs`): the system's WebView2 (Edge's engine) in the window, through Tauri's safe
+# wrapper; its Windows crates are those already in the tree. Pinned exactly: review the diff before
+# bumping.
+wry = { version = "=0.57.2", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }

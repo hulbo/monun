@@ -59,6 +59,7 @@ pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+pub mod web_view;
 pub mod widgets;
 mod window_ui;
 #[cfg(feature = "word")]
@@ -356,6 +357,8 @@ pub struct SheetApp {
     pub hwp: hwp_view::State,
     /// Picture tabs: each open picture's texture.
     pub images: image_view::State,
+    /// Web tabs (an HTML file, a site link): the pages the desktop app's web views show.
+    pub web: web_view::State,
     /// The memo panel's memo being written and the one picked.
     pub memos: memos::State,
     pub dialog: Option<dialogs::Dialog>,

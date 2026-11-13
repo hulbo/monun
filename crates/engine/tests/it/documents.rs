@@ -250,6 +250,37 @@ fn a_picture_opens_as_a_tab_to_look_at_and_nothing_writes_it() {
 }
 
 #[test]
+fn an_html_file_or_a_site_link_opens_as_a_web_tab_and_nothing_writes_it() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("web");
+    let page = dir.join("설계.html");
+    let link = dir.join("사이트.url");
+    let html = "<html><body><table><tr><td>1</td></tr></table></body></html>".as_bytes().to_vec();
+    let url = b"[InternetShortcut]\r\nURL=https://example.com/\r\n".to_vec();
+    std::fs::write(&page, &html).unwrap();
+    std::fs::write(&link, &url).unwrap();
+    let mut s = session();
+    for (path, bytes) in [(&page, &html), (&link, &url)] {
+        s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+        let d = s.active().unwrap();
+        // The page, not its table as a sheet.
+        assert_eq!((d.text_kind(), d.is_web(), d.is_dirty()), (Some(TextKind::Web), true, false), "{path:?}");
+        assert_eq!(d.path.as_deref(), path.to_str());
+        for (cmd, params) in [("doc.setText", json!({"text": "x"})), ("file.save", json!({})), ("file.reload", json!({}))] {
+            let e = s.execute(cmd, params).unwrap_err().to_string();
+            assert!(e.contains(monun_engine::docs::WEB_READ_ONLY), "{cmd}: {e}");
+        }
+        assert_eq!(&std::fs::read(path).unwrap(), bytes);
+    }
+    // A workbook is still saved as a web page.
+    s.execute("file.new", json!({})).unwrap();
+    let out = dir.join("표.html");
+    s.execute("file.exportHtml", json!({"path": out.to_str().unwrap()})).unwrap();
+    assert!(std::fs::read_to_string(&out).unwrap().contains("<html"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
     use monun_engine::docs::TextKind;
     let dir = temp_dir("pdf");

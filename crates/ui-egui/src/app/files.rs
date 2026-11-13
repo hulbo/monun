@@ -128,7 +128,7 @@ impl SheetApp {
             .session
             .documents()
             .iter()
-            .filter(|d| d.is_text_file() && !d.is_pdf() && !d.is_word() && !d.is_hwp() && !d.is_image() && d.path.is_some())
+            .filter(|d| d.is_text_file() && !d.is_pdf() && !d.is_word() && !d.is_hwp() && !d.is_image() && !d.is_web() && d.path.is_some())
             .map(|d| (d.uid, d.is_dirty()))
             .collect();
         if open.is_empty() {

@@ -174,6 +174,10 @@ pub enum Icon {
     TextFile,
     /// A picture: a frame with hills and a sun.
     ImageFile,
+    /// A web page (an HTML file or a site link): a globe, its meridian and parallels, in blue.
+    WebFile,
+    /// Show again (a web page): an arrow going round.
+    Reload,
     /// A document's text and the document side by side: a page split down the middle, lines of
     /// text on the left and a heading over lines on the right.
     SideBySide,
@@ -231,6 +235,14 @@ fn paint_file(g: &G<'_>, icon: Icon, c: Color32, pal: &Palette) {
             g.rect(1.5, 2.5, 13.0, 11.0, Some(paper), Some(c));
             g.poly(&[(2.5, 12.5), (6.0, 7.5), (8.6, 10.6), (10.2, 9.0), (13.5, 12.5)], green);
             g.circle(10.8, 5.8, 1.4, Some(yellow), None);
+        }
+        Icon::WebFile => {
+            let pi = std::f32::consts::PI;
+            g.circle(8.0, 8.0, 6.3, Some(paper), Some(blue));
+            g.line(&ellipse(8.0, 8.0, 2.6, 6.3, 0.0, 2.0 * pi), blue, 1.0);
+            g.line(&[(1.7, 8.0), (14.3, 8.0)], blue, 1.0);
+            g.line(&[(2.9, 4.8), (13.1, 4.8)], c, 0.9);
+            g.line(&[(2.9, 11.2), (13.1, 11.2)], c, 0.9);
         }
         _ => {}
     }
@@ -543,6 +555,11 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
             g.circle(6.5, 6.5, 4.0, None, Some(c));
             g.line(&[(9.5, 9.5), (14.0, 14.0)], c, 1.6);
         }
+        Icon::Reload => {
+            let pi = std::f32::consts::PI;
+            g.line(&ellipse(8.0, 8.5, 5.0, 5.0, -0.35 * pi, 1.35 * pi), c, 1.3);
+            g.poly(&[(12.2, 1.6), (13.9, 6.4), (9.3, 5.6)], c);
+        }
         Icon::Undo | Icon::Redo => {
             let flip = icon == Icon::Redo;
             let x = |v: f32| if flip { 16.0 - v } else { v };
@@ -849,7 +866,7 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
                 g.line(&[(9.0, 12.5), (15.0, 12.5)], c, 1.3);
             }
         }
-        Icon::Pdf | Icon::Word | Icon::Hwp | Icon::SqlFile | Icon::MarkdownFile | Icon::TextFile | Icon::ImageFile => {
+        Icon::Pdf | Icon::Word | Icon::Hwp | Icon::SqlFile | Icon::MarkdownFile | Icon::TextFile | Icon::ImageFile | Icon::WebFile => {
             paint_file(&g, icon, c, pal);
         }
         Icon::NewFile => {
