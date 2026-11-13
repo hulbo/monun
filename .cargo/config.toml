@@ -1,2 +1,8 @@
 [alias]
 xtask = "run --package xtask --"
+
+# Link the C runtime statically on Windows, so monun.exe starts on a PC without the Visual C++
+# Redistributable (the installer from scripts/release.ps1 ships the exe alone). Every build of the
+# workspace uses it, so the update script, the release script and the verify skill share one cache.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

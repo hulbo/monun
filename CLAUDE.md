@@ -92,6 +92,16 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   and `MONUN_NO_PREFS` runs neither write nor pick them up.
 - `update.cmd` (the user's "모눈 업데이트" desktop shortcut) runs `scripts/update.ps1` in
   `C:\Project\monun`: fast-forwards `main` from origin and rebuilds the release exe.
+- Releases (for PCs that don't build; README "릴리스 만들기"): `pwsh scripts/release.ps1 -Version x.y.z`
+  bumps `[workspace.package] version`, builds, compiles `packaging/monun.iss` (Inno Setup 6.7+) into
+  `dist\Monun-x.y.z-Setup.exe`, commits "모눈 x.y.z", pushes it to main with tag `vx.y.z` and creates
+  the GitHub release with `gh`. Publishing is outward-facing: only when the user asks. It needs a
+  clean tree at `origin/main`; `-BuildOnly` makes the setup alone. When the user's 모눈 runs from
+  `target\release` it builds in `target\installer`. The setup installs per user (no admin) into
+  `%LOCALAPPDATA%\Programs\Monun` under a fixed `AppId`, never touches `%APPDATA%\Monun`, and its
+  uninstaller removes the file-type entries when they point at the installed exe. The antivirus now and then
+  stops ISCC writing the setup's icon (`EndUpdateResource failed (110)`); the script retries.
+  `.cargo/config.toml` links the C runtime statically, so the exe needs no VC++ Redistributable.
 
 ## Skill and subagents (`.claude/`)
 - `verify` skill: `.claude/skills/verify/verify.ps1` runs fmt, clippy, `cargo xtask layers` and

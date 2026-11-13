@@ -193,6 +193,45 @@ cargo run --release -p monun-cli -- eval '=NUMBERSTRING(1500000,1)'
 저장소 폴더의 `update.cmd`(바탕화면의 '모눈 업데이트' 바로가기)를 실행하면 GitHub의 최신 코드를 받아
 다시 빌드합니다. 모눈이 실행 중이면 닫을 때까지 기다렸다가 진행하고, 끝나면 모눈을 실행할지 묻습니다.
 
+## 설치 파일로 설치 (빌드 없이)
+
+[Releases](https://github.com/hulbo/monun/releases) 페이지에 버전마다 설치 파일 `Monun-<버전>-Setup.exe`가
+있습니다(비공개 저장소라 브라우저에서 GitHub에 로그인해야 보입니다). 원하는 버전의 **Assets**에서 설치 파일을 받아
+실행합니다.
+
+- 서명하지 않은 설치 파일이라 실행하면 'Windows의 PC 보호' 창이 뜹니다. **추가 정보**를 누르고 **실행**을 누릅니다.
+  브라우저가 다운로드를 막으면 다운로드 목록에서 '유지'를 고릅니다.
+- 관리자 권한 없이 지금 사용자에게만 `%LOCALAPPDATA%\Programs\Monun`에 설치되고, 시작 메뉴(고르면 바탕 화면에도)에
+  '모눈' 바로가기가 생깁니다. Visual C++ 재배포 패키지 같은 다른 프로그램은 필요 없습니다.
+- 다른 버전의 설치 파일을 실행하면 설치된 모눈이 그 버전으로 바뀝니다(예전 버전으로 되돌릴 때도 같습니다). 모눈이
+  켜져 있으면 닫으라고 묻습니다.
+- 제거는 설정 › 앱 › 설치된 앱 › 모눈에서 합니다. 설정·로그·자동 복구 사본(`%APPDATA%\Monun`)은 업데이트나 제거 때
+  지우지 않습니다. 설치한 모눈이 등록한 연결 프로그램 항목은 제거할 때 함께 지웁니다.
+- 설치한 모눈도 처음 실행할 때 연결 프로그램에 등록됩니다(위 '빌드와 실행'). 한 PC에서 소스 빌드와 설치본을 함께
+  쓰면 마지막으로 실행한 쪽이 등록됩니다.
+
+## 릴리스 만들기
+
+[Inno Setup](https://jrsoftware.org/isinfo.php) 6.7 이상과 GitHub CLI가 필요합니다.
+
+```powershell
+winget install JRSoftware.InnoSetup
+winget install GitHub.cli
+gh auth login
+```
+
+새 기능이 origin main에 올라간 상태에서 실행합니다.
+
+```powershell
+pwsh scripts/release.ps1 -Version 1.0.2
+```
+
+루트 `Cargo.toml`의 버전을 올리고, 릴리스 빌드를 해 `dist\Monun-1.0.2-Setup.exe`를 만든 뒤(`packaging/monun.iss`),
+"모눈 1.0.2" 커밋과 `v1.0.2` 태그를 main에 올리고, 그 설치 파일과 지난 릴리스 뒤의 커밋 목록으로 GitHub 릴리스를
+만듭니다. `target\release`의 모눈이 실행 중이면 그 모눈은 그대로 두고 `target\installer`에서 따로 빌드합니다.
+`-BuildOnly`는 설치 파일만 만들고 버전·git·GitHub는 건드리지 않습니다. exe는 C 런타임을 정적으로 링크합니다
+(`.cargo/config.toml`).
+
 ## 자동 복구
 
 모눈은 저장하지 않은 변경이 있는 통합 문서의 복구용 사본을 10분마다 `%APPDATA%\Monun\recovery`에
