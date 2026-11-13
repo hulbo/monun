@@ -64,6 +64,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   ("access denied" running `build-script-build`). Release builds are unaffected. In a worktree,
   add `debug-assertions = false` for `[profile.dev.package.serde]` and `serde_core` to
   `.cargo/config.toml` locally, with `git update-index --skip-worktree` so it isn't committed.
+- Disk: build output grows fast. One worktree's `target` reached 80 GB (47 GB of it
+  `debug\incremental`) and filled C:, which crashed rustc. Once a change is committed, delete
+  that worktree's `target\debug\incremental`. Delete the `target` of worktrees no longer in use,
+  after checking that no cargo, rustc or monun process runs from them. Say what was freed.
 
 ## Running and looking at the app
 - `cargo build --release -p monun -p monun-cli`; the desktop shortcut runs

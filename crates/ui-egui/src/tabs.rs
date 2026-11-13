@@ -39,6 +39,20 @@ pub(crate) fn activate_sheet(app: &mut SheetApp, i: usize) {
     }
 }
 
+/// A sheet right-clicked in a list of the sheets (All Sheets): made the active sheet, as Excel
+/// makes a right-clicked tab, and its tab menu (Delete, Rename, Move or Copy…) opened at `at`.
+/// An edit still open is entered first.
+pub(crate) fn sheet_menu_from_list(app: &mut SheetApp, ui: &Ui, value: &str, at: egui::Pos2) {
+    let Ok(i) = value.parse::<usize>() else { return };
+    if app.editor.is_some() && !app.commit_edit(0, 0, false, false) {
+        return;
+    }
+    if app.session.active().is_some_and(|d| d.wb.active_sheet() != i) {
+        app.run_or_alert("sheet.activate", json!({"sheet": i}));
+    }
+    app.grid.tab_menu = Some((i, at, ui.ctx().cumulative_frame_nr()));
+}
+
 /// A tab released with Ctrl held (Cmd on macOS, as for the fill handle) drops a copy of the sheet. Excel for Mac uses
 /// Option for this, so Option copies there too.
 fn drop_copies_sheet(m: egui::Modifiers, mac: bool) -> bool {
@@ -121,10 +135,15 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             let items = app.session.active().map(|d| navigator_items(&d.wb.sheets)).unwrap_or_default();
             let active = app.session.active().map(|d| d.wb.active_sheet().to_string()).unwrap_or_default();
             let rows: Vec<(&str, String)> = items.iter().map(|(i, name)| (i.as_str(), name.clone())).collect();
-            if let crate::ribbon::ComboResult::Picked(i) = crate::ribbon::editable_combo(ui, &all, "sheet_navigator", &active, &rows, false)
-                && let Ok(i) = i.parse::<usize>()
-            {
-                activate_sheet(app, i);
+            match crate::ribbon::editable_combo(ui, &all, "sheet_navigator", &active, &rows, false) {
+                crate::ribbon::ComboResult::Picked(i) => {
+                    if let Ok(i) = i.parse::<usize>() {
+                        activate_sheet(app, i);
+                    }
+                }
+                // A right-clicked sheet's own menu.
+                crate::ribbon::ComboResult::Context(i, at) => sheet_menu_from_list(app, ui, &i, at),
+                crate::ribbon::ComboResult::None => {}
             }
             ui.add_space(8.0);
             let Some(d) = app.session.active() else { return };
@@ -429,7 +448,8 @@ pub(crate) fn tab_menu(app: &mut SheetApp, ui: &mut Ui) {
         Some("insertDocument") => app.insert_document(Some(i)),
         Some("importMarkdown") => app.import_markdown(Some(i + 1)),
         Some("exportMarkdown") => app.export_markdown(i),
-        Some("delete") => app.run_or_alert("home.deleteSheet", json!({"sheet": i})),
+        // As the tab's ✕: a sheet with something on it after asking, as Excel asks.
+        Some("delete") => delete_tab(app, i),
         Some("rename") => {
             app.grid.renaming_tab = Some(i);
             app.grid.rename_text = app.session.active().and_then(|d| d.wb.sheet(i)).map(|s| s.name.clone()).unwrap_or_default();

@@ -89,6 +89,67 @@ fn the_all_sheets_list_adds_and_switches_sheets() {
 }
 
 #[test]
+fn a_sheet_right_clicked_in_the_all_sheets_list_opens_its_tab_menu() {
+    let mut s = Session::new();
+    s.new_workbook();
+    for _ in 0..2 {
+        s.run("home.insertSheet", json!({})).expect("a sheet");
+    }
+    let mut h = harness(s);
+    let names = |h: &egui_kittest::Harness<'static, SheetApp>| {
+        h.state().session.active().map(|d| d.wb.sheets.iter().map(|s| s.name.clone()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+    assert_eq!(names(&h), ["Sheet1", "Sheet2", "Sheet3"]);
+    // Right-click a sheet that isn't shown: it is shown, as Excel shows a right-clicked tab, and its
+    // menu opens; Delete deletes it.
+    h.get_by_label("All sheets").click();
+    h.run_steps(4);
+    h.get_by_label("Sheet1").click_secondary();
+    h.run_steps(4);
+    assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 0, "the right-clicked sheet is shown");
+    assert!(h.query_by_label("+ New sheet").is_none(), "the list closed for the menu");
+    assert_eq!(h.state().grid.tab_menu.map(|m| m.0), Some(0), "its tab menu is open");
+    // D is Delete: an empty sheet goes at once.
+    h.key_press(egui::Key::D);
+    h.run_steps(4);
+    assert_eq!(names(&h), ["Sheet2", "Sheet3"], "Delete deleted the sheet right-clicked");
+    // A sheet with something on it is deleted after asking, as Excel asks.
+    h.get_by_label("All sheets").click();
+    h.run_steps(4);
+    h.get_by_label("Sheet3").click_secondary();
+    h.run_steps(4);
+    h.state_mut().session.run("cell.set", json!({"cell": "A1", "input": "1"})).expect("a value");
+    h.key_press(egui::Key::D);
+    h.run_steps(4);
+    assert!(h.query_all_by_label("Cancel").next().is_some(), "asked first");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert_eq!(names(&h), ["Sheet2", "Sheet3"], "Escape keeps it");
+    // R is Rename: the name field in place of the button.
+    h.get_by_label("All sheets").click();
+    h.run_steps(4);
+    h.get_by_label("Sheet3").click_secondary();
+    h.run_steps(4);
+    h.key_press(egui::Key::R);
+    h.run_steps(4);
+    let field = h.get_by_label("Sheet Name");
+    field.focus();
+    h.run_steps(2);
+    h.get_by_label("Sheet Name").type_text("x");
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(names(&h), ["Sheet2", "Sheet3x"], "Rename renamed it");
+    // New sheet at the end of the list has no menu.
+    h.get_by_label("All sheets").click();
+    h.run_steps(4);
+    h.get_by_label("+ New sheet").click_secondary();
+    h.run_steps(4);
+    assert!(h.state().grid.tab_menu.is_none(), "no sheet menu for New sheet");
+    assert_eq!(names(&h).len(), 2, "and no sheet added");
+}
+
+#[test]
 fn closing_the_last_tab_goes_back_to_the_start_page() {
     let mut s = Session::new();
     s.new_workbook();

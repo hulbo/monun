@@ -85,6 +85,8 @@ pub(crate) enum ComboResult {
     None,
     /// A row was applied: clicked or Enter on the highlighted row.
     Picked(String),
+    /// A row was right-clicked, at this point: the list closes, for the row's own menu.
+    Context(String, egui::Pos2),
 }
 
 /// Excel-style dropdown: a filter field (type to narrow the list) plus arrow/Enter selection.
@@ -176,10 +178,15 @@ fn combo_head(ui: &mut Ui, text: Option<(&mut String, egui::Id)>, open_now: bool
     ComboHead { filtered, sel, down, up, enter }
 }
 
-/// The rows of a combo popup. Returns the picked value and the highlighted row.
-fn combo_rows(ui: &mut Ui, head: ComboHead, items: &[(&str, String)], row_w: f32) -> (Option<String>, i32) {
+/// What a combo popup's rows came to: the picked value, a right-clicked row's value and where, and
+/// the highlighted row.
+type Rows = (Option<String>, Option<(String, egui::Pos2)>, i32);
+
+/// The rows of a combo popup.
+fn combo_rows(ui: &mut Ui, head: ComboHead, items: &[(&str, String)], row_w: f32) -> Rows {
     let ComboHead { filtered, mut sel, down, up, enter } = head;
     let mut picked = None;
+    let mut context = None;
     if enter && !filtered.is_empty() {
         let idx = filtered[sel.clamp(0, filtered.len() as i32 - 1) as usize];
         picked = Some(items[idx].0.to_string());
@@ -193,14 +200,19 @@ fn combo_rows(ui: &mut Ui, head: ComboHead, items: &[(&str, String)], row_w: f32
         if row.clicked() {
             picked = Some(value.to_string());
         }
+        if row.secondary_clicked()
+            && let Some(at) = row.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.interact_pos()))
+        {
+            context = Some((value.to_string(), at));
+        }
         if row.hovered() {
             sel = pos as i32;
         }
     }
-    if picked.is_some() {
+    if picked.is_some() || context.is_some() {
         ui.close();
     }
-    (picked, sel)
+    (picked, context, sel)
 }
 
 fn combo_popup(
@@ -256,10 +268,12 @@ fn combo_popup(
         })
     };
     let mut result = ComboResult::None;
-    if let Some((picked, sel)) = shown {
+    if let Some((picked, context, sel)) = shown {
         st.sel = sel;
         if let Some(value) = picked {
             result = ComboResult::Picked(value);
+        } else if let Some((value, at)) = context {
+            result = ComboResult::Context(value, at);
         }
     }
     ui.data_mut(|d| d.insert_temp(state_id, st));

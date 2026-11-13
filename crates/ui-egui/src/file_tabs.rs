@@ -485,8 +485,9 @@ fn sheet_button_width(app: &SheetApp, ui: &Ui) -> f32 {
 }
 
 /// The All Sheets button (≡ Sheet1 ▾) in place of the sheet tabs: a click lists the sheets (type
-/// to filter) with New sheet at the end, a right click opens the sheet tab menu for the active
-/// sheet (Rename, Delete, Move or Copy…), and Rename turns the button into the name field.
+/// to filter) with New sheet at the end, a right click on the button or on a sheet in the list
+/// opens that sheet's tab menu (Delete, Rename, Move or Copy…), and Rename turns the button into
+/// the name field.
 fn sheet_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     let lang = app.ui.language;
     let Some(d) = app.session.active() else { return };
@@ -494,7 +495,8 @@ fn sheet_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     let name = d.wb.active().map(|s| s.name.clone()).unwrap_or_default();
     let mut items = crate::tabs::navigator_items(&d.wb.sheets);
     if let Some(i) = app.grid.renaming_tab {
-        rename_field(app, ui, i, &name);
+        let renamed = d.wb.sheet(i).map(|s| s.name.clone()).unwrap_or(name);
+        rename_field(app, ui, i, &renamed);
         return;
     }
     let font = theme::ui_font(13.0);
@@ -531,6 +533,8 @@ fn sheet_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
                 crate::tabs::activate_sheet(app, i);
             }
         }
+        // A right-clicked sheet's own menu (New sheet has none).
+        ComboResult::Context(v, at) => crate::tabs::sheet_menu_from_list(app, ui, &v, at),
         ComboResult::None => {}
     }
 }
