@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use mermaid_rs_renderer::{DiagramKind, RenderOptions, Theme};
 
 mod layered;
+mod sequence;
 use resvg::{tiny_skia, usvg};
 
 /// The largest side of a drawn diagram, in pixels.
@@ -134,6 +135,10 @@ fn laid_out(
     }
     if flowchart || er {
         layered::relayout(&graph, &mut layout);
+    }
+    if graph.kind == DiagramKind::Sequence {
+        // Rows and frames opened up where they met.
+        sequence::tidy(source, &graph, &mut layout, options.theme.font_size);
     }
     readable_text(&mut layout);
     Ok((layout, config, graph.kind))
