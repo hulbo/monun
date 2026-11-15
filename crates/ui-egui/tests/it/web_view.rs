@@ -165,3 +165,40 @@ fn a_site_link_is_made_from_its_address_and_opens() {
     assert!(std::fs::read_to_string(&other).unwrap().contains("URL=http://localhost:8080"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_page_keeps_clear_of_the_group_panel() {
+    let dir = temp_dir("panel");
+    let path = dir.join("page.html");
+    std::fs::write(&path, "<p>page</p>").unwrap();
+    let mut app = crate::common::app(Session::new());
+    app.use_file_tabs();
+    app.run("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    // The group panel floating over the files in the top right corner, as a layer.
+    app.ui.group_panel = true;
+    app.ui.side_layer = true;
+    app.ui.side_corner = monun_ui_egui::panes::Corner::TopRight;
+    app.web.host = Some(Ok(()));
+    let mut h = harness(app);
+    h.run_steps(2);
+    assert!(h.query_by_label("Groups").is_some(), "the group panel shows");
+    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
+    // The page to the panel's left (a column's width and the room around it), not under it.
+    assert!(x < 10 && x + w <= 1200 - 300 - 12 && w > 700, "{:?}", (x, w));
+    // In the top left corner: to its right.
+    h.state_mut().ui.side_corner = monun_ui_egui::panes::Corner::TopLeft;
+    h.run_steps(3);
+    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
+    assert!(x >= 300 + 12 && x + w >= 1190, "{:?}", (x, w));
+    // As a column of its own: the page beside it too, the files' area being narrower.
+    h.state_mut().ui.side_layer = false;
+    h.run_steps(3);
+    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
+    assert!(x < 10 && x + w <= 1200 - 250, "{:?}", (x, w));
+    // Closed, the page takes the whole width again.
+    h.state_mut().ui.group_panel = false;
+    h.run_steps(3);
+    let [_, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
+    assert!(w > 1150, "{w}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

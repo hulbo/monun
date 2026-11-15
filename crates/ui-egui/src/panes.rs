@@ -162,6 +162,7 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
                 });
             shown = frame.response.rect.height();
             app.side_layer_shown_h = shown;
+            app.side_layer_rect = Some(frame.response.rect);
             resized = edges(ui, frame.response.rect, corner, t);
         },
     );

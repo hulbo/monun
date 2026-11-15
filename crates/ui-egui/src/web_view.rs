@@ -219,9 +219,40 @@ fn modified(path: &str) -> Option<SystemTime> {
 }
 
 /// Whether something of the app's is drawn over the tab, which a web view (a window of its own
-/// over the app) would cover: a menu or a list, a dialog, a message, the File view.
+/// over the app) would cover: a menu or a list, a dialog, a message, the File view, or the memo
+/// or group panel while its title is dragged about.
 fn covered(app: &SheetApp, ctx: &egui::Context) -> bool {
-    app.dialog.is_some() || app.message.is_some() || app.backstage.is_some() || app.grid.tab_menu.is_some() || egui::Popup::is_any_open(ctx)
+    app.dialog.is_some()
+        || app.message.is_some()
+        || app.backstage.is_some()
+        || app.grid.tab_menu.is_some()
+        || app.side_drag.is_some()
+        || egui::Popup::is_any_open(ctx)
+}
+
+/// The room between a page and the memo or group panel floating beside it (points).
+const LAYER_GAP: f32 = 8.0;
+
+/// The smallest a page is shown beside a floating panel (points); with less room it goes above or
+/// below it, or hides.
+const ROOM_MIN: f32 = 160.0;
+
+/// The part of `area` a page shows in clear of `cover` (the memo or group panel floating over the
+/// files in a corner): beside it, on whichever side has more room, as a column of its own would
+/// leave; above or below it when there's too little room beside it; `None` when there's too
+/// little room anywhere.
+pub fn clear_of(area: Rect, cover: Rect) -> Option<Rect> {
+    let cover = cover.expand(LAYER_GAP);
+    if !cover.intersects(area) {
+        return Some(area);
+    }
+    let left = Rect::from_min_max(area.min, egui::pos2(cover.left().min(area.right()), area.bottom()));
+    let right = Rect::from_min_max(egui::pos2(cover.right().max(area.left()), area.top()), area.max);
+    let above = Rect::from_min_max(area.min, egui::pos2(area.right(), cover.top().min(area.bottom())));
+    let below = Rect::from_min_max(egui::pos2(area.left(), cover.bottom().max(area.top())), area.max);
+    let roomy = |r: &Rect| r.width() >= ROOM_MIN && r.height() >= ROOM_MIN;
+    let larger = |a: Rect, b: Rect| if a.area() >= b.area() { a } else { b };
+    [larger(left, right), larger(above, below)].into_iter().find(roomy)
 }
 
 /// Draws the active web tab: its tool bar (Back, Forward, Show Again, the address, Open in
@@ -276,11 +307,16 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             if let Some(why) = &page.error {
                 note(ui, &format!("{} {why}", lang.tr("The page couldn't be shown:")));
             } else if !covered(app, ui.ctx()) {
+                // Beside the memo or group panel when it floats over the files.
+                let room = match app.side_layer_rect {
+                    Some(layer) => clear_of(area, layer),
+                    None => Some(area),
+                };
                 let ppp = ui.ctx().pixels_per_point();
                 let px = |v: f32| (v * ppp).round().max(0.0) as u32;
-                let rect = [px(area.left()), px(area.top()), px(area.width()), px(area.height())];
+                let rect = room.map(|r| [px(r.left()), px(r.top()), px(r.width()), px(r.height())]);
                 if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid) {
-                    pane.rect = Some(rect);
+                    pane.rect = rect;
                 }
             }
         }
@@ -316,6 +352,7 @@ pub fn inspect(app: &SheetApp) -> Json {
         "title": page.title,
         "url": page.url,
         "loading": page.loading,
+        "rect": pane.and_then(|p| p.rect),
     })
 }
 
@@ -448,6 +485,27 @@ mod tests {
         assert_eq!(file_url(r"C:\설계\a b.html"), "file:///C:/%EC%84%A4%EA%B3%84/a%20b.html");
         assert_eq!(file_url(r"\\nas\share\x.html"), "file://nas/share/x.html");
         assert_eq!(file_url("/home/u/x#1.html"), "file:///home/u/x%231.html");
+    }
+
+    #[test]
+    fn a_page_goes_beside_a_floating_panel() {
+        let area = Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(1200.0, 800.0));
+        // Top right, most of the height: the page to its left.
+        let layer = Rect::from_min_max(egui::pos2(888.0, 92.0), egui::pos2(1188.0, 700.0));
+        assert_eq!(clear_of(area, layer), Some(Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(880.0, 800.0))));
+        // Top left: to its right.
+        let layer = Rect::from_min_max(egui::pos2(12.0, 92.0), egui::pos2(312.0, 400.0));
+        assert_eq!(clear_of(area, layer).map(|r| r.left()), Some(320.0));
+        // Elsewhere (a column, the start page): the whole area.
+        let layer = Rect::from_min_max(egui::pos2(1210.0, 0.0), egui::pos2(1500.0, 800.0));
+        assert_eq!(clear_of(area, layer), Some(area));
+        // Too narrow beside it: above or below.
+        let narrow = Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(400.0, 800.0));
+        let layer = Rect::from_min_max(egui::pos2(60.0, 500.0), egui::pos2(360.0, 790.0));
+        assert_eq!(clear_of(narrow, layer), Some(Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(400.0, 492.0))));
+        // No room anywhere: hidden.
+        let layer = Rect::from_min_max(egui::pos2(20.0, 100.0), egui::pos2(380.0, 790.0));
+        assert_eq!(clear_of(narrow, layer), None);
     }
 
     #[test]
