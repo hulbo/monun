@@ -176,6 +176,8 @@ pub enum Icon {
     ImageFile,
     /// A web page (an HTML file or a site link): a globe, its meridian and parallels, in blue.
     WebFile,
+    /// A presentation: a slide on its stand, its title bar and a round chart in orange.
+    SlidesFile,
     /// Show again (a web page): an arrow going round.
     Reload,
     /// A document's text and the document side by side: a page split down the middle, lines of
@@ -235,6 +237,16 @@ fn paint_file(g: &G<'_>, icon: Icon, c: Color32, pal: &Palette) {
             g.rect(1.5, 2.5, 13.0, 11.0, Some(paper), Some(c));
             g.poly(&[(2.5, 12.5), (6.0, 7.5), (8.6, 10.6), (10.2, 9.0), (13.5, 12.5)], green);
             g.circle(10.8, 5.8, 1.4, Some(yellow), None);
+        }
+        Icon::SlidesFile => {
+            g.rect(1.5, 2.5, 13.0, 9.5, Some(paper), Some(orange));
+            g.rect(3.5, 4.5, 6.0, 1.4, Some(orange), None);
+            for y in [7.8, 9.8] {
+                g.stroke(&[(3.5, y), (7.5, y)], c);
+            }
+            g.circle(10.8, 8.6, 1.9, Some(orange), None);
+            g.line(&[(8.0, 12.0), (8.0, 14.5)], c, 1.0);
+            g.line(&[(5.5, 14.5), (10.5, 14.5)], c, 1.0);
         }
         Icon::WebFile => {
             let pi = std::f32::consts::PI;
@@ -866,7 +878,15 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
                 g.line(&[(9.0, 12.5), (15.0, 12.5)], c, 1.3);
             }
         }
-        Icon::Pdf | Icon::Word | Icon::Hwp | Icon::SqlFile | Icon::MarkdownFile | Icon::TextFile | Icon::ImageFile | Icon::WebFile => {
+        Icon::Pdf
+        | Icon::Word
+        | Icon::Hwp
+        | Icon::SqlFile
+        | Icon::MarkdownFile
+        | Icon::TextFile
+        | Icon::ImageFile
+        | Icon::WebFile
+        | Icon::SlidesFile => {
             paint_file(&g, icon, c, pal);
         }
         Icon::NewFile => {

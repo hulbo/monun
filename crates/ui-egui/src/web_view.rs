@@ -11,6 +11,9 @@
 //! no web view (tests, the web build) the tab offers to open the page in the default browser.
 //!
 //! An HTML file is shown again when it changes on disk, as an AI tool writes it anew.
+//!
+//! A PowerPoint presentation is shown the same way: its slides are written as a page first
+//! ([`crate::slides_view`]), again when the file changes.
 
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
@@ -23,6 +26,7 @@ use crate::SheetApp;
 use crate::dialogs::Dialog;
 use crate::doc_view::{self, Mode};
 use crate::icons::Icon;
+use crate::slides_view;
 use crate::theme::{self, Tokens};
 use crate::widgets::DialogButton;
 
@@ -34,6 +38,14 @@ const LINK_MAX: u64 = 64 * 1024;
 
 /// The longest name a site link's file gets.
 const NAME_MAX: usize = 80;
+
+/// A presentation's page being written: the tab says so.
+const OPENING: &str = "Opening…";
+
+/// Whether a document is shown as a page: an HTML file, a site link or a presentation.
+fn paged(d: &monun_engine::DocState) -> bool {
+    d.is_web() || d.is_slides()
+}
 
 /// A page the window shows: its id (the tab's workbook uid), its address, and where (the window's
 /// physical pixels: left, top, width, height), or `None` while it is hidden.
@@ -83,12 +95,61 @@ pub struct State {
     front: Option<(u64, Rect)>,
 }
 
-/// A web tab: its file, the address it gives, and when it was last seen changed.
+/// A web tab: its file, the address it gives, and when it was last seen changed; a presentation's
+/// page being written, and its number of slides.
 struct Tab {
     path: String,
     address: Result<String, String>,
     modified: Option<SystemTime>,
     checked: f64,
+    presentation: bool,
+    job: Option<slides_view::Job>,
+    slides: Option<usize>,
+}
+
+impl Tab {
+    fn open(path: String, presentation: bool, uid: u64, words: &(String, String), now: f64) -> Tab {
+        let (address, job) =
+            if presentation { (Err(OPENING.to_string()), Some(slides_view::start(&path, uid, words.clone()))) } else { (address_of(&path), None) };
+        Tab { modified: modified(&path), path, address, checked: now, presentation, job, slides: None }
+    }
+
+    /// Its file changed on disk: shown again (a presentation's page written anew). Whether the page
+    /// is reloaded as it is (its address the same).
+    fn watch(&mut self, uid: u64, words: &(String, String)) -> bool {
+        let seen = modified(&self.path);
+        if seen.is_none() || seen == self.modified {
+            return false;
+        }
+        self.modified = seen;
+        if self.presentation {
+            self.job = Some(slides_view::start(&self.path, uid, words.clone()));
+            return false;
+        }
+        // A site link written anew may hold another address; an HTML file shows again.
+        let address = address_of(&self.path);
+        let same = address == self.address;
+        self.address = address;
+        same
+    }
+
+    /// A presentation's page written: shown (again). Whether it is reloaded as it is.
+    fn receive(&mut self) -> bool {
+        let Some(done) = self.job.as_ref().and_then(slides_view::Job::poll) else { return false };
+        self.job = None;
+        match done {
+            Ok((url, slides)) => {
+                let same = self.address.as_ref().ok() == Some(&url);
+                self.address = Ok(url);
+                self.slides = Some(slides);
+                same
+            }
+            Err(why) => {
+                self.address = Err(why);
+                false
+            }
+        }
+    }
 }
 
 /// The address a file shows: an HTML file's own (`file:///…`), or the one a site link holds.
@@ -165,12 +226,19 @@ pub fn file_url(path: &str) -> String {
 }
 
 /// At the start of each frame: the open web tabs' pages (all hidden; [`show`] shows the one in
-/// front), what a closed tab had goes, and the HTML file in front is shown again when it has
-/// changed on disk.
+/// front), what a closed tab had goes, and the file in front is shown again when it has changed
+/// on disk.
 pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
-    let open: Vec<(u64, String)> = app.session.documents().iter().filter(|d| d.is_web()).filter_map(|d| Some((d.uid, d.path.clone()?))).collect();
-    let ids: HashSet<u64> = open.iter().map(|(uid, _)| *uid).collect();
-    app.web.tabs.retain(|uid, _| ids.contains(uid));
+    let open: Vec<(u64, String, bool)> =
+        app.session.documents().iter().filter(|d| paged(d)).filter_map(|d| Some((d.uid, d.path.clone()?, d.is_slides()))).collect();
+    let ids: HashSet<u64> = open.iter().map(|(uid, ..)| *uid).collect();
+    app.web.tabs.retain(|uid, tab| {
+        let keep = ids.contains(uid);
+        if !keep && tab.presentation {
+            slides_view::forget(*uid);
+        }
+        keep
+    });
     app.web.pages.retain(|uid, _| ids.contains(uid));
     app.web.orders.retain(|(uid, _)| ids.contains(uid));
     app.web.panes.clear();
@@ -178,30 +246,33 @@ pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
     if open.is_empty() {
         return;
     }
-    let front = app.session.active().filter(|d| d.is_web()).map(|d| d.uid);
+    let front = app.session.active().filter(|d| paged(d)).map(|d| d.uid);
     let now = ctx.input(|i| i.time);
-    for (uid, path) in open {
-        let tab = app.web.tabs.entry(uid).or_insert_with(|| Tab { path: String::new(), address: Err(String::new()), modified: None, checked: now });
-        if tab.path != path {
-            *tab = Tab { address: address_of(&path), modified: modified(&path), path, checked: now };
-        } else if front == Some(uid) && now - tab.checked >= WATCH_EVERY {
-            tab.checked = now;
-            let seen = modified(&tab.path);
-            if seen.is_some() && seen != tab.modified {
-                tab.modified = seen;
-                // A site link written anew may hold another address; an HTML file shows again.
-                let address = address_of(&tab.path);
-                if address == tab.address {
-                    app.web.orders.push((uid, Order::Reload));
-                }
-                tab.address = address;
-            }
+    let lang = app.ui.language;
+    let words = (lang.tr("Chart").to_string(), lang.tr("Hidden").to_string());
+    let mut writing = false;
+    for (uid, path, presentation) in open {
+        if app.web.tabs.get(&uid).is_none_or(|t| t.path != path) {
+            app.web.tabs.insert(uid, Tab::open(path, presentation, uid, &words, now));
         }
+        let Some(tab) = app.web.tabs.get_mut(&uid) else { continue };
+        let mut reload = false;
+        if front == Some(uid) && now - tab.checked >= WATCH_EVERY {
+            tab.checked = now;
+            reload = tab.watch(uid, &words);
+        }
+        reload |= tab.receive();
+        if reload {
+            app.web.orders.push((uid, Order::Reload));
+        }
+        writing |= tab.job.is_some();
         if let Ok(url) = &tab.address {
             app.web.panes.push(Pane { id: uid, url: url.clone(), rect: None, holes: Vec::new() });
         }
     }
-    if front.is_some() {
+    if writing {
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    } else if front.is_some() {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(WATCH_EVERY));
     }
 }
@@ -212,8 +283,8 @@ pub(crate) fn settle(app: &mut SheetApp, ctx: &egui::Context) {
     if app.web.panes.is_empty() {
         return;
     }
-    let open: HashSet<u64> = app.session.documents().iter().filter(|d| d.is_web()).map(|d| d.uid).collect();
-    let front = app.session.active().filter(|d| d.is_web()).map(|d| d.uid);
+    let open: HashSet<u64> = app.session.documents().iter().filter(|d| paged(d)).map(|d| d.uid).collect();
+    let front = app.session.active().filter(|d| paged(d)).map(|d| d.uid);
     app.web.panes.retain(|p| open.contains(&p.id));
     for pane in &mut app.web.panes {
         if Some(pane.id) != front {
@@ -273,21 +344,82 @@ fn covered(app: &SheetApp) -> bool {
     app.backstage.is_some()
 }
 
-/// Draws the active web tab: its tool bar (Back, Forward, Show Again, the address, Open in
-/// Browser) and the page under it.
+/// Draws the active web tab: its tool bar (a web page's Back, Forward, Show Again, address and
+/// Open in Browser; a presentation's number of slides and Open in Default App) and the page under
+/// it.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
-    let Some(d) = app.session.active().filter(|d| d.is_web()) else { return };
-    let uid = d.uid;
+    let Some(d) = app.session.active().filter(|d| paged(d)) else { return };
+    let (uid, presentation) = (d.uid, d.is_slides());
     // Open, New, Close, Find… as in any document's tab.
-    doc_view::keyboard(app, ui, Mode::View, TextKind::Web);
+    doc_view::keyboard(app, ui, Mode::View, if presentation { TextKind::Slides } else { TextKind::Web });
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
     ui.painter().rect_filled(ui.max_rect(), 0.0, if t.dark { t.window } else { t.grid_bg });
     let address = app.web.tabs.get(&uid).map(|tab| tab.address.clone()).unwrap_or_else(|| Err(String::new()));
     let page = app.web.pages.get(&uid).cloned().unwrap_or_default();
+    if presentation {
+        slides_strip(app, ui, &t, uid);
+    } else {
+        web_strip(app, ui, &t, uid, (&address, &page));
+    }
+    let area = ui.available_rect_before_wrap();
+    ui.allocate_rect(area, Sense::hover());
+    // A line in the middle of the tab instead of the page, read out as any label is.
+    let note = |ui: &mut Ui, text: &str| {
+        let at = Rect::from_center_size(area.center(), vec2((area.width() - 40.0).max(80.0), 40.0));
+        ui.put(at, egui::Label::new(RichText::new(text).font(theme::ui_font(14.0)).color(t.text_dim)).halign(egui::Align::Center));
+    };
+    let failed = if presentation { "The presentation couldn't be shown:" } else { "The page couldn't be shown:" };
+    match (&app.web.host, &address) {
+        (_, Err(why)) if why == OPENING => note(ui, lang.tr(OPENING)),
+        (_, Err(why)) if !why.is_empty() => note(ui, &format!("{} {}", lang.tr(failed), lang.tr(why))),
+        (_, Err(_)) => {}
+        (Some(Ok(())), Ok(_)) => {
+            if let Some(why) = &page.error {
+                note(ui, &format!("{} {why}", lang.tr(failed)));
+            } else if !covered(app) {
+                let ppp = ui.ctx().pixels_per_point();
+                let px = |v: f32| (v * ppp).round().max(0.0) as u32;
+                let rect = [px(area.left()), px(area.top()), px(area.width()), px(area.height())];
+                if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid) {
+                    pane.rect = Some(rect);
+                    app.web.front = Some((uid, area));
+                }
+            }
+        }
+        (Some(Err(why)), Ok(_)) => note(ui, &format!("{} {why}", lang.tr("Web pages can't be shown on this PC:"))),
+        // The tool bar's Open in Browser (Open in Default App) shows it there.
+        (None, Ok(_)) if presentation => note(ui, lang.tr("Presentations show here in the desktop app.")),
+        (None, Ok(_)) => note(ui, lang.tr("Web pages show here in the desktop app.")),
+    }
+}
+
+/// A presentation's tool bar: how many slides it has, and Open in Default App (PowerPoint, where
+/// there is one).
+fn slides_strip(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, uid: u64) {
+    let lang = app.ui.language;
+    let count = app.web.tabs.get(&uid).and_then(|tab| tab.slides);
+    let path = app.session.active().and_then(|d| d.path.clone());
+    doc_view::tool_strip(ui, t, |ui| {
+        if let Some(n) = count {
+            ui.label(RichText::new(lang.tr("{n} slides").replace("{n}", &n.to_string())).font(theme::ui_font(13.0)).color(t.text_dim));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(path) = &path
+                && ui.button(lang.tr("Open in Default App")).on_hover_text(lang.tr("Open the file in the app Windows opens it with")).clicked()
+            {
+                open_in_browser(app, path);
+            }
+        });
+    });
+}
+
+/// A web page's tool bar: Back, Forward, Show Again, its address and Open in Browser.
+fn web_strip(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, uid: u64, (address, page): (&Result<String, String>, &Page)) {
+    let lang = app.ui.language;
     let shown = if page.url.is_empty() { address.clone().unwrap_or_default() } else { page.url.clone() };
     let showing = matches!(app.web.host, Some(Ok(()))) && address.is_ok();
-    doc_view::tool_strip(ui, &t, |ui| {
+    doc_view::tool_strip(ui, t, |ui| {
         let size = vec2(28.0, 28.0);
         for (icon, tip, order) in
             [(Icon::Left, "Back", Order::Back), (Icon::Right, "Forward", Order::Forward), (Icon::Reload, "Show Again", Order::Reload)]
@@ -298,7 +430,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 app.web.orders.push((uid, order));
             }
         }
-        doc_view::separator(ui, &t);
+        doc_view::separator(ui, t);
         ui.add_space(6.0);
         let room = (ui.available_width() - 150.0).max(80.0);
         let text = if page.loading { format!("{shown}  ·  {}", lang.tr("Loading…")) } else { shown.clone() };
@@ -311,33 +443,6 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             open_in_browser(app, &shown);
         }
     });
-    let area = ui.available_rect_before_wrap();
-    ui.allocate_rect(area, Sense::hover());
-    // A line in the middle of the tab instead of the page, read out as any label is.
-    let note = |ui: &mut Ui, text: &str| {
-        let at = Rect::from_center_size(area.center(), vec2((area.width() - 40.0).max(80.0), 40.0));
-        ui.put(at, egui::Label::new(RichText::new(text).font(theme::ui_font(14.0)).color(t.text_dim)).halign(egui::Align::Center));
-    };
-    match (&app.web.host, &address) {
-        (_, Err(why)) if !why.is_empty() => note(ui, &format!("{} {}", lang.tr("The page couldn't be shown:"), lang.tr(why))),
-        (_, Err(_)) => {}
-        (Some(Ok(())), Ok(_)) => {
-            if let Some(why) = &page.error {
-                note(ui, &format!("{} {why}", lang.tr("The page couldn't be shown:")));
-            } else if !covered(app) {
-                let ppp = ui.ctx().pixels_per_point();
-                let px = |v: f32| (v * ppp).round().max(0.0) as u32;
-                let rect = [px(area.left()), px(area.top()), px(area.width()), px(area.height())];
-                if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid) {
-                    pane.rect = Some(rect);
-                    app.web.front = Some((uid, area));
-                }
-            }
-        }
-        (Some(Err(why)), Ok(_)) => note(ui, &format!("{} {why}", lang.tr("Web pages can't be shown on this PC:"))),
-        // The tool bar's Open in Browser shows it there.
-        (None, Ok(_)) => note(ui, lang.tr("Web pages show here in the desktop app.")),
-    }
 }
 
 fn open_in_browser(app: &SheetApp, url: &str) {
@@ -346,16 +451,22 @@ fn open_in_browser(app: &SheetApp, url: &str) {
     }
 }
 
-/// The status bar's words for the active web tab: its page's title.
+/// The status bar's words for the active web tab: its page's title, or a presentation's number of
+/// slides.
 pub fn status(app: &SheetApp) -> Option<String> {
-    let d = app.session.active().filter(|d| d.is_web())?;
+    let d = app.session.active().filter(|d| paged(d))?;
+    if d.is_slides() {
+        let count = app.web.tabs.get(&d.uid).and_then(|t| t.slides);
+        return Some(count.map(|n| app.ui.language.tr("{n} slides").replace("{n}", &n.to_string())).unwrap_or_default());
+    }
     Some(app.web.pages.get(&d.uid).map(|p| p.title.clone()).unwrap_or_default())
 }
 
 /// The active web tab as `ui.inspect` reports it (`null` for any other tab).
 pub fn inspect(app: &SheetApp) -> Json {
-    let Some(d) = app.session.active().filter(|d| d.is_web()) else { return Json::Null };
+    let Some(d) = app.session.active().filter(|d| paged(d)) else { return Json::Null };
     let address = app.web.tabs.get(&d.uid).map(|t| t.address.clone());
+    let slides = app.web.tabs.get(&d.uid).and_then(|t| t.slides);
     let page = app.web.pages.get(&d.uid).cloned().unwrap_or_default();
     let pane = app.web.panes.iter().find(|p| p.id == d.uid);
     json!({
@@ -368,6 +479,8 @@ pub fn inspect(app: &SheetApp) -> Json {
         "loading": page.loading,
         "rect": pane.and_then(|p| p.rect),
         "holes": pane.map(|p| p.holes.clone()).unwrap_or_default(),
+        "presentation": d.is_slides(),
+        "slides": slides,
     })
 }
 

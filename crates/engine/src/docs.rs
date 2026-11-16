@@ -66,6 +66,9 @@ pub enum TextKind {
     /// A web page, an HTML file (.html, .htm) or a site link (.url), shown by the interface to look
     /// at: its document tab holds no text.
     Web,
+    /// A PowerPoint presentation, its slides shown by the interface to look at: its document tab
+    /// holds no text.
+    Slides,
 }
 
 impl TextKind {
@@ -81,6 +84,7 @@ impl TextKind {
             Some("hwp" | "hwpx") => TextKind::Hwp,
             Some("png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff") => TextKind::Image,
             Some("html" | "htm" | "url") => TextKind::Web,
+            Some("pptx" | "ppsx" | "potx" | "pptm" | "ppsm" | "potm") => TextKind::Slides,
             _ => TextKind::Plain,
         }
     }
@@ -96,6 +100,7 @@ impl TextKind {
             TextKind::Hwp => "hwpx",
             TextKind::Image => "png",
             TextKind::Web => "url",
+            TextKind::Slides => "pptx",
         }
     }
 
@@ -162,6 +167,16 @@ pub const WEB_READ_ONLY: &str = "A web page can only be looked at in Monun.";
 /// A workbook of one document tab standing for a web page (an HTML file or a site link), named
 /// after it, as [`image_workbook`] is for a picture.
 pub fn web_workbook(name: &str) -> Workbook {
+    word_workbook(name)
+}
+
+/// Refused for every change to a presentation opened to look at, and for saving, exporting or
+/// printing it.
+pub const SLIDES_READ_ONLY: &str = "A presentation can only be looked at in Monun.";
+
+/// A workbook of one document tab standing for a PowerPoint presentation, named after it, as
+/// [`image_workbook`] is for a picture.
+pub fn slides_workbook(name: &str) -> Workbook {
     word_workbook(name)
 }
 

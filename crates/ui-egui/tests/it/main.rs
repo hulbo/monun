@@ -99,6 +99,7 @@ mod sheet_tab_rename;
 mod sheet_tabs;
 mod show_objects;
 mod shrink_to_fit;
+mod slides_view;
 mod sort_dialog_columns;
 mod status_bar_menu;
 mod support;

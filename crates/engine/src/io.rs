@@ -45,6 +45,10 @@ pub enum FileKind {
     /// tab the interface shows the page of ([`crate::docs::web_workbook`]); the engine never reads
     /// its contents and never writes it.
     Web,
+    /// A PowerPoint presentation (.pptx, .ppsx, .potx, .pptm): opens as a document tab the
+    /// interface shows the slides of ([`crate::docs::slides_workbook`]); the engine never reads its
+    /// contents and never writes it.
+    Slides,
 }
 
 impl FileKind {
@@ -66,6 +70,7 @@ impl FileKind {
             "hwp" | "hwpx" => FileKind::Hwp,
             "png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff" => FileKind::Image,
             "url" => FileKind::Web,
+            "pptx" | "ppsx" | "potx" | "pptm" | "ppsm" | "potm" => FileKind::Slides,
             _ => return None,
         })
     }
@@ -117,6 +122,10 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_
     // still saved as an HTML file, File › Export › Save as Web Page.)
     if matches!(FileKind::from_path(name), Some(FileKind::Html | FileKind::Web)) {
         return Ok((crate::docs::web_workbook(name), vec![]));
+    }
+    // And a presentation: the interface shows its slides.
+    if FileKind::from_path(name) == Some(FileKind::Slides) {
+        return Ok((crate::docs::slides_workbook(name), vec![]));
     }
     if monun_xlsx::sniff(bytes) != monun_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
@@ -376,6 +385,7 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Hwp => Err(EngineError::Other(crate::docs::HWP_IN_TAB.into())),
         FileKind::Image => Err(EngineError::Other(crate::docs::IMAGE_READ_ONLY.into())),
         FileKind::Web => Err(EngineError::Other(crate::docs::WEB_READ_ONLY.into())),
+        FileKind::Slides => Err(EngineError::Other(crate::docs::SLIDES_READ_ONLY.into())),
     }
 }
 

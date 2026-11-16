@@ -3801,6 +3801,14 @@ name = "monun-pdf"
 version = "1.0.1"
 
 [[package]]
+name = "monun-pptx"
+version = "1.0.1"
+dependencies = [
+ "roxmltree 0.21.2",
+ "zip 3.0.0",
+]
+
+[[package]]
 name = "monun-ui-egui"
 version = "1.0.1"
 dependencies = [
@@ -3816,6 +3824,7 @@ dependencies = [
  "monun-chart",
  "monun-engine",
  "monun-markdown",
+ "monun-pptx",
  "monun-xlsx",
  "pdfcraft-render",
  "resvg 0.47.0",
@@ -3833,6 +3842,7 @@ dependencies = [
  "wordcraft-pdf",
  "wordcraft-render",
  "zbus",
+ "zip 3.0.0",
 ]
 
 [[package]]

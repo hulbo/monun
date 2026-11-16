@@ -21,6 +21,7 @@ monun-calc = { path = "crates/calc" }
 monun-xlsx = { path = "crates/xlsx" }
 monun-chart = { path = "crates/chart" }
 monun-markdown = { path = "crates/markdown" }
+monun-pptx = { path = "crates/pptx" }
 monun-engine = { path = "crates/engine" }
 # Features chosen by each app: the desktop turns on `diagrams` and `pdf`, the web build neither.
 monun-ui-egui = { path = "crates/ui-egui", default-features = false }
@@ -44,6 +45,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 zip = { version = "3", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
 sha2 = { version = "0.11", default-features = false }
 # Decrypting password-protected workbooks ([MS-OFFCRYPTO]): AES and SHA-1, pure Rust (wasm-safe).
 aes = { version = "0.9", default-features = false }

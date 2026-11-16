@@ -80,7 +80,8 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
                 | crate::io::FileKind::Hwp
                 | crate::io::FileKind::Image
                 | crate::io::FileKind::Html
-                | crate::io::FileKind::Web,
+                | crate::io::FileKind::Web
+                | crate::io::FileKind::Slides,
             ) => crate::io::read_head(path, 1024)?,
             _ => crate::io::read_file(path)?,
         };
@@ -96,7 +97,13 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // So are a 한글 document and a picture, as they are.
     let hwp = matches!(
         crate::io::FileKind::from_path(&name),
-        Some(crate::io::FileKind::Hwp | crate::io::FileKind::Image | crate::io::FileKind::Html | crate::io::FileKind::Web)
+        Some(
+            crate::io::FileKind::Hwp
+                | crate::io::FileKind::Image
+                | crate::io::FileKind::Html
+                | crate::io::FileKind::Web
+                | crate::io::FileKind::Slides
+        )
     );
     let encrypted = !word && !hwp && monun_xlsx::sniff(&bytes) == monun_xlsx::Format::Encrypted;
     let (mut wb, warnings) = crate::io::open_bytes_with(&name, &bytes, str_param(p, "password"), bool_param(p, "csvAsText").unwrap_or(false))?;
@@ -219,6 +226,9 @@ fn reload(s: &mut Session, p: &Json) -> Result<Json> {
     }
     if d.is_web() {
         return Err(crate::EngineError::Other(crate::docs::WEB_READ_ONLY.into()));
+    }
+    if d.is_slides() {
+        return Err(crate::EngineError::Other(crate::docs::SLIDES_READ_ONLY.into()));
     }
     if d.is_word() {
         return Err(crate::EngineError::Other(crate::docs::WORD_IN_TAB.into()));

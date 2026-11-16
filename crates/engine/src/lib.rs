@@ -418,6 +418,11 @@ impl DocState {
     pub fn is_web(&self) -> bool {
         self.text_kind() == Some(docs::TextKind::Web)
     }
+    /// A PowerPoint presentation opened to look at: nothing changes it, saves, exports or prints
+    /// it.
+    pub fn is_slides(&self) -> bool {
+        self.text_kind() == Some(docs::TextKind::Slides)
+    }
 }
 
 /// Engine-side preferences.
@@ -706,6 +711,7 @@ impl Session {
             docs::TextKind::Pdf => "PDF",
             docs::TextKind::Image => "Picture",
             docs::TextKind::Web => "Page",
+            docs::TextKind::Slides => "Presentation",
             docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();

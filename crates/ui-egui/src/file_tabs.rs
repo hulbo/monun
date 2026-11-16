@@ -404,7 +404,8 @@ pub(crate) fn path_icon(path: &str) -> Icon {
             | monun_engine::io::FileKind::Hwp
             | monun_engine::io::FileKind::Image
             | monun_engine::io::FileKind::Html
-            | monun_engine::io::FileKind::Web,
+            | monun_engine::io::FileKind::Web
+            | monun_engine::io::FileKind::Slides,
         ) => Some(TextKind::of_name(path)),
         _ => None,
     };
@@ -422,6 +423,7 @@ pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Hwp) => Icon::Hwp,
         Some(TextKind::Image) => Icon::ImageFile,
         Some(TextKind::Web) => Icon::WebFile,
+        Some(TextKind::Slides) => Icon::SlidesFile,
     }
 }
 

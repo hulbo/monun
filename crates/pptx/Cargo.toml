@@ -1,0 +1,13 @@
+[package]
+name = "monun-pptx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monun presentation tabs: a PowerPoint file (.pptx) turned into a web page of its slides, to look at"
+
+[lints]
+workspace = true
+
+[dependencies]
+zip = { workspace = true }
+roxmltree = { workspace = true }

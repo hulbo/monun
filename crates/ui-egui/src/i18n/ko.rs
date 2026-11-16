@@ -2161,6 +2161,19 @@ const MORE: &[(&str, &str)] = &[
     ("This site link holds no web address.", "이 사이트 연결에는 웹 주소가 없습니다."),
     ("Web pages can't be shown on this PC:", "이 PC에서는 웹 페이지를 표시할 수 없습니다:"),
     ("Web pages show here in the desktop app.", "웹 페이지는 데스크톱 앱에서 여기에 표시됩니다."),
+    // Presentation tabs (slides_view, web_view).
+    ("{n} slides", "슬라이드 {n}장"),
+    ("Open in Default App", "기본 앱에서 열기"),
+    ("Open the file in the app Windows opens it with", "Windows에서 이 파일을 여는 앱으로 엽니다"),
+    ("Presentations show here in the desktop app.", "프레젠테이션은 데스크톱 앱에서 여기에 표시됩니다."),
+    ("The presentation couldn't be shown:", "프레젠테이션을 표시하지 못했습니다:"),
+    ("A presentation can only be looked at in Monun.", "모눈에서는 프레젠테이션을 보기만 할 수 있습니다."),
+    ("Monun stopped reading this presentation. Close it and open it again.", "모눈이 이 프레젠테이션을 더 읽지 못했습니다. 닫았다가 다시 여세요."),
+    ("This version of Monun can't show presentations.", "이 버전의 모눈에서는 프레젠테이션을 볼 수 없습니다."),
+    (
+        "This isn't a PowerPoint file Monun can show. Monun shows .pptx files: an old .ppt file, or one with a password, has to be saved as .pptx in PowerPoint first.",
+        "모눈이 보여 줄 수 있는 PowerPoint 파일이 아닙니다. 모눈은 .pptx 파일을 보여 줍니다. 예전 .ppt 파일이나 암호가 걸린 파일은 먼저 PowerPoint에서 .pptx로 저장하세요.",
+    ),
     // 한글 documents (hwp_view).
     ("New Hangul Document", "새 한글 문서"),
     ("Hangul Document", "한글 문서"),

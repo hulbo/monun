@@ -9,13 +9,16 @@ description = "Monun egui frontend (Excel-style UI); swappable — nothing below
 workspace = true
 
 [features]
-default = ["pdf", "word", "hwp"]
+default = ["pdf", "word", "hwp", "slides"]
 # PDF files shown in their tab (desktop; the web build says it can't show them).
 pdf = ["dep:pdfcraft-render", "dep:hayro"]
 # Word files shown and edited in their tab (desktop; the web build says it can't show them).
 word = ["dep:wordcraft-engine", "dep:wordcraft-layout", "dep:wordcraft-render", "dep:wordcraft-pdf", "dep:wordcraft-doc", "dep:wordcraft-fonts"]
 # 한글 files (.hwp/.hwpx) shown and edited in their tab (desktop; the web build says it can't show them).
 hwp = ["dep:rhwp", "dep:resvg", "dep:lopdf"]
+# PowerPoint presentations shown in their tab, as a web page of their slides (desktop; the web build
+# says it can't show them).
+slides = ["dep:monun-pptx"]
 # Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
 diagrams = ["monun-markdown/diagrams", "monun-engine/diagrams"]
 
@@ -45,6 +48,7 @@ wordcraft-pdf = { workspace = true, optional = true }
 wordcraft-doc = { workspace = true, optional = true }
 wordcraft-fonts = { workspace = true, optional = true }
 rhwp = { workspace = true, optional = true }
+monun-pptx = { workspace = true, optional = true }
 resvg = { workspace = true, optional = true }
 lopdf = { workspace = true, optional = true }
 
@@ -58,6 +62,8 @@ zbus = "=5.19.0"
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 epaint_default_fonts = { workspace = true }
 monun-xlsx = { workspace = true, features = ["test-support"] }
+# Presentations made in tests (`tests/it/slides_view.rs`).
+zip = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The desktop's preferred language for the first-run interface language.

@@ -56,6 +56,7 @@ pub mod projects;
 pub mod recovery;
 pub mod ribbon;
 pub mod selection_glide;
+pub mod slides_view;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;

@@ -281,6 +281,26 @@ fn an_html_file_or_a_site_link_opens_as_a_web_tab_and_nothing_writes_it() {
 }
 
 #[test]
+fn a_presentation_opens_as_a_tab_to_look_at_and_nothing_writes_it() {
+    use monun_engine::docs::TextKind;
+    let dir = temp_dir("slides");
+    let path = dir.join("발표.pptx");
+    let bytes = b"PK not read by the engine".to_vec();
+    std::fs::write(&path, &bytes).unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    let d = s.active().unwrap();
+    assert_eq!((d.text_kind(), d.is_slides(), d.is_dirty()), (Some(TextKind::Slides), true, false));
+    assert_eq!((d.display_title(), d.path.as_deref()), ("발표.pptx".to_string(), path.to_str()));
+    for (cmd, params) in [("doc.setText", json!({"text": "x"})), ("file.save", json!({})), ("file.reload", json!({}))] {
+        let e = s.execute(cmd, params).unwrap_err().to_string();
+        assert!(e.contains(monun_engine::docs::SLIDES_READ_ONLY), "{cmd}: {e}");
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_pdf_file_opens_as_a_tab_to_read_and_nothing_writes_it() {
     use monun_engine::docs::TextKind;
     let dir = temp_dir("pdf");

@@ -97,6 +97,8 @@ impl eframe::App for App {
         print::finish_pending_jobs();
         #[cfg(target_os = "windows")]
         self.web.close();
+        // The pages presentations were shown as.
+        monun_ui_egui::slides_view::clean_up();
         if let Some(l) = &self.instance {
             l.close();
         }
@@ -267,7 +269,7 @@ fn services() -> Services {
                     "Spreadsheets and documents",
                     &[
                         "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp",
-                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url",
+                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url", "pptx", "ppsx", "potx", "pptm",
                     ],
                 )
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
@@ -282,6 +284,7 @@ fn services() -> Services {
                 .add_filter("Hangul document", &["hwp", "hwpx"])
                 .add_filter("Pictures (view only)", &["png", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "ico", "tif", "tiff"])
                 .add_filter("Web pages and site links (view only)", &["html", "htm", "url"])
+                .add_filter("PowerPoint presentations (view only)", &["pptx", "ppsx", "potx", "pptm"])
                 .add_filter("PDF document (read only)", &["pdf"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))

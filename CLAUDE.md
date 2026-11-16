@@ -49,6 +49,14 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   set, so it is `leak`ed), hands the keyboard back on a click in egui (`focus_parent`), and reports
   titles and addresses back (`web.pages`). Control screenshots don't show the page (it isn't drawn by egui): `ui.inspect`'s
   `web` says whether it loaded.
+- Presentation tabs: `crates/pptx` (`monun-pptx`, layer 0, `zip` and `roxmltree` only) turns a .pptx
+  into one HTML page of its slides (HTML and inline SVG; placeholders inherit from the layout and
+  master by `idx`, then type; text levels stack `defaultTextStyle` < master `txStyles` < master,
+  layout and shape `lstStyle`; colours resolve through the slide's colour map). The engine knows an
+  empty read-only tab (`TextKind::Slides`, `docs::slides_workbook`). `crates/ui-egui/src/slides_view.rs`
+  (feature `slides`, desktop) writes the page on a thread into `%TEMP%\monun-slides\<pid>-<uid>` and
+  `web_view` shows it as a web tab's page (rewritten when the file changes; the folder goes when
+  the tab closes and in `slides_view::clean_up` at exit). Charts are a box with their title.
 - 한글 tabs: `crates/ui-egui/src/hwp_view/` (feature `hwp`, desktop only). The document lives on a thread of
   its own (`thread.rs`) in rhwp's `HwpDocument` (crates.io `rhwp = "=0.9.0"`, no default features but
   `wasm-api`, whose facade holds some caret queries the core keeps crate-private; its error path panics
