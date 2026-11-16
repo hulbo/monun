@@ -5,9 +5,14 @@
 //! below (or beside) the nodes it passes; an arrow to its own node loops out of its side.
 //!
 //! Subgroups (`subgraph … end`, nested too) are laid out with the rest: the whole flowchart takes
-//! ranks together, a group's members stay side by side in each rank, with room where a rank passes
-//! into or out of a group (and for its title), and whatever isn't a group's is moved out of its
-//! frame, which then holds just its members.
+//! ranks together, a group in as few as it can (a node of it nothing leads to comes no later than
+//! the rest), a group's members stay side by side in each rank, with room where a rank passes into
+//! or out of a group (and for its title), and whatever isn't a group's is moved out of its frame,
+//! which then holds just its members. Nodes with no arrows to order them by keep the order they were
+//! written in, and a band across the drawing left empty by lining up closes.
+//!
+//! An arrow bends clear of the frames of groups it doesn't join and of the nodes beside its ends,
+//! and a label another arrow runs through moves along its own arrow, out of the way.
 //!
 //! An arrow from or to a group (`daily ==> monthly`) is laid out as one from its last node or to its
 //! first, and drawn from or to the group's frame.
@@ -57,6 +62,8 @@ const LOOP_HALF: f32 = 20.0;
 const STRAIGHTEN: f32 = 48.0;
 /// Between an arrow to its own node and its label, beside it.
 const LOOP_LABEL_GAP: f32 = 4.0;
+/// Round a label, kept clear of other arrows.
+const LABEL_CLEAR: f32 = 3.0;
 
 /// A point or a size along the flow (`main`) and across it (`cross`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -134,6 +141,7 @@ pub(super) fn relayout(graph: &Graph, layout: &mut Layout) -> bool {
     let Some(mut layers) = build(graph, layout, &ids, horizontal) else { return false };
     order(&mut layers);
     line_up(&mut layers);
+    close_gaps(&mut layers);
     let mains = rank_mains(&layers);
     clear_groups(&mut layers, &mains);
     let mut routes = Vec::with_capacity(layers.arrows.len());
@@ -143,6 +151,7 @@ pub(super) fn relayout(graph: &Graph, layout: &mut Layout) -> bool {
         cut(&mut route, &layers, arrow.cut);
         routes.push(route);
     }
+    slide_labels(&layers, &mut routes);
     write(layout, &ids, &layers, &mains, &routes, graph.direction);
     true
 }
@@ -276,7 +285,8 @@ fn build(graph: &Graph, layout: &Layout, ids: &[String], horizontal: bool) -> Op
     // Arrows to their own node take no part in the ranks.
     let ranked: Vec<(usize, usize)> = pairs.iter().copied().filter(|(a, b)| a != b).collect();
     let back_ranked = loops(items.len(), &ranked);
-    let ranks = ranking(items.len(), &ranked, &back_ranked)?;
+    let mut ranks = ranking(items.len(), &ranked, &back_ranked)?;
+    compact_groups(&mut ranks, &ranked, &back_ranked, &of_node, &groups);
     for (item, rank) in items.iter_mut().zip(&ranks) {
         item.rank = *rank;
     }
@@ -422,6 +432,38 @@ fn ranking(n: usize, pairs: &[(usize, usize)], back: &[bool]) -> Option<Vec<usiz
     Some(rank)
 }
 
+/// Each group's nodes in as few ranks as they can take, as Mermaid keeps a group together: a node
+/// of a group nothing leads to (free to come as early as it likes) comes no later than the last of
+/// the group's other nodes, and one leading nowhere at the group's first. A group of such nodes only
+/// takes the latest rank all of them can: a node leading on from a group to the next rank no longer
+/// leaves the rest of its group a rank behind.
+fn compact_groups(rank: &mut [usize], pairs: &[(usize, usize)], back: &[bool], of_node: &[Vec<usize>], groups: &[Group]) {
+    let flow: Vec<(usize, usize)> = pairs.iter().zip(back).map(|(&(a, b), &turned)| if turned { (b, a) } else { (a, b) }).collect();
+    let free = |i: usize| !flow.iter().any(|&(_, b)| b == i);
+    // The rank just before the first node it leads to, if it leads anywhere.
+    let before_next = |rank: &[usize], i: usize| {
+        flow.iter().filter(|&&(a, _)| a == i).filter_map(|&(_, b)| rank.get(b).copied()).min().map(|r| r.saturating_sub(1))
+    };
+    for (g, group) in groups.iter().enumerate() {
+        // The nodes whose innermost group this is.
+        let own: Vec<usize> = group.members.iter().copied().filter(|&m| of_node.get(m).and_then(|l| l.last()) == Some(&g)).collect();
+        let fixed: Vec<usize> = group.members.iter().filter(|&&m| !free(m)).filter_map(|&m| rank.get(m).copied()).collect();
+        let (first, last) = (fixed.iter().min().copied(), fixed.iter().max().copied());
+        let together = own.iter().filter(|&&m| free(m)).filter_map(|&m| before_next(rank, m)).min().unwrap_or(0);
+        for &m in own.iter().filter(|&&m| free(m)) {
+            let next = before_next(rank, m);
+            let place = match (first, last, next) {
+                (Some(_), Some(last), Some(next)) => next.min(last),
+                (Some(first), _, None) => first,
+                _ => together,
+            };
+            if let Some(r) = rank.get_mut(m) {
+                *r = place;
+            }
+        }
+    }
+}
+
 /// The items next to `item` in the neighbouring rank (`before` the one before it, else after).
 fn neighbours(layers: &Layers, item: usize, before: bool) -> Vec<usize> {
     let mut found = Vec::new();
@@ -440,7 +482,8 @@ fn neighbours(layers: &Layers, item: usize, before: bool) -> Vec<usize> {
 }
 
 /// Orders each rank by the average place of its items' neighbours, sweeping down and up the ranks;
-/// a group's items stay together, the group placed by their average.
+/// a group's items stay together, the group placed by their average, and items with no neighbours
+/// there keep their places.
 fn order(layers: &mut Layers) {
     for pass in 0..ORDER_PASSES {
         let down = pass % 2 == 0;
@@ -449,13 +492,11 @@ fn order(layers: &mut Layers) {
             let r = if down { step } else { count - 1 - step };
             let place: HashMap<usize, f32> = place_in_rank(layers, if down { r - 1 } else { r + 1 });
             let Some(rank) = layers.ranks.get(r).cloned() else { continue };
-            let keyed: Vec<(f32, usize)> = rank
+            let keyed: Vec<Keyed> = rank
                 .iter()
-                .enumerate()
-                .map(|(pos, &item)| {
+                .map(|&item| {
                     let near: Vec<f32> = neighbours(layers, item, down).iter().filter_map(|n| place.get(n).copied()).collect();
-                    let key = if near.is_empty() { pos as f32 } else { near.iter().sum::<f32>() / near.len() as f32 };
-                    (key, item)
+                    ((!near.is_empty()).then(|| near.iter().sum::<f32>() / near.len() as f32), item)
                 })
                 .collect();
             let sorted = by_groups(layers, keyed, 0);
@@ -466,11 +507,13 @@ fn order(layers: &mut Layers) {
     }
 }
 
-/// An item of a rank with the key it is ordered by.
-type Keyed = (f32, usize);
+/// An item of a rank with the key it is ordered by, when it has one: the average place of its
+/// neighbours in the rank before (or after).
+type Keyed = (Option<f32>, usize);
 
-/// `keyed` items sorted by key, the items of each group (at nesting `depth` and below) kept
-/// together and the group sorted by its items' average key.
+/// `keyed` items (in their present order) ordered as Mermaid orders a rank: the items of each group
+/// (at nesting `depth` and below) kept together and ordered among themselves first, then the groups
+/// and the items in none [`interleaved`], a group by the average key of its items that have one.
 fn by_groups(layers: &Layers, keyed: Vec<Keyed>, depth: usize) -> Vec<usize> {
     // Blocks: one per group at this depth, one per item in none.
     let mut blocks: Vec<(Option<usize>, Vec<Keyed>)> = Vec::new();
@@ -481,15 +524,39 @@ fn by_groups(layers: &Layers, keyed: Vec<Keyed>, depth: usize) -> Vec<usize> {
             None => blocks.push((group, vec![(key, item)])),
         }
     }
-    let key = |list: &[Keyed]| list.iter().map(|(k, _)| k).sum::<f32>() / list.len().max(1) as f32;
-    blocks.sort_by(|a, b| key(&a.1).total_cmp(&key(&b.1)));
-    let mut out = Vec::new();
-    for (group, list) in blocks {
-        if group.is_some() {
-            out.extend(by_groups(layers, list, depth + 1));
-        } else {
-            out.extend(list.into_iter().map(|(_, i)| i));
+    let entries: Vec<(Option<f32>, Vec<usize>)> = blocks
+        .into_iter()
+        .map(|(group, list)| {
+            let keys: Vec<f32> = list.iter().filter_map(|(k, _)| *k).collect();
+            let key = (!keys.is_empty()).then(|| keys.iter().sum::<f32>() / keys.len() as f32);
+            let items = if group.is_some() { by_groups(layers, list, depth + 1) } else { list.into_iter().map(|(_, i)| i).collect() };
+            (key, items)
+        })
+        .collect();
+    interleaved(entries).into_iter().flatten().collect()
+}
+
+/// Entries put in order as Mermaid puts them: those with a key by their keys, those without kept in
+/// the places they had, so nodes with no arrows stay in the order they were written.
+fn interleaved<T>(entries: Vec<(Option<f32>, T)>) -> Vec<T> {
+    let count = entries.len();
+    let (mut sortable, mut kept) = (Vec::new(), Vec::new());
+    for (pos, (key, entry)) in entries.into_iter().enumerate() {
+        match key {
+            Some(key) => sortable.push((key, entry)),
+            None => kept.push((pos, entry)),
         }
+    }
+    // A stable sort: entries with equal keys keep their order.
+    sortable.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut kept = kept.into_iter().peekable();
+    let mut sorted = sortable.into_iter().map(|(_, entry)| entry);
+    let mut out = Vec::with_capacity(count);
+    while out.len() < count {
+        let due = kept.peek().is_some_and(|(pos, _)| *pos <= out.len());
+        let next = if due { kept.next().map(|(_, e)| e) } else { sorted.next().or_else(|| kept.next().map(|(_, e)| e)) };
+        let Some(entry) = next else { break };
+        out.push(entry);
     }
     out
 }
@@ -605,6 +672,50 @@ fn settle(layers: &mut Layers, r: usize, wanted: &[f32]) {
             }
             pos += 1;
         }
+    }
+}
+
+/// An item's extent across the flow, with the room kept after it.
+fn span(item: &Item) -> (f32, f32) {
+    (item.cross - item.size.cross / 2.0, item.cross + item.size.cross / 2.0 + item.room)
+}
+
+/// Closes the empty bands across the flow: where nothing of any rank lies over a stretch wider than
+/// the neighbours on either side of it need between them (lining up moves a rank's nodes towards
+/// those they link to, never towards one another), everything beyond it moves back.
+fn close_gaps(layers: &mut Layers) {
+    let mut spans: Vec<(f32, f32)> = layers.items.iter().map(span).collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut bands: Vec<(f32, f32)> = Vec::new();
+    let mut reach: Option<f32> = None;
+    for (lo, hi) in spans {
+        if let Some(end) = reach
+            && lo > end
+        {
+            bands.push((end, lo));
+        }
+        reach = Some(reach.map_or(hi, |end| end.max(hi)));
+    }
+    // How far each band closes: as far as the neighbours of each rank across it let.
+    let mut closings: Vec<(f32, f32)> = Vec::new();
+    for (lo, hi) in bands {
+        let mut close = hi - lo - NODE_GAP;
+        for pair in layers.ranks.iter().flat_map(|rank| rank.windows(2)) {
+            if let [a, b] = *pair
+                && let (Some(ia), Some(ib)) = (layers.items.get(a), layers.items.get(b))
+                && span(ia).1 <= lo + 0.5
+                && span(ib).0 >= hi - 0.5
+            {
+                close = close.min(span(ib).0 - span(ia).1 - gap(layers, ia, ib));
+            }
+        }
+        if close > 0.5 {
+            closings.push((hi, close));
+        }
+    }
+    for item in &mut layers.items {
+        let low = span(item).0;
+        item.cross -= closings.iter().filter(|(at, _)| low >= at - 0.5).map(|(_, by)| by).sum::<f32>();
     }
 }
 
@@ -844,6 +955,8 @@ fn in_rank_order(layers: &Layers, blocks: Vec<Block>) -> Vec<Block> {
 struct Route {
     points: Vec<At>,
     label: Option<At>,
+    /// The stretch along the flow its label can move along, on a straight run of the arrow.
+    slide: Option<(f32, f32)>,
 }
 
 /// Where on its side of `item` the `k`th of `n` arrows meets it, `k` counted across the flow.
@@ -877,7 +990,7 @@ fn port_of(layers: &Layers, item: usize, i: usize, out: bool) -> f32 {
 /// The points of arrow `i`, with its label's centre; `lanes` counts the lanes taken by arrows going
 /// back.
 fn route(layers: &Layers, mains: &[f32], i: usize, lanes: &mut usize) -> Route {
-    let Some(arrow) = layers.arrows.get(i) else { return Route { points: Vec::new(), label: None } };
+    let Some(arrow) = layers.arrows.get(i) else { return Route { points: Vec::new(), label: None, slide: None } };
     if arrow.looped {
         return loop_route(layers, mains, arrow);
     }
@@ -886,7 +999,7 @@ fn route(layers: &Layers, mains: &[f32], i: usize, lanes: &mut usize) -> Route {
     }
     let main_of = |item: usize| layers.items.get(item).and_then(|it| mains.get(it.rank)).copied().unwrap_or(0.0);
     let half = |item: usize| layers.items.get(item).map_or(0.0, |it| it.size.main / 2.0);
-    let (Some(&first), Some(&last)) = (arrow.path.first(), arrow.path.last()) else { return Route { points: Vec::new(), label: None } };
+    let (Some(&first), Some(&last)) = (arrow.path.first(), arrow.path.last()) else { return Route { points: Vec::new(), label: None, slide: None } };
     let start = at(main_of(first) + half(first), port_of(layers, first, i, true));
     let mut end = at(main_of(last) - half(last), port_of(layers, last, i, false));
     // A last bend smaller than a corner reads as a kink: the arrow comes in straight, still on the box.
@@ -910,6 +1023,7 @@ fn route(layers: &Layers, mains: &[f32], i: usize, lanes: &mut usize) -> Route {
     let last_stop = stops.len().saturating_sub(1);
     let mut points = vec![start];
     let mut label = None;
+    let mut slide = None;
     for (n, mut stop) in stops.into_iter().enumerate() {
         let from = points.last().copied().unwrap_or(start);
         // A stand-in is this arrow's alone: one nearly in line with the arrow so far takes its line,
@@ -937,7 +1051,9 @@ fn route(layers: &Layers, mains: &[f32], i: usize, lanes: &mut usize) -> Route {
             _ if from_label => Bend::End(JOG),
             _ => Bend::Middle,
         };
-        let (segment, run) = elbow(from, stop, bend);
+        let ends = (arrow.path.get(n).copied().unwrap_or(first), arrow.path.get(n + 1).copied().unwrap_or(last));
+        let turn = clear_turn(layers, mains, ends, (from, stop), turn_of(from, stop, bend));
+        let (segment, run) = elbow(from, stop, bend, turn);
         points.extend(segment);
         if labelled.is_some() {
             // In the middle of the run, or of its part outside the frames it passes.
@@ -948,9 +1064,10 @@ fn route(layers: &Layers, mains: &[f32], i: usize, lanes: &mut usize) -> Route {
                 (lo, hi) = (free_lo.max(lo), free_hi.min(hi));
             }
             label = Some(at((lo + hi) / 2.0, run.cross));
+            slide = Some((lo, hi));
         }
     }
-    Route { points, label }
+    Route { points, label, slide }
 }
 
 /// Whether the arrow through stand-in `s` can pass at `cross` instead, running on straight: it is a
@@ -976,17 +1093,48 @@ fn clear_line(layers: &Layers, mains: &[f32], s: usize, cross: f32) -> bool {
     free_of_items && free_of_frames && inside_own
 }
 
+/// Each label another arrow runs through moved along its own arrow's straight run to the nearest
+/// place none does, if there is one (an arrow bending round a group's frame crossed the label of a
+/// straight arrow beside it).
+fn slide_labels(layers: &Layers, routes: &mut [Route]) {
+    for i in 0..routes.len() {
+        let Some((label, (lo, hi))) = routes.get(i).and_then(|r| Some((r.label?, r.slide?))) else { continue };
+        let Some(size) = layers.arrows.get(i).and_then(|a| a.label) else { continue };
+        let others: Vec<&Route> = routes.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, r)| r).collect();
+        let crossed = |main: f32| {
+            let (m, c) = (size.main / 2.0 + LABEL_CLEAR, size.cross / 2.0 + LABEL_CLEAR);
+            let b = [main - m, label.cross - c, main + m, label.cross + c];
+            others.iter().flat_map(|r| r.points.windows(2)).any(|w| match w {
+                [p, q] => p.main.min(q.main) < b[2] && p.main.max(q.main) > b[0] && p.cross.min(q.cross) < b[3] && p.cross.max(q.cross) > b[1],
+                _ => false,
+            })
+        };
+        if !crossed(label.main) {
+            continue;
+        }
+        let (from, to) = (lo + size.main / 2.0 + LABEL_MARGIN / 2.0, hi - size.main / 2.0 - LABEL_MARGIN / 2.0);
+        let steps = ((to - from) / 2.0).max(0.0) as usize;
+        let best = (0..=steps)
+            .map(|k| (from + 2.0 * k as f32).min(to))
+            .filter(|&p| !crossed(p))
+            .min_by(|a, b| (a - label.main).abs().total_cmp(&(b - label.main).abs()));
+        if let (Some(p), Some(route)) = (best, routes.get_mut(i)) {
+            route.label = Some(at(p, label.cross));
+        }
+    }
+}
+
 /// An arrow from a node to itself: out of its side across the flow, round, and back in, its label
 /// on the far stretch.
 fn loop_route(layers: &Layers, mains: &[f32], arrow: &Arrow) -> Route {
-    let Some(item) = arrow.path.first().and_then(|&i| layers.items.get(i)) else { return Route { points: Vec::new(), label: None } };
+    let Some(item) = arrow.path.first().and_then(|&i| layers.items.get(i)) else { return Route { points: Vec::new(), label: None, slide: None } };
     let main = mains.get(item.rank).copied().unwrap_or(0.0);
     let side = item.cross + item.size.cross / 2.0;
     let half = LOOP_HALF.min(item.size.main / 2.0 - 6.0).max(4.0);
     let out = side + LOOP_OUT;
     let points = vec![at(main - half, side), at(main - half, out), at(main + half, out), at(main + half, side)];
     // The label beside the loop, where it shows whole.
-    Route { points, label: arrow.label.map(|l| at(main, out + LOOP_LABEL_GAP + l.cross / 2.0)) }
+    Route { points, label: arrow.label.map(|l| at(main, out + LOOP_LABEL_GAP + l.cross / 2.0)), slide: None }
 }
 
 /// An arrow from or to a group cut where it leaves the frame of the one and enters that of the other.
@@ -1063,18 +1211,59 @@ struct Run {
     cross: f32,
 }
 
-/// The points after `a` of a segment to `b`, bending once across the flow, and its longest
-/// straight run along the flow (where a label goes).
-fn elbow(a: At, b: At, bend: Bend) -> (Vec<At>, Run) {
-    if (a.cross - b.cross).abs() < 0.5 {
-        return (vec![b], Run { from: a.main, to: b.main, cross: a.cross });
-    }
+/// Where along the flow a segment from `a` to `b` bends.
+fn turn_of(a: At, b: At, bend: Bend) -> f32 {
     let room = (b.main - a.main).max(0.0);
-    let turn = match bend {
+    match bend {
         Bend::Start(d) => a.main + d.min(room / 2.0),
         Bend::End(d) => b.main - d.min(room / 2.0),
         Bend::Middle => (a.main + b.main) / 2.0,
-    };
+    }
+}
+
+/// Where a segment from `a` to `b` (between items `ends`) bends, moved off `turn` when the stretch
+/// across the flow there would cut through the frame of a group neither end is in, or a node of
+/// either end's rank: to the nearest place along the flow clear of them all, if there is one
+/// between its ends (an arrow leaving a node beside a wider group went down through the group).
+fn clear_turn(layers: &Layers, mains: &[f32], ends: (usize, usize), (a, b): (At, At), turn: f32) -> f32 {
+    let (Some(ia), Some(ib)) = (layers.items.get(ends.0), layers.items.get(ends.1)) else { return turn };
+    let (lo, hi) = (a.cross.min(b.cross) + 0.5, a.cross.max(b.cross) - 0.5);
+    if hi <= lo {
+        return turn;
+    }
+    let mut blocked: Vec<(f32, f32)> = Vec::new();
+    for (g, group) in layers.groups.iter().enumerate() {
+        let f = group.frame;
+        if !ia.groups.contains(&g) && !ib.groups.contains(&g) && f[1] < hi && f[3] > lo {
+            blocked.push((f[0] - PASS_GAP, f[2] + PASS_GAP));
+        }
+    }
+    for item in [ia.rank, ib.rank].iter().filter_map(|r| layers.ranks.get(*r)).flatten().filter(|&&o| o != ends.0 && o != ends.1) {
+        let Some(it) = layers.items.get(*item) else { continue };
+        let (c0, c1) = span(it);
+        let main = mains.get(it.rank).copied().unwrap_or(0.0);
+        if (!it.stand_in || it.size.main > 0.0) && c0 < hi && c1 > lo {
+            blocked.push((main - it.size.main / 2.0 - PASS_GAP, main + it.size.main / 2.0 + PASS_GAP));
+        }
+    }
+    let inside = |t: f32| blocked.iter().any(|&(b0, b1)| t > b0 && t < b1);
+    if !inside(turn) {
+        return turn;
+    }
+    blocked
+        .iter()
+        .flat_map(|&(b0, b1)| [b0, b1])
+        .filter(|&t| t > a.main + 1.0 && t < b.main - 1.0 && !inside(t))
+        .min_by(|x, y| (x - turn).abs().total_cmp(&(y - turn).abs()))
+        .unwrap_or(turn)
+}
+
+/// The points after `a` of a segment to `b`, bending once across the flow at `turn`, and its
+/// longest straight run along the flow (where a label goes).
+fn elbow(a: At, b: At, bend: Bend, turn: f32) -> (Vec<At>, Run) {
+    if (a.cross - b.cross).abs() < 0.5 {
+        return (vec![b], Run { from: a.main, to: b.main, cross: a.cross });
+    }
     let run =
         if matches!(bend, Bend::End(_)) { Run { from: a.main, to: turn, cross: a.cross } } else { Run { from: turn, to: b.main, cross: b.cross } };
     (vec![at(turn, a.cross), at(turn, b.cross), b], run)
@@ -1106,7 +1295,7 @@ fn free_stretch(layers: &Layers, mains: &[f32], a: usize, b: usize) -> Option<(f
 /// group frame it passes, and into the far side of its end.
 fn back_route(layers: &Layers, mains: &[f32], arrow: &Arrow, lanes: &mut usize) -> Route {
     let (Some(a), Some(b)) = (arrow.path.first().and_then(|&i| layers.items.get(i)), arrow.path.last().and_then(|&i| layers.items.get(i))) else {
-        return Route { points: Vec::new(), label: None };
+        return Route { points: Vec::new(), label: None, slide: None };
     };
     let (lo, hi) = (a.rank.min(b.rank), a.rank.max(b.rank));
     let (ma, mb) = (mains.get(a.rank).copied().unwrap_or(0.0), mains.get(b.rank).copied().unwrap_or(0.0));
@@ -1149,7 +1338,7 @@ fn back_route(layers: &Layers, mains: &[f32], arrow: &Arrow, lanes: &mut usize) 
             mb
         }
     };
-    Route { points, label: arrow.label.map(|_| at((from + to) / 2.0, lane)) }
+    Route { points, label: arrow.label.map(|_| at((from + to) / 2.0, lane)), slide: None }
 }
 
 /// Whether anything is beyond `item` across the flow in its rank: a node, a label, or the frame of a
@@ -1245,8 +1434,9 @@ fn write(layout: &mut Layout, ids: &[String], layers: &Layers, mains: &[f32], ro
             (n.x, n.y, n.width, n.height) = (x, y, w, h);
         }
     }
-    layout.width = boxes.iter().map(|b| b[2]).fold(0.0, f32::max) + dx + MARGIN;
-    layout.height = boxes.iter().map(|b| b[3]).fold(0.0, f32::max) + dy + MARGIN;
+    // The far edges from the lowest up: the drawing can lie wholly below zero before it is moved.
+    layout.width = boxes.iter().map(|b| b[2]).fold(f32::MIN, f32::max) + dx + MARGIN;
+    layout.height = boxes.iter().map(|b| b[3]).fold(f32::MIN, f32::max) + dy + MARGIN;
 }
 
 #[cfg(test)]
@@ -1267,7 +1457,7 @@ mod tests {
         (layout, ours)
     }
 
-    const SAMPLES: [&str; 9] = [
+    const SAMPLES: [&str; 14] = [
         "flowchart LR\n    U[\"업로드<br>로컬 NAS /share/files\"] -->|\"sendFile 배치<br>ECM 등록 · 로컬 삭제\"| E[\"ECM 문서\"]\n    E -->|\"ECM 자동 변환\"| P[\"PDF 변환본\"]\n    E -->|\"OCR 마스킹 배치<br>editDocument 버전업\"| M[\"마스킹본<br>ECM 최신 버전\"]\n    P -->|\"뷰어 주석 저장<br>changePdf\"| P2[\"주석 PDF\"]\n    M --> D1[\"downloadFile<br>/api/cmmn/file/{fileId}\"]\n    P2 --> D2[\"downloadPdfFile<br>/api/cmmn/file/{fileId}/pdf\"]",
         "flowchart LR\n    A[\"운영 레거시 DB\"] -->|\"1 시험 이관<br>공고 1개 사람 + 첨부 메타\"| B[\"개발 DB\"]\n    N[\"운영 레거시 NAS\"] -->|\"2 그 파일만 임시 복사\"| L[\"로컬 폴더\"]\n    B --> APP[\"3 로컬 isbm\"]\n    L --> APP\n    APP -->|\"4 해시 대조 · 이력 확인\"| X[\"5 같은 날 삭제\"]",
         "flowchart TD\n    A[시작] --> B{확인}\n    B -->|예| C[처리]\n    B -->|아니오| D[다시 보기]\n    D --> B",
@@ -1281,7 +1471,22 @@ mod tests {
         "flowchart LR\n    subgraph OUT[바깥]\n        A --> B\n        subgraph IN[안]\n            C --> D\n        end\n    end\n    B --> C\n    D --> E\n    Z --> A",
         // Arrows from and to groups, one going back.
         "flowchart TB\n    subgraph day[\"매일\"]\n        A[신청] --> B[요청]\n    end\n    subgraph month[\"매월\"]\n        C[후보] -->|6 미만| D[선정]\n        C -->|6 이상| E[제외]\n    end\n    day ==>|적재 후| month\n    month -. 보호 .-> P[삭제]\n    P -. 대상 .-> day\n    X[수동 구제] --> D",
+        // A group of nodes without arrows and an arrow leaving the group, beside a request leading to
+        // a decision with two outcomes.
+        "flowchart LR\n    subgraph APPS[\"번호가 적힌 신청서\"]\n        E[\"교육<br>신청 · 수강 · 취소\"]\n        F[\"수당\"]\n        C[\"상담\"]\n        L[\"자문\"]\n        B[\"창업\"]\n        G[\"연계\"]\n    end\n    R[\"번호 없는 신청<br>확인값만\"]\n    Q{\"확인값이 회원과<br>같은가\"}\n    M[\"회원 · 키 = 번호\"]\n    N[\"비회원 · 키 = 같은 확인값의<br>최근 접수번호\"]\n    APPS -->|\"번호\"| M\n    R --> Q\n    Q -->|\"같다\"| M\n    Q -->|\"없다\"| N",
+        // Two groups side by side, linked across.
+        "flowchart LR\n    subgraph PLAN[\"화면 — 계획\"]\n        H31[\"가 화면 수강·수료 조회\"]\n        H21[\"나 화면 수당 조회 ✅\"]\n        H11[\"다 화면<br>정리 상담·철거 조회<br>✅\"]\n        H12[\"라 화면 자문 ✅\"]\n        H41[\"마 화면 창업\"]\n        H23[\"바 화면 장려금 신·구<br>✅\"]\n        H22[\"사 화면 연계 수당 ✅\"]\n    end\n    subgraph NOW[\"상세 창 — 개발\"]\n        S1[\"교육 ② ③ ④ ㉔ ⑤\"]\n        S2[\"수당 · 추천서<br>⑥ ⑦ ㉕ ㉖\"]\n        S3[\"상담 ⑧ ⑨ ⑩\"]\n        S4[\"자문 ⑪ ⑫ ⑬\"]\n        S5[\"창업 · 진단<br>⑭ ⑮ ⑯ ㉗\"]\n        S8[\"복합 연계 ㉘\"]\n        S6[\"장려금 ⑰ ⑱ ⑲\"]\n        S7[\"연계 수당 ⑳ ㉑ ㉒ ㉓\"]\n    end\n    H31 -.-> S1\n    H21 -.-> S2\n    H11 -.-> S3\n    H12 -.-> S4\n    H41 -.-> S5\n    H11 -.-> S8\n    H12 -.-> S8\n    H41 -.-> S8\n    H23 -.-> S6\n    H22 -.-> S7",
+        // Left to right, everything placed above where it started.
+        "flowchart LR\n    APP[\"앱\"]\n    APP -->|\"기본 연결 DB\"| S[(\"기본 DB<br>지급 이력 표\")]\n    APP -->|\"따로 연결<br>표 주인 계정으로\"| H[(\"옮겨 온 표<br>원래 이름 그대로\")]\n    H -.- DEV[\"개발 계정\"]\n    H -.- OPS[\"운영 계정<br>접속 계정 이름\"]",
+        // A decision beside a group in its rank, an arrow from it to a node across from the group.
+        "flowchart LR\n    subgraph APPS[\"번호가 적힌 신청서\"]\n        E[\"교육<br>신청 · 수강 · 취소\"]\n        F[\"수당\"]\n        C[\"상담\"]\n    end\n    R[요청] --> Q{판단}\n    Q -->|\"아니오\"| N[비회원]\n    Q -->|\"예\"| M[회원]\n    E --> M",
+        // The same written the other way round: the decision first, the group after it.
+        "flowchart LR\n    R[\"번호 없는 신청<br>확인값만\"] --> Q{\"확인값이 회원과<br>같은가\"}\n    Q -->|\"같다\"| M[\"회원 · 키 = 번호\"]\n    Q -->|\"없다\"| N[\"비회원 · 키 = 같은 확인값의<br>최근 접수번호\"]\n    subgraph APPS[\"번호가 적힌 신청서\"]\n        E[\"교육<br>신청 · 수강 · 취소\"]\n        F[\"수당\"]\n        C[\"상담\"]\n        L[\"자문\"]\n        B[\"창업\"]\n        G[\"연계\"]\n    end\n    APPS -->|\"번호\"| M",
     ];
+
+    const GROUP_AND_DECISION: usize = 9;
+    const TWO_COLUMNS: usize = 10;
+    const DECISION_FIRST: usize = 13;
 
     fn meet(a: [f32; 4], b: [f32; 4]) -> bool {
         a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5
@@ -1407,6 +1612,122 @@ mod tests {
         assert!(top("B") < top("C") && top("E") < top("P"), "after the group led from");
         let frame = |label: &str| g.subgraphs.iter().find(|s| s.label == label).map(|s| (s.y, s.y + s.height)).unwrap_or_default();
         assert!(frame("매일").1 < frame("매월").0, "the frames one after the other");
+    }
+
+    #[test]
+    fn a_group_of_nodes_without_arrows_keeps_one_rank_in_the_order_written() {
+        for source in [SAMPLES[GROUP_AND_DECISION], SAMPLES[DECISION_FIRST]] {
+            group_in_one_rank(source);
+        }
+    }
+
+    fn group_in_one_rank(source: &str) {
+        let (layout, ours) = laid(source);
+        assert!(ours);
+        // Middle across, middle down, top and bottom.
+        let node = |id: &str| layout.nodes.get(id).map(|n| (n.x + n.width / 2.0, n.y + n.height / 2.0, n.y, n.y + n.height)).unwrap_or_default();
+        let members = ["E", "F", "C", "L", "B", "G"];
+        // One rank: the node standing for the group's arrow no longer moves on to the next, taking
+        // the group over two ranks and the decision sharing that rank below the group's frame.
+        for id in members {
+            assert!((node(id).0 - node("E").0).abs() < 1.0, "{id} in the group's rank");
+        }
+        for pair in members.windows(2) {
+            assert!(node(pair[0]).3 < node(pair[1]).2, "{pair:?} in the order written");
+        }
+        // The frame as tall as its nodes need: no room left over.
+        let Some(frame) = layout.subgraphs.first() else { panic!("a frame") };
+        let nodes: f32 = members.iter().map(|id| node(id).3 - node(id).2).sum();
+        let need = nodes + 5.0 * NODE_GAP + GROUP_PAD + 12.0 + frame.label_block.height + TITLE_BELOW;
+        assert!(frame.height <= need + 1.0, "{} for {need}", frame.height);
+        // The request leads straight on to the decision, in the group's rank, and on to its outcomes.
+        assert!((node("R").1 - node("Q").1).abs() < 1.0, "a chain runs straight");
+        assert!((node("Q").0 - node("E").0).abs() < 1.0, "the decision beside the group");
+        assert!(node("R").0 < node("Q").0 && node("Q").0 < node("M").0 && node("Q").0 < node("N").0);
+    }
+
+    #[test]
+    fn no_empty_band_runs_across_the_drawing() {
+        // Left to right: no stretch top to bottom with nothing in it wider than nodes' room.
+        let (layout, _) = laid(SAMPLES[TWO_COLUMNS]);
+        let mut spans: Vec<(f32, f32)> = node_boxes(&layout).iter().map(|b| (b[1], b[3])).collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut reach = spans.first().map_or(0.0, |s| s.1);
+        for (lo, hi) in spans {
+            assert!(lo - reach <= NODE_GAP + 1.0, "nothing from {reach} to {lo}");
+            reach = reach.max(hi);
+        }
+    }
+
+    #[test]
+    fn the_drawing_is_as_large_as_what_is_drawn() {
+        for source in SAMPLES {
+            let (layout, _) = laid(source);
+            let mut far = (f32::MIN, f32::MIN);
+            let mut reach = |x: f32, y: f32| far = (far.0.max(x), far.1.max(y));
+            for n in layout.nodes.values() {
+                reach(n.x + n.width, n.y + n.height);
+            }
+            for s in &layout.subgraphs {
+                reach(s.x + s.width, s.y + s.height);
+            }
+            for e in &layout.edges {
+                for &(x, y) in &e.points {
+                    reach(x, y);
+                }
+                if let (Some((x, y)), Some(t)) = (e.label_anchor, e.label.as_ref()) {
+                    reach(x + t.width / 2.0, y + t.height / 2.0);
+                }
+            }
+            assert!(
+                (layout.width - far.0 - MARGIN).abs() < 1.0 && (layout.height - far.1 - MARGIN).abs() < 1.0,
+                "{source}: {} × {} for {far:?}",
+                layout.width,
+                layout.height
+            );
+        }
+    }
+
+    #[test]
+    fn an_arrow_keeps_out_of_the_frames_of_groups_it_does_not_join() {
+        for source in SAMPLES {
+            let (layout, _) = laid(source);
+            // An end's nodes: a group's for an arrow from or to the group.
+            let nodes_of = |id: &String| match layout.nodes.get(id).and_then(|n| n.anchor_subgraph).and_then(|s| layout.subgraphs.get(s)) {
+                Some(sub) => sub.nodes.clone(),
+                None => vec![id.clone()],
+            };
+            for e in &layout.edges {
+                let ends: Vec<String> = nodes_of(&e.from).into_iter().chain(nodes_of(&e.to)).collect();
+                for sub in layout.subgraphs.iter().filter(|s| !s.nodes.iter().any(|n| ends.contains(n))) {
+                    let frame = [sub.x + 1.0, sub.y + 1.0, sub.x + sub.width - 1.0, sub.y + sub.height - 1.0];
+                    for pair in e.points.windows(2) {
+                        let (a, b) = (pair[0], pair[1]);
+                        let stretch = [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)];
+                        let cuts = stretch[0] < frame[2] && stretch[2] > frame[0] && stretch[1] < frame[3] && stretch[3] > frame[1];
+                        assert!(!cuts, "{source}: {} -> {} through {}", e.from, e.to, sub.label);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_other_arrow_runs_through_a_label() {
+        for source in SAMPLES {
+            let (layout, _) = laid(source);
+            for (i, e) in layout.edges.iter().enumerate() {
+                let (Some((x, y)), Some(t)) = (e.label_anchor, e.label.as_ref()) else { continue };
+                let b = [x - t.width / 2.0 + 1.0, y - t.height / 2.0 + 1.0, x + t.width / 2.0 - 1.0, y + t.height / 2.0 - 1.0];
+                for other in layout.edges.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, o)| o) {
+                    for pair in other.points.windows(2) {
+                        let (p, q) = (pair[0], pair[1]);
+                        let through = p.0.min(q.0) < b[2] && p.0.max(q.0) > b[0] && p.1.min(q.1) < b[3] && p.1.max(q.1) > b[1];
+                        assert!(!through, "{source}: {} -> {} through the label of {} -> {}", other.from, other.to, e.from, e.to);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
