@@ -1034,11 +1034,8 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-/// Does what the group panel asked for. A file or group picked in the tucked panel puts it away.
+/// Does what the group panel asked for.
 fn act(app: &mut SheetApp, ui: &Ui, action: PanelAction, current: &str) {
-    if matches!(action, PanelAction::Activate(_) | PanelAction::Open { .. } | PanelAction::Switch(_)) {
-        app.group_peek = false;
-    }
     match action {
         PanelAction::Reorder { name, to } => reorder(app, &name, to),
         PanelAction::Remove { group, path } => remove_file(app, &group, &path),
@@ -1120,10 +1117,6 @@ const FILE_NAME_MAX_W: f32 = 200.0;
 pub(crate) fn new_menu(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     ui.set_min_width(200.0);
-    // What is made shows: the tucked panel goes away with the menu.
-    if ui.ctx().input(|i| i.pointer.any_click()) && ui.ui_contains_pointer() {
-        app.group_peek = false;
-    }
     if ui.button(lang.tr("New Excel Workbook")).clicked() {
         app.run_or_alert("file.new", json!({}));
     }

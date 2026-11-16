@@ -556,56 +556,35 @@ fn a_markdown_file_changed_elsewhere_is_shown_as_it_is_now_and_said_so() {
 }
 
 #[test]
-fn the_group_panel_tucks_into_the_edge_and_slides_out_over_the_files() {
+fn the_group_panel_tucks_into_a_tab_at_the_edge_and_comes_back_from_it() {
     use egui::accesskit::Role;
     let mut s = Session::new();
     s.new_workbook();
     s.new_markdown("Doc");
     let mut h = harness(s);
     assert!(h.query_by_label("Book1").is_some(), "the panel lists the files");
+    let column = h.get_by_role(Role::Heading).rect();
     h.get_by_label("Hide to the Side").click();
     h.run_steps(3);
     assert!(h.state().ui.group_tucked);
     assert!(h.query_by_label("Book1").is_none(), "tucked, its files are out of sight");
-    let strip = h.get_by_role_and_label(Role::Button, "Groups").rect();
-    assert!(strip.width() < 30.0 && strip.right() > 1190.0, "a strip at the right edge: {strip:?}");
-    // A click on the strip shows the panel over the files, beside the strip; a file picked there
-    // puts it back.
-    let open = |h: &mut egui_kittest::Harness<'static, SheetApp>| {
-        h.get_by_role_and_label(Role::Button, "Groups").click();
-        h.run_steps(3);
-    };
-    open(&mut h);
-    let row = h.get_by_label("Book1").rect();
-    assert!(row.right() <= strip.left() + 1.0 && row.left() > 800.0, "beside the strip, over the files: {row:?}");
-    h.get_by_label("Book1").click();
-    h.run_steps(3);
-    assert!(!h.state().session.active().unwrap().is_text_file(), "the file picked shows");
-    assert!(h.query_by_label("Book1").is_none(), "and the panel goes back into its edge");
-    // A press on the files puts it back too, and so does Escape.
-    open(&mut h);
-    assert!(h.query_by_label("Book1").is_some());
-    let at = egui::pos2(300.0, 400.0);
-    h.input_mut().events.push(egui::Event::PointerMoved(at));
-    for pressed in [true, false] {
-        h.input_mut().events.push(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-        h.step();
-    }
-    h.run_steps(3);
-    assert!(h.query_by_label("Book1").is_none(), "a press on the files");
-    open(&mut h);
-    h.key_press(egui::Key::Escape);
-    h.run_steps(3);
-    assert!(h.query_by_label("Book1").is_none(), "Escape");
-    // Its pin keeps it shown again, beside the files.
-    open(&mut h);
-    h.get_by_label("Keep the Panel Shown").click();
+    let tab = h.get_by_role_and_label(Role::Button, "Groups").rect();
+    assert!(tab.width() < 26.0 && tab.right() > 1180.0 && tab.height() < 120.0, "a tab at the right edge: {tab:?}");
+    assert!(column.left() < tab.left() - 200.0, "the files take the panel's room");
+    // A click on the tab brings the panel back where it was.
+    h.get_by_role_and_label(Role::Button, "Groups").click();
     h.run_steps(3);
     assert!(!h.state().ui.group_tucked);
-    assert!(h.query_by_label("Book1").is_some() && h.query_by_role_and_label(Role::Button, "Groups").is_none());
+    assert!(h.query_by_label("Book1").is_some(), "its files again");
+    assert!(h.query_by_role_and_label(Role::Button, "Groups").is_none(), "and no tab");
+    assert!((h.get_by_role(Role::Heading).rect().left() - column.left()).abs() < 1.0, "in its column, as it was");
+    // Tucked as a layer, it comes back as a layer.
+    h.state_mut().ui.side_layer = true;
+    h.run_steps(3);
+    h.get_by_label("Hide to the Side").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Groups").click();
+    h.run_steps(3);
+    assert!(h.state().ui.side_layer && !h.state().ui.group_tucked);
+    assert!(h.query_by_label("Book1").is_some());
 }

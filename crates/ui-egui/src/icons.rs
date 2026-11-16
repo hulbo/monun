@@ -187,8 +187,6 @@ pub enum Icon {
     /// going into it.
     TuckRight,
     TuckLeft,
-    /// Keep a panel shown: a push pin.
-    Pin,
 }
 
 /// A PDF file (a red page, a band across its lower half), a Word document (a blue page of lines,
@@ -915,11 +913,6 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
             g.rect(x(14.5).min(x(11.0)), 2.5, 3.5, 11.0, Some(c), None);
             g.line(&[(x(3.5), 8.0), (x(8.0), 8.0)], c, 1.2);
             g.poly(&[(x(7.0), 5.5), (x(9.8), 8.0), (x(7.0), 10.5)], c);
-        }
-        Icon::Pin => {
-            g.line(&[(5.5, 1.5), (10.5, 1.5)], c, 1.3);
-            g.line(&[(6.5, 1.5), (6.5, 7.0), (4.0, 9.5), (12.0, 9.5), (9.5, 7.0), (9.5, 1.5)], c, 1.1);
-            g.line(&[(8.0, 9.5), (8.0, 14.5)], c, 1.2);
         }
         Icon::OpenFolder => {
             g.line(&[(13.0, 6.5), (13.0, 4.5), (7.5, 4.5), (6.0, 3.0), (1.5, 3.0), (1.5, 13.0)], c, 1.1);
