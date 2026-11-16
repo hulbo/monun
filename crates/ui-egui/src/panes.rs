@@ -83,8 +83,8 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     let files = ui.available_rect_before_wrap();
     let ctx = ui.ctx().clone();
     let now = ctx.input(|i| i.time);
-    // A little way down the edge, below a document's or web page's tool bar.
-    let top = files.top() + (files.height() * 0.22).max(HEADER_H + 16.0);
+    // Near the top of the edge, just below a document's or web page's tool bar (clear of its buttons).
+    let top = files.top() + HEADER_H + 10.0;
     let name = app.ui.language.tr("Groups");
     let mark = Mark::new(&ctx, name, t);
     let zone = Rect::from_min_size(if left { pos2(files.left(), top) } else { pos2(files.right() - HANDLE_W, top) }, vec2(HANDLE_W, mark.height()));
