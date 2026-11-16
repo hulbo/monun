@@ -146,6 +146,9 @@ pub struct UiState {
     /// The group panel ([`groups::panel`]) shows, whichever file is in front: it lists the files
     /// (there are no file tabs). Another pane shows in its place while that one is open.
     pub group_panel: bool,
+    /// The group panel is tucked into the window's edge: a strip there shows it over the files while
+    /// clicked ([`panes`]); its pin keeps it shown again.
+    pub group_tucked: bool,
     /// The order the group panel lists the groups and their files in (its Sort button).
     #[serde(deserialize_with = "groups::lenient")]
     pub group_order: groups::GroupOrder,
@@ -229,6 +232,7 @@ impl Default for UiState {
             project_views: vec![],
             doc_views: vec![],
             group_panel: true,
+            group_tucked: false,
             group_order: groups::GroupOrder::Custom,
             file_order: groups::FileOrder::Tabs,
             side_layer: false,
@@ -466,11 +470,13 @@ pub struct SheetApp {
     pub(crate) side_drag: Option<egui::Vec2>,
     /// The layer's height as it showed last frame.
     pub(crate) side_layer_shown_h: f32,
-    /// Visual Studio-style file tabs: every open file (a workbook or a Markdown file) is a tab at
-    /// the bottom of one window, a workbook's sheets are picked from the All Sheets list beside
-    /// them, and with no file open a start page shows instead of a blank workbook. The desktop app
-    /// turns it on; without it (web, tests, embedding hosts) the sheet tabs show as in Excel.
+    /// Visual Studio's one window of files: every open file (a workbook, a Markdown file…) is listed
+    /// in the group panel, a workbook shows its sheet tabs as in Excel, and with no file open a start
+    /// page shows instead of a blank workbook. The desktop app turns it on; without it (web, tests,
+    /// embedding hosts) one workbook shows, its sheet tabs as in Excel.
     pub file_tabs: bool,
+    /// The tucked group panel shows over the files, its strip clicked ([`UiState::group_tucked`]).
+    pub(crate) group_peek: bool,
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,

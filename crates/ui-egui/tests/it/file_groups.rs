@@ -543,7 +543,7 @@ fn the_side_panels_buttons_point_and_only_its_title_grabs() {
         h.run_steps(2);
         h.output().platform_output.cursor_icon
     };
-    for button in ["New File or Group", "Sort Groups and Files", "Panel options", "Close"] {
+    for button in ["New File or Group", "Sort Groups and Files", "Panel options", "Hide to the Side"] {
         let at = h.get_all_by_label(button).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
         assert_eq!(cursor(&mut h, at), egui::CursorIcon::PointingHand, "{button}");
     }

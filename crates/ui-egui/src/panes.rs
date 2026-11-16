@@ -32,6 +32,11 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         return;
     }
     let t = Tokens::get(ui.ctx());
+    // Tucked into its edge, the group panel is a strip there until it is clicked.
+    if pane == "group" && app.ui.group_tucked {
+        tucked(app, ui, &t);
+        return;
+    }
     // The memo and group panels go where they are put: a column on either side, or a layer over
     // the files in a corner. The others are a column on the right.
     let movable = matches!(pane.as_str(), "comments" | "group");
@@ -53,6 +58,101 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     if let Some((title, strip)) = title.filter(|_| movable) {
         let window = ui.ctx().content_rect();
         moved(app, ui.ctx(), &title, strip.width(), window, false);
+    }
+}
+
+/// The width of the strip the group panel is tucked into.
+const STRIP_W: f32 = 26.0;
+
+/// Whether the group panel tucks into the window's left edge: the side its column is on, or its
+/// layer's corner.
+fn tuck_left(app: &SheetApp) -> bool {
+    if app.ui.side_layer { matches!(app.ui.side_corner, Corner::TopLeft | Corner::BottomLeft) } else { app.ui.side_left }
+}
+
+/// The group panel tucked into the window's edge: a strip there with its name, which shows the
+/// panel over the files when clicked (and hides it again).
+fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    use egui::{Rect, Sense, Stroke, pos2};
+    let lang = app.ui.language;
+    let left = tuck_left(app);
+    let panel = if left { egui::Panel::left("group_strip") } else { egui::Panel::right("group_strip") };
+    let mut strip = Rect::NOTHING;
+    let peek = app.group_peek;
+    let mut clicked = false;
+    panel.exact_size(STRIP_W).resizable(false).frame(egui::Frame::NONE.fill(t.ribbon)).show(ui, |ui| {
+        let r = ui.max_rect();
+        strip = r;
+        let resp = ui.interact(r, ui.scope_id().with("monun.group_strip"), Sense::click());
+        let name = lang.tr("Groups");
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, peek, name));
+        if peek || resp.hovered() {
+            ui.painter().rect_filled(r, 0.0, t.hover);
+        }
+        let edge = if left { r.right() - 0.5 } else { r.left() + 0.5 };
+        ui.painter().line_segment([pos2(edge, r.top()), pos2(edge, r.bottom())], Stroke::new(1.0, t.ribbon_border));
+        let icon = Rect::from_center_size(pos2(r.center().x, r.top() + 18.0), vec2(14.0, 14.0));
+        crate::icons::paint(ui.painter(), icon, crate::icons::Icon::Folder, t.accent);
+        // The name down the strip: Latin letters turned a quarter, Hangul upright, a letter a line,
+        // as Korean is written down a page.
+        let font = theme::ui_font(12.5);
+        if name.is_ascii() {
+            let galley = ui.painter().layout_no_wrap(name.to_string(), font, t.text);
+            let at = pos2(r.center().x + galley.size().y / 2.0, icon.bottom() + 8.0);
+            ui.painter().add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
+        } else {
+            let mut y = icon.bottom() + 8.0;
+            for c in name.chars() {
+                let galley = ui.painter().layout_no_wrap(c.to_string(), font.clone(), t.text);
+                let h = galley.size().y;
+                ui.painter().galley(pos2(r.center().x - galley.size().x / 2.0, y), galley, t.text);
+                y += h;
+            }
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        clicked = resp.on_hover_text(lang.tr("Show the group panel")).clicked();
+    });
+    if clicked {
+        app.group_peek = !app.group_peek;
+    }
+    if app.group_peek {
+        peeked(app, ui, t, strip, left);
+    }
+}
+
+/// The tucked group panel shown over the files beside its strip, as tall as the strip. It goes back
+/// once a file or group is picked in it, at a press on the files (or anything else but it, its
+/// strip and the menus it opened), or at Escape.
+fn peeked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, strip: egui::Rect, left: bool) {
+    use egui::Align2;
+    let (pivot, at) = if left { (Align2::LEFT_TOP, strip.right_top()) } else { (Align2::RIGHT_TOP, strip.left_top()) };
+    let width = app.ui.side_layer_w.unwrap_or(LAYER_W).max(LAYER_MIN_W);
+    let tall = strip.height();
+    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
+    let shadow = ui.style().visuals.popup_shadow;
+    let area = egui::Area::new(egui::Id::unique("monun.group_peek")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).show(ui.ctx(), |ui| {
+        ui.set_max_width(width);
+        egui::Frame::new().fill(t.ribbon).stroke(egui::Stroke::new(1.0, t.ribbon_border)).shadow(shadow).inner_margin(margin).show(ui, |ui| {
+            ui.set_width(width - 20.0);
+            ui.set_min_height(tall - 10.0);
+            header(app, ui, "group", t, false);
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .max_height((tall - HEADER_H - 16.0).max(40.0))
+                .auto_shrink([false, true])
+                .show(ui, |ui| content(app, ui, "group"));
+        });
+    });
+    let shown = area.response.rect;
+    let ctx = ui.ctx().clone();
+    // A press on the files' layer (the window's panels), away from the panel and its strip.
+    let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
+    let away =
+        pressed.is_some_and(|p| !shown.contains(p) && !strip.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l.order == egui::Order::Background));
+    if away || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.group_peek = false;
     }
 }
 
@@ -260,12 +360,24 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
     let buttons = Rect::from_min_max(pos2(strip.right() - 120.0, strip.top()), strip.max);
     let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let size = vec2(22.0, 22.0);
-    let close = crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", size);
+    // The group panel tucks into its edge rather than closing (the title bar's button hides it),
+    // and once tucked, its pin keeps it shown again.
+    let close = match pane {
+        "group" if app.ui.group_tucked => crate::widgets::icon_button(&mut row, crate::icons::Icon::Pin, t.text_dim, "Keep the Panel Shown", size),
+        "group" => {
+            let icon = if tuck_left(app) { crate::icons::Icon::TuckLeft } else { crate::icons::Icon::TuckRight };
+            crate::widgets::icon_button(&mut row, icon, t.text_dim, "Hide to the Side", size)
+        }
+        _ => crate::widgets::icon_button(&mut row, crate::icons::Icon::Close, t.text_dim, "Close", size),
+    };
     let mut pointing = close.hovered();
     if close.clicked() {
         match pane {
             "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
-            "group" => app.ui.group_panel = false,
+            "group" => {
+                app.ui.group_tucked = !app.ui.group_tucked;
+                app.group_peek = false;
+            }
             _ => app.grid.pane = None,
         }
     }
@@ -407,8 +519,11 @@ pub(crate) fn toggle_memos(app: &mut SheetApp) {
 }
 
 /// Shows or hides the group panel (the title bar's group panel button), closing any other pane.
+/// Shown again, it is no longer tucked into its edge.
 pub(crate) fn toggle_groups(app: &mut SheetApp) {
     let on = !groups_shown(app);
+    app.ui.group_tucked = false;
+    app.group_peek = false;
     if on {
         app.grid.pane = None;
         if app.session.comments_pane {

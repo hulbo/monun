@@ -92,6 +92,7 @@ impl SheetApp {
             side_drag: None,
             side_layer_shown_h: 0.0,
             file_tabs: false,
+            group_peek: false,
             groups_frozen: false,
             project_loaded: None,
             root_memos: None,
