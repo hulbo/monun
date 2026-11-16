@@ -146,8 +146,8 @@ pub struct UiState {
     /// The group panel ([`groups::panel`]) shows, whichever file is in front: it lists the files
     /// (there are no file tabs). Another pane shows in its place while that one is open.
     pub group_panel: bool,
-    /// The group panel is tucked into the window's edge as a tab ([`panes`]), which a click brings
-    /// back.
+    /// The group panel is tucked into the window's edge ([`panes`]): a handle there slides it out
+    /// over the files while the pointer is on it, and its pin keeps it shown again.
     pub group_tucked: bool,
     /// The order the group panel lists the groups and their files in (its Sort button).
     #[serde(deserialize_with = "groups::lenient")]
@@ -475,6 +475,9 @@ pub struct SheetApp {
     /// page shows instead of a blank workbook. The desktop app turns it on; without it (web, tests,
     /// embedding hosts) one workbook shows, its sheet tabs as in Excel.
     pub file_tabs: bool,
+    /// The tucked group panel is slid out over the files: when the pointer was last on it (egui's
+    /// clock, seconds), so it goes back a moment after the pointer leaves.
+    pub(crate) group_peek: Option<f64>,
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,

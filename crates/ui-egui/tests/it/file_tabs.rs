@@ -556,41 +556,62 @@ fn a_markdown_file_changed_elsewhere_is_shown_as_it_is_now_and_said_so() {
 }
 
 #[test]
-fn the_group_panel_tucks_into_a_tab_at_the_edge_and_comes_back_from_it() {
+fn the_tucked_group_panel_slides_out_under_the_pointer_and_its_pin_keeps_it() {
     use egui::accesskit::Role;
     let mut s = Session::new();
     s.new_workbook();
     s.new_markdown("Doc");
     let mut h = harness(s);
-    assert!(h.query_by_label("Book1").is_some(), "the panel lists the files");
+    let move_to = |h: &mut egui_kittest::Harness<'static, SheetApp>, at: egui::Pos2| {
+        h.input_mut().events.push(egui::Event::PointerMoved(at));
+        // Long enough for the panel to go back once the pointer has left it.
+        h.run_steps(40);
+    };
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some(), "the panel lists the files");
     let column = h.get_by_role(Role::Heading).rect();
     h.get_by_label("Hide to the Side").click();
-    h.run_steps(3);
+    move_to(&mut h, egui::pos2(300.0, 400.0));
     assert!(h.state().ui.group_tucked);
-    assert!(h.query_by_label("Book1").is_none(), "tucked, its files are out of sight");
-    // A sliver of a tab at the right edge, floating over the files (they take the panel's room).
-    let tab = h.get_by_role_and_label(Role::Button, "Groups").rect();
-    assert!(tab.width() <= 14.0 && tab.right() > 1185.0 && tab.height() < 60.0, "a sliver at the right edge: {tab:?}");
-    // Under the pointer the whole tab slides out.
-    h.get_by_role_and_label(Role::Button, "Groups").hover();
-    h.run_steps(20);
-    let out = h.get_by_role_and_label(Role::Button, "Groups").rect();
-    assert!(out.width() > 20.0 && out.height() > tab.height(), "slid out: {out:?}");
-    assert!((out.right() - tab.right()).abs() < 1.0, "from the same edge");
-    // A click on the tab brings the panel back where it was.
-    h.get_by_role_and_label(Role::Button, "Groups").click();
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_none(), "tucked, its files are out of sight");
+    // A handle at the right edge, over the files (they take the panel's room).
+    let handle = h.get_by_role_and_label(Role::Button, "Groups").rect();
+    assert!(handle.width() <= 24.0 && handle.right() > 1185.0 && (50.0..90.0).contains(&handle.height()), "a handle at the right edge: {handle:?}");
+    // Under the pointer the panel slides out over the files from the edge, and stays while the
+    // pointer is on it.
+    move_to(&mut h, handle.center());
+    let row = h.get_by_role_and_label(Role::Button, "Book1").rect();
+    assert!(row.left() > 800.0 && row.right() > 1150.0, "slid out at the right edge: {row:?}");
+    move_to(&mut h, row.center());
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some(), "stays while the pointer is on it");
+    // A click on a file there shows it, and the panel stays while the pointer does (its row, not
+    // its tooltip).
+    h.get_by_role_and_label(Role::Button, "Book1").click();
     h.run_steps(3);
+    assert!(!h.state().session.active().unwrap().is_text_file(), "the file clicked shows");
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some());
+    // Away from it, it goes back a moment later.
+    move_to(&mut h, egui::pos2(300.0, 400.0));
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_none(), "gone back into its edge");
+    assert!(h.query_by_role_and_label(Role::Button, "Groups").is_some(), "the handle again");
+    // Its pin keeps it shown, in its column as it was. (The handle is a little way down the files,
+    // the workbook's now.)
+    let handle = h.get_by_role_and_label(Role::Button, "Groups").rect();
+    move_to(&mut h, handle.center());
+    h.get_by_label("Keep the Panel Shown").click();
+    move_to(&mut h, egui::pos2(300.0, 400.0));
     assert!(!h.state().ui.group_tucked);
-    assert!(h.query_by_label("Book1").is_some(), "its files again");
-    assert!(h.query_by_role_and_label(Role::Button, "Groups").is_none(), "and no tab");
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some(), "pinned, it stays with the pointer away");
+    assert!(h.query_by_role_and_label(Role::Button, "Groups").is_none(), "and no handle");
     assert!((h.get_by_role(Role::Heading).rect().left() - column.left()).abs() < 1.0, "in its column, as it was");
-    // Tucked as a layer, it comes back as a layer.
+    // Tucked as a layer, pinned again it is a layer.
     h.state_mut().ui.side_layer = true;
     h.run_steps(3);
     h.get_by_label("Hide to the Side").click();
-    h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Groups").click();
-    h.run_steps(3);
+    move_to(&mut h, egui::pos2(300.0, 400.0));
+    let handle = h.get_by_role_and_label(Role::Button, "Groups").rect();
+    move_to(&mut h, handle.center());
+    h.get_by_label("Keep the Panel Shown").click();
+    move_to(&mut h, egui::pos2(300.0, 400.0));
     assert!(h.state().ui.side_layer && !h.state().ui.group_tucked);
-    assert!(h.query_by_label("Book1").is_some());
+    assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some());
 }

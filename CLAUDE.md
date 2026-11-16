@@ -25,9 +25,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   groups; the title bar's `groups::file_button` names the file in front and lists the others. A
   workbook shows Excel's sheet tabs (`tabs::sheet_tabs`, through `file_tabs::bottom_bar`); other
   files have no bottom bar. Its title strip tucks it into the window's edge
-  (`UiState::group_tucked`, `panes::tucked`): a tab's sliver floats over the files there (an egui
-  `Area`, so a web page has it cut out), slides out under the pointer, and a click brings the panel
-  back as it was.
+  (`UiState::group_tucked`, `panes::tucked`): a handle floats over the files there (an egui `Area`,
+  so a web page has it cut out); under the pointer the panel slides out over the files and stays
+  while the pointer, a menu it opened or a drag is on it (`SheetApp::group_peek`), and its pin
+  keeps it shown again as it was.
   Another pane shows in the group panel's place while open. Tests:
   `common::app` turns the group panel off; a test of it turns it on.
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new

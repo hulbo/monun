@@ -205,8 +205,8 @@ fn the_group_panel_floats_over_the_page() {
     let p = pane(&h).expect("listed");
     let [x, _, w, _] = p.rect.expect("shown");
     assert!(x + w <= 1200 - 250 && p.holes.is_empty(), "{:?}", (x, w, &p.holes));
-    // Tucked into the edge: the page takes the whole width again, its tab's sliver cut out at the
-    // right edge.
+    // Tucked into the edge: the page takes the whole width again, its handle cut out at the right
+    // edge.
     h.state_mut().ui.group_tucked = true;
     h.run_steps(3);
     let p = pane(&h).expect("listed");
@@ -214,7 +214,7 @@ fn the_group_panel_floats_over_the_page() {
     assert!(x < 10 && w > 1150 && p.holes.len() == 1, "{:?}", (x, w, &p.holes));
     let [left, top, width, height] = p.holes[0];
     // (A hole is in the page's own pixels.)
-    assert!(i64::from(left + width) >= i64::from(w) - 1 && width <= 16 && top > 0 && height > 30, "at its edge, under the tool bar: {:?}", p.holes);
+    assert!(i64::from(left + width) >= i64::from(w) - 1 && width <= 24 && top > 0 && height > 50, "at its edge, under the tool bar: {:?}", p.holes);
     h.state_mut().ui.group_tucked = false;
     // Closed: the whole width, nothing cut out.
     h.state_mut().ui.group_panel = false;

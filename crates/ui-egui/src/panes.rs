@@ -32,7 +32,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         return;
     }
     let t = Tokens::get(ui.ctx());
-    // Tucked into its edge, the group panel is a tab there until it is clicked.
+    // Tucked into its edge, the group panel is a handle there until the pointer comes to it.
     if pane == "group" && app.ui.group_tucked {
         tucked(app, ui, &t);
         return;
@@ -61,14 +61,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-/// The tucked group panel's tab: the sliver of it that peeks out of the window's edge, the whole tab
-/// (slid out under the pointer), how far in from its edge the pointer finds the sliver, and how far
-/// below the top of the files it sits (below a document's or web page's tool bar, clear of the
-/// buttons at its end).
-const PEEK: egui::Vec2 = egui::vec2(8.0, 44.0);
-const TAB_W: f32 = 26.0;
-const PEEK_REACH: f32 = 14.0;
-const TAB_TOP: f32 = HEADER_H + 12.0;
+/// The tucked group panel's handle at the window's edge: its width, and how long the panel stays
+/// out once the pointer has left it (seconds).
+const HANDLE_W: f32 = 20.0;
+const LINGER: f64 = 0.35;
 
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
 /// layer's corner.
@@ -76,85 +72,145 @@ fn tuck_left(app: &SheetApp) -> bool {
     if app.ui.side_layer { matches!(app.ui.side_corner, Corner::TopLeft | Corner::BottomLeft) } else { app.ui.side_left }
 }
 
-/// The group panel tucked into the window's edge as a tab floating over the files (they keep the
-/// whole width): a sliver of it peeks out ("[|"), the whole tab (a folder and the panel's name)
-/// slides out under the pointer, and a click brings the panel back as it was, a column or a layer.
+/// The group panel tucked into the window's edge, as Visual Studio hides a panel: a handle peeks
+/// out there over the files (they keep the whole width). Under the pointer the panel slides out
+/// over them, stays while the pointer is on it (or on a menu it opened, or a drag goes on), and
+/// goes back a moment after the pointer leaves, at a press elsewhere or at Escape. Its pin keeps
+/// it shown again, as it was.
 fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
-    use egui::{Rect, Sense, Stroke, StrokeKind, pos2};
-    let lang = app.ui.language;
+    use egui::{Rect, pos2};
     let left = tuck_left(app);
     let files = ui.available_rect_before_wrap();
     let ctx = ui.ctx().clone();
-    let id = egui::Id::unique("monun.group_tab");
-    let pointed = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-    let out = ctx.animate_bool_with_time(id.with("out"), pointed, 0.12);
-    // The name down the tab: Latin letters turned a quarter, Hangul upright, a letter a line, as
-    // Korean is written down a page.
-    let name = lang.tr("Groups");
-    let font = theme::ui_font(12.5);
-    let upright = !name.is_ascii();
-    let letters: Vec<std::sync::Arc<egui::Galley>> = if upright {
-        name.chars().map(|c| ctx.fonts_mut(|f| f.layout_no_wrap(c.to_string(), font.clone(), t.text))).collect()
-    } else {
-        vec![ctx.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text))]
+    let now = ctx.input(|i| i.time);
+    // A little way down the edge, below a document's or web page's tool bar.
+    let top = files.top() + (files.height() * 0.22).max(HEADER_H + 16.0);
+    let name = app.ui.language.tr("Groups");
+    let mark = Mark::new(&ctx, name, t);
+    let zone = Rect::from_min_size(if left { pos2(files.left(), top) } else { pos2(files.right() - HANDLE_W, top) }, vec2(HANDLE_W, mark.height()));
+    let Some(since) = app.group_peek else {
+        if handle(&ctx, t, zone, (name, mark), left) {
+            app.group_peek = Some(now);
+        }
+        return;
     };
-    let long: f32 = if upright { letters.iter().map(|g| g.size().y).sum() } else { letters.iter().map(|g| g.size().x).sum() };
-    let full = vec2(TAB_W, 8.0 + 14.0 + 6.0 + long + 10.0);
-    let size = PEEK + (full - PEEK) * out;
-    let top = files.top() + TAB_TOP;
-    let at = |w: f32| if left { pos2(files.left(), top) } else { pos2(files.right() - w, top) };
-    let shown = Rect::from_min_size(at(size.x), size);
-    // Easier to point at than the sliver is wide.
-    let reach = size.x.max(PEEK_REACH);
-    let zone = Rect::from_min_size(at(reach), vec2(reach, size.y));
-    let mut clicked = false;
-    egui::Area::new(id).order(egui::Order::Middle).fixed_pos(zone.min).constrain(false).show(&ctx, |ui| {
-        let (_, resp) = ui.allocate_exact_size(zone.size(), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
-        let hovered = resp.hovered();
-        ctx.data_mut(|d| d.insert_temp(id, hovered));
-        // Rounded on the side away from the edge.
-        let corners =
-            if left { egui::CornerRadius { ne: 5, se: 5, ..Default::default() } } else { egui::CornerRadius { nw: 5, sw: 5, ..Default::default() } };
-        let painter = ui.painter();
-        // The sliver in the panels' grey, to show against a white page; the tab in the page's own.
-        let fill = if out < 0.5 {
-            t.ribbon
-        } else if hovered && out >= 1.0 {
-            t.hover
+    let panel = slid_out(app, ui, t, files, left);
+    // Pinned (or tucked away again) in the panel.
+    if !app.ui.group_tucked {
+        app.group_peek = None;
+        return;
+    }
+    let on = ctx.pointer_hover_pos().is_some_and(|p| {
+        panel.contains(p) || zone.contains(p) || ctx.layer_id_at(p).is_some_and(|l| matches!(l.order, egui::Order::Foreground | egui::Order::Tooltip))
+    });
+    let busy = egui::Popup::is_any_open(&ctx) || ctx.dragged_id().is_some() || ctx.input(|i| i.pointer.any_down());
+    let pressed_away = !on && ctx.input(|i| i.pointer.any_pressed());
+    if pressed_away || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.group_peek = None;
+    } else if on || busy {
+        app.group_peek = Some(now);
+    } else if now - since > LINGER {
+        app.group_peek = None;
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(LINGER));
+    }
+}
+
+/// What the handle shows: a folder over the panel's name down it (Latin letters turned a quarter,
+/// Hangul upright, a letter a line, as Korean is written down a page).
+struct Mark {
+    letters: Vec<std::sync::Arc<egui::Galley>>,
+    upright: bool,
+    long: f32,
+}
+
+impl Mark {
+    fn new(ctx: &egui::Context, name: &str, t: &Tokens) -> Mark {
+        let font = theme::ui_font(12.0);
+        let upright = !name.is_ascii();
+        let letters: Vec<std::sync::Arc<egui::Galley>> = if upright {
+            name.chars().map(|c| ctx.fonts_mut(|f| f.layout_no_wrap(c.to_string(), font.clone(), t.text))).collect()
         } else {
-            t.window
+            vec![ctx.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text))]
         };
-        painter.rect_filled(shown, corners, fill);
+        let long = if upright { letters.iter().map(|g| g.size().y).sum() } else { letters.iter().map(|g| g.size().x).sum() };
+        Mark { letters, upright, long }
+    }
+
+    /// The handle's height: the folder and the name, with room round them.
+    fn height(&self) -> f32 {
+        10.0 + 13.0 + 6.0 + self.long + 10.0
+    }
+}
+
+/// The tucked group panel's handle (`shown`): a tab at the window's edge with a band of the accent
+/// along its inner side, the folder and the panel's name down it. Its corners are barely rounded,
+/// and it fills all its room: on a web page that room is cut out of the page. Whether the pointer
+/// is on it.
+fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, (name, mark): (&str, Mark), left: bool) -> bool {
+    use egui::{Sense, Stroke, StrokeKind, pos2};
+    let mut pointed = false;
+    let area =
+        egui::Area::new(egui::Id::unique("monun.group_handle")).order(egui::Order::Middle).fixed_pos(shown.min).constrain(false).fade_in(false);
+    area.show(ctx, |ui| {
+        let (_, resp) = ui.allocate_exact_size(shown.size(), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        pointed = resp.hovered();
+        let corners =
+            if left { egui::CornerRadius { ne: 4, se: 4, ..Default::default() } } else { egui::CornerRadius { nw: 4, sw: 4, ..Default::default() } };
+        let painter = ui.painter();
+        painter.rect_filled(shown, corners, if pointed { t.hover } else { t.ribbon });
         painter.rect_stroke(shown, corners, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
-        if out < 0.5 {
-            // The sliver: a grip down its middle.
-            let x = shown.center().x;
-            painter.line_segment([pos2(x, shown.top() + 9.0), pos2(x, shown.bottom() - 9.0)], Stroke::new(2.0, t.accent));
-        } else {
-            let icon = Rect::from_center_size(pos2(shown.center().x, shown.top() + 8.0 + 7.0), vec2(14.0, 14.0));
-            crate::icons::paint(painter, icon, crate::icons::Icon::Folder, t.accent);
-            let mut y = icon.bottom() + 6.0;
-            for galley in letters {
-                if upright {
-                    let h = galley.size().y;
-                    painter.galley(pos2(shown.center().x - galley.size().x / 2.0, y), galley, t.text);
-                    y += h;
-                } else {
-                    let at = pos2(shown.center().x + galley.size().y / 2.0, y);
-                    painter.add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
-                }
+        // The accent band on its inner side.
+        let band_x = if left { shown.right() - 3.5 } else { shown.left() + 3.5 };
+        painter.line_segment([pos2(band_x, shown.top() + 6.0), pos2(band_x, shown.bottom() - 6.0)], Stroke::new(2.0, t.accent));
+        let x = shown.center().x + if left { -1.5 } else { 1.5 };
+        let folder = egui::Rect::from_center_size(pos2(x, shown.top() + 10.0 + 6.5), vec2(13.0, 13.0));
+        crate::icons::paint(painter, folder, crate::icons::Icon::Folder, t.accent);
+        let mut y = folder.bottom() + 6.0;
+        for galley in mark.letters {
+            if mark.upright {
+                let h = galley.size().y;
+                painter.galley(pos2(x - galley.size().x / 2.0, y), galley, t.text);
+                y += h;
+            } else {
+                let at = pos2(x + galley.size().y / 2.0, y);
+                painter.add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
             }
         }
-        if hovered {
+        if pointed {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        clicked = resp.clicked();
     });
-    if clicked {
-        app.ui.group_tucked = false;
-        ctx.data_mut(|d| d.remove::<bool>(id));
-    }
+    pointed
+}
+
+/// The tucked group panel slid out over the files from its edge, as tall as they are. Returns where
+/// it shows.
+fn slid_out(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, files: egui::Rect, left: bool) -> egui::Rect {
+    use egui::Align2;
+    let (pivot, at) = if left { (Align2::LEFT_TOP, files.left_top()) } else { (Align2::RIGHT_TOP, files.right_top()) };
+    let width = app.ui.side_layer_w.unwrap_or(LAYER_W).max(LAYER_MIN_W).min((files.width() - 40.0).max(LAYER_MIN_W));
+    let tall = files.height();
+    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
+    let shadow = ui.style().visuals.popup_shadow;
+    let area = egui::Area::new(egui::Id::unique("monun.group_slid_out")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain(false).show(
+        ui.ctx(),
+        |ui| {
+            ui.set_max_width(width);
+            egui::Frame::new().fill(t.ribbon).stroke(egui::Stroke::new(1.0, t.ribbon_border)).shadow(shadow).inner_margin(margin).show(ui, |ui| {
+                ui.set_width(width - 20.0);
+                ui.set_min_height(tall - 10.0);
+                header(app, ui, "group", t, false);
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .max_height((tall - HEADER_H - 16.0).max(40.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| content(app, ui, "group"));
+            });
+        },
+    );
+    area.response.rect
 }
 
 /// What a pane shows under its title.
@@ -361,9 +417,10 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
     let buttons = Rect::from_min_max(pos2(strip.right() - 120.0, strip.top()), strip.max);
     let mut row = ui.new_child(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let size = vec2(22.0, 22.0);
-    // The group panel tucks into its edge, as a tab, rather than closing (the title bar's button
-    // hides it).
+    // The group panel tucks into its edge rather than closing (the title bar's button hides it);
+    // slid out from there, its pin keeps it shown again.
     let close = match pane {
+        "group" if app.ui.group_tucked => crate::widgets::icon_button(&mut row, crate::icons::Icon::Pin, t.text_dim, "Keep the Panel Shown", size),
         "group" => {
             let icon = if tuck_left(app) { crate::icons::Icon::TuckLeft } else { crate::icons::Icon::TuckRight };
             crate::widgets::icon_button(&mut row, icon, t.text_dim, "Hide to the Side", size)
@@ -374,7 +431,10 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
     if close.clicked() {
         match pane {
             "comments" => app.run_or_alert("review.showComments", json!({"on": false})),
-            "group" => app.ui.group_tucked = true,
+            "group" => {
+                app.ui.group_tucked = !app.ui.group_tucked;
+                app.group_peek = None;
+            }
             _ => app.grid.pane = None,
         }
     }
@@ -520,6 +580,7 @@ pub(crate) fn toggle_memos(app: &mut SheetApp) {
 pub(crate) fn toggle_groups(app: &mut SheetApp) {
     let on = !groups_shown(app);
     app.ui.group_tucked = false;
+    app.group_peek = None;
     if on {
         app.grid.pane = None;
         if app.session.comments_pane {

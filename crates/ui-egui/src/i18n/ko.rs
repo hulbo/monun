@@ -1909,6 +1909,7 @@ const MORE: &[(&str, &str)] = &[
     ("Open files", "열린 파일"),
     ("New File or Group", "새 파일 또는 그룹"),
     ("Hide to the Side", "옆으로 숨기기"),
+    ("Keep the Panel Shown", "고정해서 보기"),
     ("New Excel Workbook", "새 엑셀 통합 문서"),
     ("New Markdown Document", "새 Markdown 문서"),
     ("Files you open show here.", "연 파일이 여기에 나옵니다."),
