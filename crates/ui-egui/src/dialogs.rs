@@ -1034,7 +1034,6 @@ impl Dialog {
             }
             "comments" => {
                 app.grid.pane = None;
-                app.ui.group_panel = false;
                 app.run_or_alert("review.showComments", json!({"on": true}));
                 return None;
             }

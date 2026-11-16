@@ -62,13 +62,14 @@ fn an_html_file_shows_in_its_tab_where_the_page_goes() {
     let [x, y, w, hgt] = pane(&h).and_then(|p| p.rect).expect("shown");
     assert!(x < 10 && y > 60 && w > 1100 && hgt > 500, "{:?}", (x, y, w, hgt));
     assert_eq!(pane(&h).map(|p| p.holes), Some(vec![]), "nothing floats over it");
-    // A menu open over it is cut out of it (a web view would cover the menu); the page stays.
-    h.get_by_label("New file").click();
+    // A menu open over it (the title bar's list of the files) is cut out of it (a web view would
+    // cover the menu); the page stays.
+    h.get_by_label("Open files").click();
     h.run_steps(2);
     let p = pane(&h).expect("listed");
     assert!(p.rect.is_some(), "still shown under the menu");
     let [_, top, _, height] = *p.holes.first().expect("the menu is cut out");
-    assert!(height > 50 && top + height <= hgt as i32, "{:?}", p.holes);
+    assert!(height > 10 && top + height <= hgt as i32, "{:?}", p.holes);
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
     assert_eq!(pane(&h).map(|p| p.holes), Some(vec![]), "closed, nothing is cut out");

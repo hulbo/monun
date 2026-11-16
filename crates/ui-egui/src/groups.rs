@@ -10,6 +10,8 @@ use serde_json::{Value as Json, json};
 
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
 
+use monun_engine::docs::TextKind;
+
 use crate::SheetApp;
 use crate::dialogs::Dialog;
 use crate::icons::{self, Icon};
@@ -519,16 +521,42 @@ enum PanelAction {
     Switch(String),
     /// Show or hide a group's files.
     Fold(String),
-    /// Show this file: its tab in the group in use, or its group's files with it in front.
-    Open { group: String, path: String },
+    /// Show this file of another group: its group's files open with it in front.
+    Open {
+        group: String,
+        path: String,
+    },
+    /// Show the file in this window (of the group in use).
+    Activate(u64),
+    /// Close this window's file, every file but this window's, or every file.
+    Close(u64),
+    CloseOthers(u64),
+    CloseAll,
+    /// Move a file of the group in use (its window) to this place among the others.
+    MoveWindow(u64, usize),
+    /// Move a file of another group to this place among its files.
+    MoveFile {
+        group: String,
+        path: String,
+        to: usize,
+    },
     /// Open a group dialog (New, Rename, Delete).
     Dialog(&'static str, Json),
     /// Move a group to this place in Your Own Order.
-    Reorder { name: String, to: usize },
+    Reorder {
+        name: String,
+        to: usize,
+    },
     /// Take this file out of its group.
-    Remove { group: String, path: String },
+    Remove {
+        group: String,
+        path: String,
+    },
     /// Copy this group into another project (`None`: This PC).
-    Send { group: String, project: Option<String> },
+    Send {
+        group: String,
+        project: Option<String>,
+    },
 }
 
 /// Where the group panel keeps whether a group was unfolded or folded by hand.
@@ -550,21 +578,387 @@ pub(crate) fn sort_menu(app: &mut SheetApp, ui: &mut Ui) {
     }
     ui.separator();
     ui.label(egui::RichText::new(lang.tr("Order of files")).strong());
-    for (order, label) in [(FileOrder::Tabs, "Tab order"), (FileOrder::Name, "By name"), (FileOrder::Kind, "By type")] {
+    for (order, label) in [(FileOrder::Tabs, "Your own order"), (FileOrder::Name, "By name"), (FileOrder::Kind, "By type")] {
         if ui.radio(app.ui.file_order == order, lang.tr(label)).clicked() {
             app.ui.file_order = order;
             ui.close();
         }
     }
     ui.separator();
-    ui.label(egui::RichText::new(lang.tr("In your own order, drag a group to move it.")).small().weak());
+    ui.label(egui::RichText::new(lang.tr("In your own order, drag a group or a file to move it.")).small().weak());
 }
 
-/// The group panel (the right-hand pane beside the files, with file tabs): every group with its
-/// files, the group in use marked and its files shown, in the order its Sort menu chose. A click on
-/// a group goes to it, and on a file shows it, going to its group first when that isn't the group
-/// in use. New Group is the + in the panel's title strip; a group's right-click menu renames or
-/// deletes it (and in Your Own Order moves it, as dragging it does). The title bar's group button
+/// A file of the group in use as the group panel and the title bar's file list show it: an open
+/// window's file (one never saved among them), or a file of the group this PC couldn't open.
+#[derive(Clone, Debug)]
+pub struct OpenFile {
+    /// The window it shows in; `None` for a file this PC couldn't open.
+    pub window: Option<u64>,
+    pub path: Option<String>,
+    /// Its window's title (`Book1`, `Book1:2` for a workbook's second window, `Doc1.md`).
+    pub title: String,
+    pub kind: Option<TextKind>,
+    pub dirty: bool,
+    pub front: bool,
+}
+
+/// The files of the group in use in the order the panel lists them: the open windows (as they were
+/// put in Your Own Order), then the group's files this PC couldn't open; by name or type as the
+/// Sort menu says.
+pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
+    let front = app.session.active_window();
+    let mut rows: Vec<OpenFile> = app
+        .session
+        .windows()
+        .iter()
+        .filter_map(|w| {
+            let d = app.session.documents().iter().find(|d| d.uid == w.doc_uid)?;
+            Some(OpenFile {
+                window: Some(w.id),
+                path: d.path.clone(),
+                title: app.session.window_title(w.id)?,
+                kind: d.text_kind(),
+                dirty: d.is_dirty(),
+                front: front == Some(w.id),
+            })
+        })
+        .collect();
+    rows.extend(app.unopened.iter().map(|p| OpenFile {
+        window: None,
+        path: Some(p.clone()),
+        title: file_name(p).to_string(),
+        kind: None,
+        dirty: false,
+        front: false,
+    }));
+    let kind = |f: &OpenFile| {
+        std::path::Path::new(f.path.as_deref().unwrap_or(&f.title)).extension().and_then(std::ffi::OsStr::to_str).unwrap_or_default().to_lowercase()
+    };
+    match app.ui.file_order {
+        FileOrder::Tabs => {}
+        FileOrder::Name => rows.sort_by(|a, b| natural_cmp(&a.title, &b.title)),
+        FileOrder::Kind => rows.sort_by(|a, b| kind(a).cmp(&kind(b)).then_with(|| natural_cmp(&a.title, &b.title))),
+    }
+    rows
+}
+
+/// The icon of a file the panel lists.
+fn open_file_icon(f: &OpenFile) -> Icon {
+    match (&f.window, &f.path) {
+        (Some(_), _) => crate::file_tabs::file_icon(f.kind),
+        (None, Some(path)) => crate::file_tabs::path_icon(path),
+        (None, None) => Icon::Sheet,
+    }
+}
+
+/// How the panel's file rows are drawn: the panel's width, and whether they drag (Your Own Order).
+struct Rows<'a> {
+    t: &'a Tokens,
+    lang: crate::i18n::Language,
+    width: f32,
+    order: FileOrder,
+    drag: bool,
+}
+
+/// A file's row: its icon and name (cut to fit before `end` pixels from the right), in `ink`, the
+/// row shaded while it is the file in front or under the pointer; `label` names it for assistive
+/// technology.
+fn file_row(ui: &mut Ui, rows: &Rows, (icon, name, label): (Icon, &str, &str), front: bool, ink: egui::Color32, end: f32) -> (Rect, egui::Response) {
+    let t = rows.t;
+    let sense = if rows.drag { Sense::click_and_drag() } else { Sense::click() };
+    let (r, resp) = ui.allocate_exact_size(vec2(rows.width, 24.0), sense);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, label));
+    if front || resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
+    }
+    let at = Rect::from_center_size(pos2(r.left() + 46.0, r.center().y), vec2(14.0, 14.0));
+    icons::paint(ui.painter(), at, icon, if front { t.accent } else { t.text_dim });
+    let font = theme::ui_font(12.5);
+    let shown = crate::file_tabs::fit(ui, name, &font, (r.right() - at.right() - 6.0 - end).max(20.0));
+    ui.painter().text(pos2(at.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, ink);
+    (r, resp)
+}
+
+/// A row being dragged among `rects` (the rows of one group, `index` the one dragged): a line marks
+/// where it would go, and once let go the place among the others it goes to.
+fn dragged_to(ui: &Ui, rects: &[Rect], index: usize, dropped: bool, t: &Tokens) -> Option<usize> {
+    let y = ui.ctx().pointer_interact_pos()?.y;
+    let others: Vec<Rect> = rects.iter().enumerate().filter(|(k, _)| *k != index).map(|(_, r)| *r).collect();
+    let to = others.iter().filter(|r| r.center().y < y).count();
+    if dropped {
+        return (to != index).then_some(to);
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    let line = others.get(to).map_or_else(|| others.last().map_or(y, |r| r.bottom()), |r| r.top());
+    let x = rects.first().map_or(ui.min_rect().x_range(), |r| r.x_range());
+    ui.painter().hline(egui::Rangef::new(x.min + 36.0, x.max), line, egui::Stroke::new(2.0, t.accent));
+    None
+}
+
+/// The files of the group in use: a click shows one, its ✕ (or the middle button) closes it, the
+/// right button offers Close, Close Others, Close All and Copy Full Path, and in Your Own Order a
+/// file drags to another place. A file with unsaved changes has a dot in its ✕'s place; one this
+/// PC couldn't open is dim, and can only be taken out of the group.
+fn open_file_rows(ui: &mut Ui, files: &[OpenFile], group: &str, rows: &Rows) -> Option<PanelAction> {
+    let (t, lang) = (rows.t, rows.lang);
+    let mut action = None;
+    let mut rects: Vec<(u64, Rect)> = Vec::new();
+    let mut moving = None;
+    for f in files {
+        let ink = if f.front {
+            t.accent_text
+        } else if f.window.is_some() {
+            t.text
+        } else {
+            t.text_dim
+        };
+        let label = if f.dirty { format!("{} ({})", f.title, lang.tr("unsaved changes")) } else { f.title.clone() };
+        let (r, resp) = file_row(ui, rows, (open_file_icon(f), &f.title, &label), f.front, ink, 24.0);
+        let Some(window) = f.window else {
+            let tip = format!(
+                "{}\n{}",
+                f.path.as_deref().unwrap_or_default(),
+                lang.tr("Couldn't be opened on this PC; it stays in the project for the others.")
+            );
+            resp.on_hover_text(tip).context_menu(|ui| {
+                if let Some(path) = &f.path
+                    && ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr("The file itself stays where it is.")).clicked()
+                {
+                    action = Some(PanelAction::Remove { group: group.to_string(), path: path.clone() });
+                }
+            });
+            continue;
+        };
+        rects.push((window, r));
+        if resp.dragged() || resp.drag_stopped() {
+            moving = Some((window, resp.drag_stopped()));
+        }
+        // The close button, or the unsaved dot in its place while the pointer is elsewhere.
+        let x = Rect::from_center_size(pos2(r.right() - 12.0, r.center().y), vec2(18.0, 18.0));
+        let close = ui.interact(x, ui.scope_id().with(("monun.group_file_close", window)), Sense::click());
+        let close_label = lang.tr("Close File");
+        close.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, close_label));
+        if ui.rect_contains_pointer(r) {
+            if close.hovered() {
+                ui.painter().rect_filled(x, 3.0, t.pressed);
+            }
+            icons::paint(ui.painter(), x.shrink(4.5), Icon::Close, if close.hovered() { t.text } else { t.text_dim });
+            if close.on_hover_text(close_label).clicked() {
+                action = Some(PanelAction::Close(window));
+            }
+        } else if f.dirty {
+            ui.painter().circle_filled(x.center(), 3.0, t.text_dim);
+        }
+        let resp = resp.on_hover_text(f.path.clone().unwrap_or_else(|| f.title.clone()));
+        if resp.middle_clicked() {
+            action = Some(PanelAction::Close(window));
+        } else if resp.clicked() && action.is_none() && !f.front {
+            action = Some(PanelAction::Activate(window));
+        }
+        resp.context_menu(|ui| {
+            ui.set_min_width(180.0);
+            if ui.button(lang.tr("Close")).clicked() {
+                action = Some(PanelAction::Close(window));
+            }
+            if ui.button(lang.tr("Close Others")).clicked() {
+                action = Some(PanelAction::CloseOthers(window));
+            }
+            if ui.button(lang.tr("Close All")).clicked() {
+                action = Some(PanelAction::CloseAll);
+            }
+            if let Some(path) = &f.path {
+                ui.separator();
+                if ui.button(lang.tr("Copy Full Path")).clicked() {
+                    ui.ctx().copy_text(path.clone());
+                }
+                if cfg!(windows) && ui.button(lang.tr("Show in Folder")).clicked() {
+                    show_in_folder(path);
+                }
+            }
+        });
+    }
+    if let Some((window, dropped)) = moving
+        && let Some(index) = rects.iter().position(|(w, _)| *w == window)
+        && let Some(to) = dragged_to(ui, &rects.iter().map(|(_, r)| *r).collect::<Vec<_>>(), index, dropped, t)
+    {
+        action = Some(PanelAction::MoveWindow(window, to));
+    }
+    action
+}
+
+/// The files of a group not in use: a click goes to the group with that file in front, the right
+/// button takes it out of the group, and in Your Own Order a file drags to another place.
+fn kept_file_rows(ui: &mut Ui, g: &FileGroup, rows: &Rows) -> Option<PanelAction> {
+    let (t, lang) = (rows.t, rows.lang);
+    let mut action = None;
+    let mut rects: Vec<Rect> = Vec::new();
+    let mut moving = None;
+    let files = ordered_files(&g.files, rows.order);
+    for (k, path) in files.iter().enumerate() {
+        let name = file_name(path).to_string();
+        let (r, resp) = file_row(ui, rows, (crate::file_tabs::path_icon(path), &name, &name), false, t.text_dim, 6.0);
+        rects.push(r);
+        if resp.dragged() || resp.drag_stopped() {
+            moving = Some((k, resp.drag_stopped()));
+        }
+        let resp = resp.on_hover_text(path);
+        if resp.clicked() {
+            action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
+        }
+        resp.context_menu(|ui| {
+            if ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr("The file itself stays where it is.")).clicked() {
+                action = Some(PanelAction::Remove { group: g.name.clone(), path: path.clone() });
+            }
+        });
+    }
+    if let Some((k, dropped)) = moving
+        && let Some(path) = files.get(k)
+        && let Some(to) = dragged_to(ui, &rects, k, dropped, t)
+    {
+        action = Some(PanelAction::MoveFile { group: g.name.clone(), path: path.clone(), to });
+    }
+    action
+}
+
+/// Opens Explorer at the folder holding `path`, with the file selected.
+fn show_in_folder(path: &str) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        let _ = std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{path}\"")).spawn();
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
+/// Closes every file but the one in window `keep` (every file, for `None`), one after another,
+/// until one asks to be saved; the question is answered first, as Visual Studio asks.
+fn close_each(app: &mut SheetApp, keep: Option<u64>) {
+    let windows: Vec<u64> = app.session.windows().iter().map(|w| w.id).filter(|w| Some(*w) != keep).collect();
+    for w in windows {
+        if app.session.window(w).is_none() {
+            continue;
+        }
+        match app.run("window.close", json!({"window": w})) {
+            Ok(r) if r.get("closed").and_then(Json::as_bool) == Some(false) => return,
+            Ok(_) => {}
+            Err(e) => {
+                app.alert(e);
+                return;
+            }
+        }
+    }
+    if let Some(keep) = keep.filter(|k| app.session.window(*k).is_some()) {
+        app.run_or_alert("window.activate", json!({"window": keep}));
+    }
+}
+
+/// Moves the file `path` of the group `group` to place `to` among its files.
+fn move_file(app: &mut SheetApp, group: &str, path: &str, to: usize) {
+    let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) else { return };
+    let Some(from) = g.files.iter().position(|f| f == path) else { return };
+    let file = g.files.remove(from);
+    let to = to.min(g.files.len());
+    g.files.insert(to, file);
+    persist(app);
+}
+
+/// A group's row in the panel: the arrow folds it, the rest goes to it; in Your Own Order it drags.
+/// Returns the row, the response (for dragging) and what its menu asked for.
+/// `count` is how many files it has (the group in use counts its files never saved too).
+fn group_row(
+    app: &SheetApp,
+    ui: &mut Ui,
+    g: &FileGroup,
+    (i, last): (usize, usize),
+    (on, open, count): (bool, bool, usize),
+    rows: &Rows,
+) -> (Rect, egui::Response, Option<PanelAction>) {
+    let (t, lang) = (rows.t, rows.lang);
+    let own_order = app.ui.group_order == GroupOrder::Custom;
+    let mut action = None;
+    let sense = if own_order { Sense::click_and_drag() } else { Sense::click() };
+    let (r, resp) = ui.allocate_exact_size(vec2(rows.width, 28.0), sense);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &g.name));
+    if on {
+        ui.painter().rect_filled(r, 4.0, t.pressed);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
+    }
+    let arrow = Rect::from_center_size(pos2(r.left() + 10.0, r.center().y), vec2(10.0, 10.0));
+    icons::paint(ui.painter(), arrow, if open { Icon::Chevron } else { Icon::Right }, t.text_dim);
+    let folder = Rect::from_center_size(pos2(arrow.right() + 12.0, r.center().y), vec2(14.0, 14.0));
+    icons::paint(ui.painter(), folder, Icon::Folder, if on { t.accent } else { t.text_dim });
+    let count = lang.tr("{n} files").replace("{n}", &count.to_string());
+    let small = theme::ui_font(11.5);
+    let count_w = ui.painter().layout_no_wrap(count.clone(), small.clone(), t.text_dim).size().x;
+    ui.painter().text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, &count, small, t.text_dim);
+    let font = if on { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
+    let name = crate::file_tabs::fit(ui, &g.name, &font, (r.right() - folder.right() - count_w - 20.0).max(20.0));
+    ui.painter().text(pos2(folder.right() + 6.0, r.center().y), Align2::LEFT_CENTER, name, font, t.text);
+    let on_arrow = resp.interact_pointer_pos().is_some_and(|p| p.x < folder.left());
+    if resp.clicked() {
+        action = Some(if on || on_arrow { PanelAction::Fold(g.name.clone()) } else { PanelAction::Switch(g.name.clone()) });
+    }
+    let resp = resp.on_hover_text(if on { lang.tr("The group in use") } else { lang.tr("Go to this group: its files open, these close") });
+    resp.context_menu(|ui| {
+        if !on && ui.button(lang.tr("Go to This Group")).clicked() {
+            action = Some(PanelAction::Switch(g.name.clone()));
+        }
+        if ui.button(lang.tr("Rename Group…")).clicked() {
+            action = Some(PanelAction::Dialog("renameGroup", json!({"name": g.name})));
+        }
+        // Any group but the only one; the group in use goes to its neighbour first.
+        let delete = ui.add_enabled(last > 0, egui::Button::new(lang.tr("Delete Group…")));
+        if delete.on_disabled_hover_text(lang.tr("The only group can't be deleted.")).clicked() {
+            action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
+        }
+        if let Some(send) = send_menu(app, ui, &g.name) {
+            action = Some(send);
+        }
+        if own_order && (i > 0 || i < last) {
+            ui.separator();
+            if i > 0 && ui.button(lang.tr("Move Up")).clicked() {
+                action = Some(PanelAction::Reorder { name: g.name.clone(), to: i - 1 });
+            }
+            if i < last && ui.button(lang.tr("Move Down")).clicked() {
+                action = Some(PanelAction::Reorder { name: g.name.clone(), to: i + 1 });
+            }
+        }
+    });
+    (r, resp, action)
+}
+
+/// A group's Send to Project menu: a copy of it in another project (This PC's groups among them).
+fn send_menu(app: &SheetApp, ui: &mut Ui, group: &str) -> Option<PanelAction> {
+    let lang = app.ui.language;
+    let targets = crate::projects::targets(app);
+    if targets.is_empty() {
+        let why = if app.ui.root.is_some() {
+            "Make another project first: the project button's New Project…"
+        } else {
+            "Choose a working root folder to keep projects in it."
+        };
+        ui.add_enabled(false, egui::Button::new(lang.tr("Send to Project"))).on_disabled_hover_text(lang.tr(why));
+        return None;
+    }
+    let mut action = None;
+    ui.menu_button(lang.tr("Send to Project"), |ui| {
+        for (label, project) in targets {
+            if ui.button(label).clicked() {
+                action = Some(PanelAction::Send { group: group.to_string(), project });
+            }
+        }
+    });
+    action
+}
+
+/// The group panel (the pane beside the files, with file tabs): every group with its files, the
+/// group in use marked and its files shown, in the order its Sort menu chose. With no tabs at the
+/// bottom it is where the files of the group in use are shown, closed and put in order. A click on a
+/// group goes to it, and on a file of another group goes to that group with the file in front. New
+/// (the plus in the panel's title strip) makes a file or a group; a group's right-click menu renames
+/// or deletes it (and in Your Own Order moves it, as dragging it does). The title bar's group button
 /// keeps its menu.
 pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
@@ -582,148 +976,40 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
             d.insert_temp(seen_id, current.clone());
         });
     }
-    let own_order = app.ui.group_order == GroupOrder::Custom;
-    let file_order = app.ui.file_order;
-    let open_tab = app.session.active().and_then(|d| d.path.clone());
-    let dirty: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).filter_map(|d| d.path.clone()).collect();
-    let unopened = app.unopened.clone();
+    let listed = open_files_listed(app);
+    let order = app.ui.file_order;
+    let rows = Rows { t: &t, lang, width: ui.available_width(), order, drag: order == FileOrder::Tabs };
     let mut action = None;
-    let width = ui.available_width();
     // The groups' rows as drawn, and the one being dragged or let go (Your Own Order).
-    let mut rows: Vec<(String, Rect)> = Vec::new();
+    let mut group_rects: Vec<(String, Rect)> = Vec::new();
     let mut dragged = None;
     let mut dropped = None;
     let last = groups.len().saturating_sub(1);
     for (i, g) in groups.iter().enumerate() {
         let on = g.name == current;
         let open = ui.data(|d| d.get_temp::<bool>(fold_id(&g.name))).unwrap_or(on);
-        // The group's row: the arrow folds it, the rest goes to it; in Your Own Order it drags.
-        let sense = if own_order { Sense::click_and_drag() } else { Sense::click() };
-        let (r, resp) = ui.allocate_exact_size(vec2(width, 28.0), sense);
-        rows.push((g.name.clone(), r));
+        let count = if on { listed.len() } else { g.files.len() };
+        let (r, resp, asked) = group_row(app, ui, g, (i, last), (on, open, count), &rows);
+        group_rects.push((g.name.clone(), r));
         if resp.dragged() {
             dragged = Some(g.name.clone());
         }
         if resp.drag_stopped() {
             dropped = Some(g.name.clone());
         }
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &g.name));
-        if on {
-            ui.painter().rect_filled(r, 4.0, t.pressed);
-        } else if resp.hovered() {
-            ui.painter().rect_filled(r, 4.0, t.hover);
-        }
-        let arrow = Rect::from_center_size(pos2(r.left() + 10.0, r.center().y), vec2(10.0, 10.0));
-        icons::paint(ui.painter(), arrow, if open { Icon::Chevron } else { Icon::Right }, t.text_dim);
-        let folder = Rect::from_center_size(pos2(arrow.right() + 12.0, r.center().y), vec2(14.0, 14.0));
-        icons::paint(ui.painter(), folder, Icon::Folder, if on { t.accent } else { t.text_dim });
-        let count = lang.tr("{n} files").replace("{n}", &g.files.len().to_string());
-        let small = theme::ui_font(11.5);
-        let count_w = ui.painter().layout_no_wrap(count.clone(), small.clone(), t.text_dim).size().x;
-        ui.painter().text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, &count, small, t.text_dim);
-        let font = if on { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
-        let name = crate::file_tabs::fit(ui, &g.name, &font, (r.right() - folder.right() - count_w - 20.0).max(20.0));
-        ui.painter().text(pos2(folder.right() + 6.0, r.center().y), Align2::LEFT_CENTER, name, font, t.text);
-        let on_arrow = resp.interact_pointer_pos().is_some_and(|p| p.x < folder.left());
-        if resp.clicked() {
-            action = Some(if on || on_arrow { PanelAction::Fold(g.name.clone()) } else { PanelAction::Switch(g.name.clone()) });
-        }
-        let resp = resp.on_hover_text(if on { lang.tr("The group in use") } else { lang.tr("Go to this group: its files open, these close") });
-        resp.context_menu(|ui| {
-            if !on && ui.button(lang.tr("Go to This Group")).clicked() {
-                action = Some(PanelAction::Switch(g.name.clone()));
-            }
-            if ui.button(lang.tr("Rename Group…")).clicked() {
-                action = Some(PanelAction::Dialog("renameGroup", json!({"name": g.name})));
-            }
-            // Any group but the only one; the group in use goes to its neighbour first.
-            let delete = ui.add_enabled(last > 0, egui::Button::new(lang.tr("Delete Group…")));
-            if delete.on_disabled_hover_text(lang.tr("The only group can't be deleted.")).clicked() {
-                action = Some(PanelAction::Dialog("deleteGroup", json!({"name": g.name})));
-            }
-            // A copy of it in another project (This PC's groups among them).
-            let targets = crate::projects::targets(app);
-            if targets.is_empty() {
-                let why = if app.ui.root.is_some() {
-                    "Make another project first: the project button's New Project…"
-                } else {
-                    "Choose a working root folder to keep projects in it."
-                };
-                ui.add_enabled(false, egui::Button::new(lang.tr("Send to Project"))).on_disabled_hover_text(lang.tr(why));
-            } else {
-                ui.menu_button(lang.tr("Send to Project"), |ui| {
-                    for (label, project) in targets {
-                        if ui.button(label).clicked() {
-                            action = Some(PanelAction::Send { group: g.name.clone(), project });
-                        }
-                    }
-                });
-            }
-            if own_order && (i > 0 || i < last) {
-                ui.separator();
-                if i > 0 && ui.button(lang.tr("Move Up")).clicked() {
-                    action = Some(PanelAction::Reorder { name: g.name.clone(), to: i - 1 });
-                }
-                if i < last && ui.button(lang.tr("Move Down")).clicked() {
-                    action = Some(PanelAction::Reorder { name: g.name.clone(), to: i + 1 });
-                }
-            }
-        });
+        action = asked.or(action);
         if !open {
             continue;
         }
-        if g.files.is_empty() {
+        let empty = if on { listed.is_empty() } else { g.files.is_empty() };
+        if empty {
             ui.horizontal(|ui| {
                 ui.add_space(40.0);
                 ui.label(egui::RichText::new(lang.tr("No files")).font(theme::ui_font(12.0)).color(t.text_dim).italics());
             });
         }
-        for path in &ordered_files(&g.files, file_order) {
-            let name = file_name(path).to_string();
-            let front = on && open_tab.as_deref() == Some(path.as_str());
-            let (r, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, &name));
-            if front || resp.hovered() {
-                ui.painter().rect_filled(r, 4.0, t.hover);
-            }
-            let icon = Rect::from_center_size(pos2(r.left() + 46.0, r.center().y), vec2(14.0, 14.0));
-            icons::paint(ui.painter(), icon, crate::file_tabs::path_icon(path), if front { t.accent } else { t.text_dim });
-            let font = theme::ui_font(12.5);
-            let unsaved = on && dirty.contains(path);
-            let shown = crate::file_tabs::fit(ui, &name, &font, (r.right() - icon.right() - 24.0).max(20.0));
-            // The open file reads in the accent, its name as well as its icon; one this PC couldn't
-            // open is dim.
-            let missing = on && unopened.contains(path);
-            let ink = if front {
-                t.accent_text
-            } else if on && !missing {
-                t.text
-            } else {
-                t.text_dim
-            };
-            ui.painter().text(pos2(icon.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, ink);
-            if unsaved {
-                ui.painter().circle_filled(pos2(r.right() - 10.0, r.center().y), 3.0, t.text_dim);
-            }
-            let resp = if missing {
-                resp.on_hover_text(format!(
-                    "{path}
-{}",
-                    lang.tr("Couldn't be opened on this PC; it stays in the project for the others.")
-                ))
-            } else {
-                resp.on_hover_text(path)
-            };
-            if resp.clicked() {
-                action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
-            }
-            resp.context_menu(|ui| {
-                let tip = if on { "Its tab closes; the file itself stays where it is." } else { "The file itself stays where it is." };
-                if ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr(tip)).clicked() {
-                    action = Some(PanelAction::Remove { group: g.name.clone(), path: path.clone() });
-                }
-            });
-        }
+        let asked = if on { open_file_rows(ui, &listed, &g.name, &rows) } else { kept_file_rows(ui, g, &rows) };
+        action = asked.or(action);
         ui.add_space(4.0);
     }
     // A group dragged goes between the rows nearest the pointer: a line shows where. Let go away
@@ -732,21 +1018,28 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
         && let Some(p) = ui.ctx().pointer_interact_pos()
         && ui.min_rect().expand(24.0).contains(p)
     {
-        let others: Vec<Rect> = rows.iter().filter(|(n, _)| n != name).map(|(_, r)| *r).collect();
+        let others: Vec<Rect> = group_rects.iter().filter(|(n, _)| n != name).map(|(_, r)| *r).collect();
         let to = others.iter().filter(|r| r.center().y < p.y).count();
         if dropped.is_some() {
             action = Some(PanelAction::Reorder { name: name.clone(), to });
         } else {
             let y = others.get(to).map_or(ui.min_rect().bottom(), |r| r.top() - 1.0);
-            let x = rows.first().map_or(ui.min_rect().x_range(), |(_, r)| r.x_range());
+            let x = group_rects.first().map_or(ui.min_rect().x_range(), |(_, r)| r.x_range());
             ui.painter().hline(x, y, egui::Stroke::new(2.0, t.accent));
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
     }
+    if let Some(action) = action {
+        act(app, ui, action, &current);
+    }
+}
+
+/// Does what the group panel asked for.
+fn act(app: &mut SheetApp, ui: &Ui, action: PanelAction, current: &str) {
     match action {
-        Some(PanelAction::Reorder { name, to }) => reorder(app, &name, to),
-        Some(PanelAction::Remove { group, path }) => remove_file(app, &group, &path),
-        Some(PanelAction::Send { group, project }) => {
+        PanelAction::Reorder { name, to } => reorder(app, &name, to),
+        PanelAction::Remove { group, path } => remove_file(app, &group, &path),
+        PanelAction::Send { group, project } => {
             app.run_or_alert("group.sendToProject", json!({"group": group, "project": project}));
             let shown = crate::projects::display(app, project.as_deref());
             if app.message.is_none() {
@@ -755,25 +1048,103 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
                 app.toast = Some((note, crate::now_ms()));
             }
         }
-        Some(PanelAction::Switch(name)) => switch(app, Target::Group(name)),
-        Some(PanelAction::Fold(name)) => {
+        PanelAction::Switch(name) => switch(app, Target::Group(name)),
+        PanelAction::Fold(name) => {
             let id = fold_id(&name);
             let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(name == current);
             ui.data_mut(|d| d.insert_temp(id, !open));
         }
-        Some(PanelAction::Open { group, path }) if group == current => {
-            app.open_path(&path);
-            app.follow_active_window();
-        }
-        Some(PanelAction::Open { group, path }) => {
+        PanelAction::Activate(w) => app.run_or_alert("window.activate", json!({"window": w})),
+        PanelAction::Close(w) => app.run_or_alert("window.close", json!({"window": w})),
+        PanelAction::CloseOthers(w) => close_each(app, Some(w)),
+        PanelAction::CloseAll => close_each(app, None),
+        PanelAction::MoveWindow(w, to) => app.session.move_window(w, to),
+        PanelAction::MoveFile { group, path, to } => move_file(app, &group, &path, to),
+        PanelAction::Open { group, path } => {
             // Its group's files open with it in front.
             if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
                 g.active = Some(path);
             }
             switch(app, Target::Group(group));
         }
-        Some(PanelAction::Dialog(name, params)) => app.open_dialog(name, params),
-        None => {}
+        PanelAction::Dialog(name, params) => app.open_dialog(name, params),
+    }
+}
+
+/// The file in front, after the group button in the title bar (› Doc1.md ▾): a click lists the
+/// group's files (type to filter) to show another.
+pub fn file_button(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    let lang = app.ui.language;
+    let files = open_files_listed(app);
+    let Some(front) = files.iter().find(|f| f.front).cloned() else { return };
+    let font = theme::ui_font(12.5);
+    let shown = crate::file_tabs::fit(ui, &front.title, &font, FILE_NAME_MAX_W);
+    let tw = ui.painter().layout_no_wrap(shown.clone(), font.clone(), t.text).size().x;
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0 + tw + 18.0, 23.0), Sense::click());
+    let label = lang.tr("Open files");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    if resp.is_pointer_button_down_on() {
+        ui.painter().rect_filled(r, 4.0, t.pressed);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
+    }
+    let icon = Rect::from_center_size(pos2(r.left() + 12.0, r.center().y), vec2(14.0, 14.0));
+    icons::paint(ui.painter(), icon, open_file_icon(&front), t.accent);
+    ui.painter().text(pos2(icon.right() + 5.0, r.center().y), Align2::LEFT_CENTER, &shown, font, t.text);
+    let arrow = Rect::from_center_size(pos2(r.right() - 8.0, r.center().y), vec2(9.0, 9.0));
+    icons::paint(ui.painter(), arrow, Icon::Chevron, t.text_dim);
+    let resp = resp.on_hover_text(front.path.clone().unwrap_or_else(|| front.title.clone()));
+    let values: Vec<String> = files.iter().filter_map(|f| f.window).map(|w| w.to_string()).collect();
+    let titles: Vec<String> =
+        files.iter().filter(|f| f.window.is_some()).map(|f| if f.dirty { format!("{} ●", f.title) } else { f.title.clone() }).collect();
+    let rows: Vec<(&str, String)> = values.iter().map(String::as_str).zip(titles).collect();
+    let current = front.window.map(|w| w.to_string()).unwrap_or_default();
+    if let crate::ribbon::ComboResult::Picked(v) = crate::ribbon::editable_combo(ui, &resp, "open_files", &current, &rows, false)
+        && let Ok(w) = v.parse::<u64>()
+        && front.window != Some(w)
+    {
+        app.run_or_alert("window.activate", json!({"window": w}));
+    }
+    // Between the group button and this one: the file is the group's.
+    let (gap, _) = ui.allocate_exact_size(vec2(12.0, 23.0), Sense::hover());
+    icons::paint(ui.painter(), Rect::from_center_size(gap.center(), vec2(8.0, 8.0)), Icon::Right, t.text_dim);
+}
+
+/// The widest the file button's name is drawn.
+const FILE_NAME_MAX_W: f32 = 200.0;
+
+/// The group panel's + menu: a new file of each kind (in the group in use), Open…, and New Group….
+pub(crate) fn new_menu(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    ui.set_min_width(200.0);
+    if ui.button(lang.tr("New Excel Workbook")).clicked() {
+        app.run_or_alert("file.new", json!({}));
+    }
+    if ui.button(lang.tr("New Markdown Document")).clicked() {
+        crate::file_tabs::new_markdown(app);
+    }
+    if ui.button(lang.tr("New SQL File")).clicked() {
+        crate::file_tabs::new_text(app, TextKind::Sql);
+    }
+    if ui.button(lang.tr("New Text File")).clicked() {
+        crate::file_tabs::new_text(app, TextKind::Plain);
+    }
+    if cfg!(feature = "word") && ui.button(lang.tr("New Word Document")).clicked() {
+        crate::file_tabs::new_text(app, TextKind::Word);
+    }
+    if cfg!(feature = "hwp") && ui.button(lang.tr("New Hangul Document")).clicked() {
+        crate::file_tabs::new_text(app, TextKind::Hwp);
+    }
+    if ui.button(lang.tr("New Site Link…")).clicked() {
+        crate::web_view::new_link(app);
+    }
+    ui.separator();
+    if ui.button(lang.tr("Open…")).clicked() {
+        app.run_or_alert("file.open", json!({}));
+    }
+    ui.separator();
+    if ui.button(lang.tr("New Group…")).clicked() {
+        app.open_dialog("newGroup", json!({}));
     }
 }
 

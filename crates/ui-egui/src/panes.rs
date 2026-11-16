@@ -13,22 +13,19 @@ use crate::theme::{self, Tokens};
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     // The Comments pane is engine state (`review.showComments`, so agents can drive it); the other
     // panes are UI state. One pane shows at a time: opening another one closes Comments.
-    // The group panel is the interface's, for every window (`UiState::group_panel`); the memo
-    // panel wins over it when both are asked for.
+    // The group panel is the interface's, for every window (`UiState::group_panel`), with file tabs
+    // only (the web build has no groups); another pane
+    // shows in its place while it is open, and the group panel comes back when it closes: it is
+    // where the files are listed.
     if app.grid.pane.as_deref() == Some("comments") {
         app.grid.pane = None;
         app.run_or_alert("review.showComments", json!({"on": true}));
     } else if app.grid.pane.is_some() && app.session.comments_pane {
         app.run_or_alert("review.showComments", json!({"on": false}));
     }
-    if app.grid.pane.is_some() {
-        app.ui.group_panel = false;
-    }
-    let shown = app
-        .grid
-        .pane
-        .clone()
-        .or_else(|| if app.session.comments_pane { Some("comments".to_string()) } else { app.ui.group_panel.then(|| "group".to_string()) });
+    let shown = app.grid.pane.clone().or_else(|| {
+        if app.session.comments_pane { Some("comments".to_string()) } else { (app.file_tabs && app.ui.group_panel).then(|| "group".to_string()) }
+    });
     let Some(pane) = shown else { return };
     // With no file open (the start page) only the group panel has anything to show.
     if (pane == "comments" && !memo_allowed(app)) || (app.session.active().is_none() && pane != "group") {
@@ -284,12 +281,10 @@ fn header(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens, movable: bool
         sort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Sort Groups and Files")));
         pointing |= sort.hovered();
         egui::Popup::menu(&sort).show(|ui| crate::groups::sort_menu(app, ui));
-        let new = crate::widgets::icon_button(&mut row, crate::icons::Icon::Plus, t.text_dim, "New Group…", size);
-        new.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("New Group…")));
+        let new = crate::widgets::icon_button(&mut row, crate::icons::Icon::Plus, t.text_dim, "New File or Group", size);
+        new.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("New File or Group")));
         pointing |= new.hovered();
-        if new.clicked() {
-            app.open_dialog("newGroup", json!({}));
-        }
+        egui::Popup::menu(&new).show(|ui| crate::groups::new_menu(app, ui));
     }
     // The buttons are for clicking: the hand shows over them, and the title drags only beside them
     // (a press on one never takes the panel along).
@@ -398,15 +393,15 @@ pub(crate) fn memos_shown(app: &SheetApp) -> bool {
 
 /// Whether the group panel shows (its button is on).
 pub(crate) fn groups_shown(app: &SheetApp) -> bool {
-    app.ui.group_panel && !app.session.comments_pane && app.grid.pane.is_none()
+    app.file_tabs && app.ui.group_panel && !app.session.comments_pane && app.grid.pane.is_none()
 }
 
-/// Shows or hides the memo panel (the title bar's memo button), closing any other pane.
+/// Shows or hides the memo panel (the title bar's memo button), closing any other pane (the group
+/// panel shows again when it closes).
 pub(crate) fn toggle_memos(app: &mut SheetApp) {
     let on = !memos_shown(app);
     if on {
         app.grid.pane = None;
-        app.ui.group_panel = false;
     }
     app.run_or_alert("review.showComments", json!({"on": on}));
 }

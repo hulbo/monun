@@ -1,5 +1,5 @@
-//! Visual Studio-style file tabs (`SheetApp::file_tabs`, the desktop app's): a start page while no
-//! file is open, every file a tab at the bottom, and a workbook's sheets in the All Sheets list.
+//! The desktop app's window of files (`SheetApp::file_tabs`): a start page while no file is open,
+//! the group panel listing the files (no tabs at the bottom), and a workbook's sheet tabs below it.
 
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use monun_engine::Session;
@@ -9,6 +9,8 @@ use serde_json::json;
 fn harness(session: Session) -> egui_kittest::Harness<'static, SheetApp> {
     let mut app = crate::common::app(session);
     app.use_file_tabs();
+    // As the app starts: the group panel lists the files.
+    app.ui.group_panel = true;
     let mut h = crate::common::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SheetApp| {
             let ctx = ui.ctx().clone();
@@ -21,12 +23,12 @@ fn harness(session: Session) -> egui_kittest::Harness<'static, SheetApp> {
     h
 }
 
-/// The labels of the file tabs, left to right.
-fn tab_labels(h: &egui_kittest::Harness<'static, SheetApp>) -> Vec<String> {
-    let mut tabs: Vec<_> =
-        h.query_all_by_role(egui::accesskit::Role::Tab).filter_map(|n| n.accesskit_node().label().map(|l| (n.rect().min.x, l.to_string()))).collect();
-    tabs.sort_by(|a, b| a.0.total_cmp(&b.0));
-    tabs.into_iter().map(|(_, l)| l).collect()
+/// The files the group panel lists, top to bottom, as it names them.
+fn listed(h: &egui_kittest::Harness<'static, SheetApp>) -> Vec<String> {
+    monun_ui_egui::groups::open_files_listed(h.state())
+        .into_iter()
+        .map(|f| if f.dirty { format!("{} (unsaved changes)", f.title) } else { f.title })
+        .collect()
 }
 
 #[test]
@@ -40,52 +42,56 @@ fn it_starts_on_the_start_page_rather_than_a_blank_workbook() {
 }
 
 #[test]
-fn new_files_open_as_tabs_and_a_click_switches_between_them() {
+fn new_files_are_listed_in_the_group_panel_and_a_click_switches_between_them() {
     let mut h = harness(Session::new());
     h.get_by_label("New Markdown Document").click();
     h.run_steps(4);
     let d = h.state().session.active().expect("a Markdown file");
-    assert!(d.is_text_file(), "one document tab and nothing else");
+    assert!(d.is_text_file(), "one document and nothing else");
     assert_eq!(d.display_title(), "Doc1.md");
-    assert_eq!(tab_labels(&h), ["Doc1.md"]);
-    assert!(h.query_by_label("All sheets").is_none(), "a Markdown file has no sheets to list");
+    assert_eq!(listed(&h), ["Doc1.md"]);
+    assert!(h.query_by_label("Doc1.md").is_some(), "in the group panel, never saved as it is");
+    assert!(h.query_by_role(egui::accesskit::Role::Tab).is_none(), "no file tabs");
+    assert!(h.query_by_label("All sheets").is_none(), "a Markdown file has no sheet tabs");
 
-    // + beside the tabs: a new workbook, after the Markdown file.
-    h.get_by_label("New file").click();
+    // The group panel's +: a new workbook, after the Markdown file.
+    h.get_by_label("New File or Group").click();
     h.run_steps(3);
     h.get_by_label("New Excel Workbook").click();
     h.run_steps(4);
-    assert_eq!(tab_labels(&h), ["Doc1.md", "Book1"]);
+    assert_eq!(listed(&h), ["Doc1.md", "Book1"]);
     assert!(!h.state().session.active().unwrap().is_text_file(), "the new workbook is in front");
-    assert!(h.query_by_label("All sheets").is_some(), "its sheets are listed beside the tabs");
+    assert!(h.query_by_label("All sheets").is_some(), "its sheet tabs show below it, as in Excel");
     assert!(h.query_by_label("New document (Markdown)").is_none(), "a workbook adds sheets only");
 
     h.get_by_label("Doc1.md").click();
     h.run_steps(4);
-    assert!(h.state().session.active().unwrap().is_text_file(), "a click on a tab shows its file");
-    h.get_by_label("Book1").click();
+    assert!(h.state().session.active().unwrap().is_text_file(), "a click on a file in the panel shows it");
+    // The title bar names the file in front, and lists the others.
+    h.get_by_label("Open files").click();
+    h.run_steps(3);
+    // The list's row, under the title bar (above the panel's).
+    h.get_all_by_label("Book1").min_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().click();
     h.run_steps(4);
     assert!(!h.state().session.active().unwrap().is_text_file());
 }
 
 #[test]
-fn the_all_sheets_list_adds_and_switches_sheets() {
+fn the_sheet_tabs_add_and_switch_sheets() {
     let mut s = Session::new();
     s.new_workbook();
     let mut h = harness(s);
     let sheets = |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().map_or(0, |d| d.wb.sheets.len());
     assert_eq!(sheets(&h), 1);
-    h.get_by_label("All sheets").click();
+    h.get_by_label("New sheet (⇧F11)").click();
     h.run_steps(4);
-    h.get_by_label("+ New sheet").click();
-    h.run_steps(4);
-    assert_eq!(sheets(&h), 2, "New sheet at the end of the list adds one");
+    assert_eq!(sheets(&h), 2, "New sheet after the tabs adds one");
     assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 1, "and shows it");
     h.get_by_label("All sheets").click();
     h.run_steps(4);
     h.get_by_label("Sheet1").click();
     h.run_steps(4);
-    assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 0, "a sheet's row shows that sheet");
+    assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 0, "a sheet's row in All Sheets shows that sheet");
 }
 
 #[test]
@@ -107,7 +113,7 @@ fn a_sheet_right_clicked_in_the_all_sheets_list_opens_its_tab_menu() {
     h.get_by_label("Sheet1").click_secondary();
     h.run_steps(4);
     assert_eq!(h.state().session.active().unwrap().wb.active_sheet(), 0, "the right-clicked sheet is shown");
-    assert!(h.query_by_label("+ New sheet").is_none(), "the list closed for the menu");
+    assert!(h.query_by_label("Sheet2").is_none(), "the list closed for the menu");
     assert_eq!(h.state().grid.tab_menu.map(|m| m.0), Some(0), "its tab menu is open");
     // D is Delete: an empty sheet goes at once.
     h.key_press(egui::Key::D);
@@ -125,7 +131,7 @@ fn a_sheet_right_clicked_in_the_all_sheets_list_opens_its_tab_menu() {
     h.key_press(egui::Key::Escape);
     h.run_steps(4);
     assert_eq!(names(&h), ["Sheet2", "Sheet3"], "Escape keeps it");
-    // R is Rename: the name field in place of the button.
+    // R is Rename: the name field in its tab.
     h.get_by_label("All sheets").click();
     h.run_steps(4);
     h.get_by_label("Sheet3").click_secondary();
@@ -140,55 +146,48 @@ fn a_sheet_right_clicked_in_the_all_sheets_list_opens_its_tab_menu() {
     h.key_press(egui::Key::Enter);
     h.run_steps(4);
     assert_eq!(names(&h), ["Sheet2", "Sheet3x"], "Rename renamed it");
-    // New sheet at the end of the list has no menu.
-    h.get_by_label("All sheets").click();
-    h.run_steps(4);
-    h.get_by_label("+ New sheet").click_secondary();
-    h.run_steps(4);
-    assert!(h.state().grid.tab_menu.is_none(), "no sheet menu for New sheet");
-    assert_eq!(names(&h).len(), 2, "and no sheet added");
 }
 
 #[test]
-fn closing_the_last_tab_goes_back_to_the_start_page() {
+fn closing_the_last_file_goes_back_to_the_start_page() {
     let mut s = Session::new();
     s.new_workbook();
     let mut h = harness(s);
-    h.get_by_label("Close").click();
+    h.get_by_label("Close File").click();
     h.run_steps(4);
     assert!(h.state().session.documents().is_empty(), "the untouched workbook closes at once");
     assert!(h.query_by_label("New Excel Workbook").is_some(), "and the start page is back");
 }
 
 #[test]
-fn closing_a_tab_with_unsaved_changes_asks_first() {
+fn closing_a_file_with_unsaved_changes_asks_first() {
     let mut s = Session::new();
     s.new_markdown("Doc");
     s.run("doc.setText", json!({"text": "# Notes"})).unwrap();
     let mut h = harness(s);
-    assert!(tab_labels(&h)[0].contains("unsaved changes"), "the tab says it has unsaved changes");
+    assert!(h.query_by_label("Doc1.md (unsaved changes)").is_some(), "the panel says it has unsaved changes");
     // The unsaved dot gives way to the close button under the pointer.
-    h.get_by_role(egui::accesskit::Role::Tab).hover();
+    h.get_by_label("Doc1.md (unsaved changes)").hover();
     h.run_steps(2);
-    h.get_by_label("Close").click();
+    h.get_by_label("Close File").click();
     h.run_steps(4);
     assert_eq!(h.state().session.documents().len(), 1, "the file stays open until the question is answered");
     assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("saveChanges"));
 }
 
 #[test]
-fn close_other_tabs_keeps_the_one_clicked() {
+fn close_others_keeps_the_file_clicked() {
     let mut s = Session::new();
     s.new_workbook();
     s.new_markdown("Doc");
     s.new_workbook();
     let mut h = harness(s);
-    assert_eq!(tab_labels(&h), ["Book1", "Doc1.md", "Book2"]);
+    assert_eq!(listed(&h), ["Book1", "Doc1.md", "Book2"]);
     h.get_by_label("Doc1.md").click_secondary();
     h.run_steps(3);
-    h.get_by_label("Close Other Tabs").click();
+    h.get_by_label("Close Others").click();
     h.run_steps(4);
-    assert_eq!(tab_labels(&h), ["Doc1.md"]);
+    assert_eq!(listed(&h), ["Doc1.md"]);
     assert!(h.state().session.active().unwrap().is_text_file());
 }
 
@@ -244,7 +243,7 @@ fn active_title(h: &egui_kittest::Harness<'static, SheetApp>) -> String {
 }
 
 #[test]
-fn ctrl_tab_goes_round_the_tabs_and_ctrl_f4_closes_one() {
+fn ctrl_tab_goes_round_the_files_and_ctrl_f4_closes_one() {
     let mut s = Session::new();
     s.new_workbook();
     s.new_markdown("Doc");
@@ -259,19 +258,19 @@ fn ctrl_tab_goes_round_the_tabs_and_ctrl_f4_closes_one() {
     key(&mut h, egui::Key::Tab, ctrl | egui::Modifiers::SHIFT);
     assert_eq!(active_title(&h), "Book1", "Ctrl+Shift+Tab goes back");
     key(&mut h, egui::Key::F4, ctrl);
-    assert_eq!(tab_labels(&h), ["Doc1.md", "Book2"], "Ctrl+F4 closes the tab in front");
+    assert_eq!(listed(&h), ["Doc1.md", "Book2"], "Ctrl+F4 closes the file in front");
 }
 
 #[test]
-fn a_tab_dragged_along_the_others_moves_there() {
+fn a_file_dragged_along_the_others_in_the_group_panel_moves_there() {
     let mut s = Session::new();
     s.new_workbook();
     s.new_markdown("Doc");
     s.new_workbook();
     let mut h = harness(s);
-    assert_eq!(tab_labels(&h), ["Book1", "Doc1.md", "Book2"]);
+    assert_eq!(listed(&h), ["Book1", "Doc1.md", "Book2"]);
     let from = h.get_by_label("Book1").rect().center();
-    let to = h.get_by_label("Book2").rect().right_center() + egui::vec2(-4.0, 0.0);
+    let to = h.get_by_label("Book2").rect().center_bottom() + egui::vec2(0.0, -3.0);
     h.input_mut().events.push(egui::Event::PointerMoved(from));
     h.run_steps(1);
     h.input_mut().events.push(egui::Event::PointerButton {
@@ -292,7 +291,7 @@ fn a_tab_dragged_along_the_others_moves_there() {
         modifiers: egui::Modifiers::NONE,
     });
     h.run_steps(3);
-    assert_eq!(tab_labels(&h), ["Doc1.md", "Book2", "Book1"], "Book1 goes where it was dropped");
+    assert_eq!(listed(&h), ["Doc1.md", "Book2", "Book1"], "Book1 goes where it was dropped");
 }
 
 #[test]
@@ -304,7 +303,7 @@ fn sql_and_text_files_show_their_text_as_code_editors_do() {
     h.run_steps(4);
     let d = h.state().session.active().expect("a SQL file");
     assert_eq!((d.display_title(), d.text_kind()), ("Query1.sql".to_owned(), Some(TextKind::Sql)));
-    assert_eq!(tab_labels(&h), ["Query1.sql"]);
+    assert_eq!(listed(&h), ["Query1.sql"]);
     assert!(h.query_by_label("SQL").is_some() && h.query_by_label("LF").is_some(), "the tool bar says what it is and how it saves");
     assert!(h.query_by_label("Side by Side").is_none() && h.query_by_label("Contents").is_none(), "its text only, no document");
     // An empty file opens ready to type: Enter keeps the indentation, Tab indents.
@@ -316,12 +315,12 @@ fn sql_and_text_files_show_their_text_as_code_editors_do() {
     h.run_steps(3);
     assert_eq!(h.state().doc_view.draft.as_ref().unwrap().text, "SELECT *\n  FROM t\n      WHERE");
 
-    // + beside the tabs: a plain text file.
-    h.get_by_label("New file").click();
+    // The group panel's +: a plain text file.
+    h.get_by_label("New File or Group").click();
     h.run_steps(3);
     h.get_by_label("New Text File").click();
     h.run_steps(4);
-    assert_eq!(tab_labels(&h), ["Query1.sql (unsaved changes)", "Text1.txt"]);
+    assert_eq!(listed(&h), ["Query1.sql (unsaved changes)", "Text1.txt"]);
     assert_eq!(h.state().session.active().unwrap().text_kind(), Some(TextKind::Plain));
     assert!(h.query_by_label("Plain Text").is_some());
 

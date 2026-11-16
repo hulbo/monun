@@ -277,7 +277,6 @@ impl SheetApp {
         // Set again below for this window, unless Backstage covers its files.
         self.files_rect = None;
         if start_page {
-            crate::file_tabs::bottom_bar(self, ui);
             // The group panel, to go to a group's files from here.
             panes::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| {

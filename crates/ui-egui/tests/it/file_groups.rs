@@ -205,11 +205,11 @@ fn the_memo_and_group_panels_show_and_hide_from_the_title_bar() {
     h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
     h.run_steps(3);
     assert_eq!((toggled(&h, "Group panel"), toggled(&h, "Comments")), (Some(true), Some(false)), "one panel at a time");
-    assert!(h.query_by_label("New Group…").is_some(), "the groups");
-    assert_eq!(h.query_all_by_label("b.md").count(), 2, "and their files, beside the file tab");
+    assert!(h.query_by_label("New File or Group").is_some(), "the groups");
+    assert_eq!(h.query_all_by_label("b.md").count(), 1, "and their files");
     h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
     h.run_steps(3);
-    assert!(h.query_by_label("New Group…").is_none());
+    assert!(h.query_by_label("New File or Group").is_none());
 
     // A SQL file has no memos, and no memo button.
     std::fs::write(dir.join("c.sql"), "SELECT 1\n").unwrap();
@@ -321,10 +321,12 @@ fn the_side_panels_title_meets_the_document_tool_bar_and_moves_by_it() {
     let tool = h.get_by_label("Find").rect();
     assert!((title.center().y - tool.center().y).abs() < 1.5 && (title.height() - 36.0).abs() < 0.5, "{title:?} beside {tool:?}");
     assert!(title.left() > 800.0, "on the right at first");
-    // New Group is the + in its title strip.
-    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").rect();
+    // New Group is in the menu of the + in its title strip.
+    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New File or Group").rect();
     assert!((plus.center().y - title.center().y).abs() < 1.0, "in the title strip");
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").click();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "New File or Group").click();
+    h.run_steps(3);
+    h.get_by_label("New Group…").click();
     h.run_steps(3);
     assert!(h.query_all_by_label("Group name:").count() > 0, "it asks for the new group's name");
     press(&mut h, "Cancel");
@@ -541,14 +543,14 @@ fn the_side_panels_buttons_point_and_only_its_title_grabs() {
         h.run_steps(2);
         h.output().platform_output.cursor_icon
     };
-    for button in ["New Group…", "Sort Groups and Files", "Panel options", "Close"] {
+    for button in ["New File or Group", "Sort Groups and Files", "Panel options", "Close"] {
         let at = h.get_all_by_label(button).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
         assert_eq!(cursor(&mut h, at), egui::CursorIcon::PointingHand, "{button}");
     }
     let title = heading(&h, "Groups");
     assert_eq!(cursor(&mut h, title.left_center() + egui::vec2(20.0, 0.0)), egui::CursorIcon::Grab);
     // A press on a button and a drag never take the panel along.
-    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New Group…").rect().center();
+    let plus = h.get_by_role_and_label(egui::accesskit::Role::Button, "New File or Group").rect().center();
     drag(&mut h, plus, plus + egui::vec2(-400.0, 300.0));
     assert_eq!(h.state().ui.side_corner, monun_ui_egui::panes::Corner::TopRight);
     let _ = std::fs::remove_dir_all(&dir);
@@ -603,27 +605,27 @@ fn going_to_another_group_folds_the_one_left_and_unfolds_the_new_one() {
     h.get_by_label("Default group").click();
     h.run_steps(4);
     assert_eq!(h.state().ui.group, "Default group");
-    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (2, 0), "its files (in the panel and the tab), SFR002 folded");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (1, 0), "its files, SFR002 folded");
     // SFR002 unfolded by hand and Default group folded by hand, then back to SFR002: the same.
     arrow(&mut h, "SFR002");
     arrow(&mut h, "Default group");
-    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (1, 1), "only the tab");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (0, 1), "Default group folded");
     groups::switch(h.state_mut(), Target::Group("SFR002".into()));
     h.run_steps(4);
     assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (0, 1), "Default group folded, SFR002 unfolded");
     groups::switch(h.state_mut(), Target::Group("Default group".into()));
     h.run_steps(4);
-    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (2, 0), "and unfolded again on coming back");
+    assert_eq!((shown(&h, "a.xlsx"), shown(&h, "No files")), (1, 0), "and unfolded again on coming back");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Right-clicks the group panel's row `label` (the panel's, not a file tab of the same name: the
-/// one furthest right) and clicks `item` in its menu.
+/// Right-clicks the group panel's row `label` (the one furthest right) and clicks `item` in its menu
+/// (the lowest of that name: a menu opens below the row).
 fn panel_menu(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, item: &str) {
     let at = h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
     h.get_all_by_label(label).find(|n| n.rect().center() == at).unwrap().click_secondary();
     h.run_steps(2);
-    h.get_by_label(item).click();
+    h.get_all_by_label(item).max_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().click();
     h.run_steps(3);
 }
 
@@ -674,8 +676,8 @@ fn a_file_is_removed_from_its_group_by_its_menu() {
     let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
     h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
     h.run_steps(3);
-    // In the group in use: its tab closes, and the group follows.
-    panel_menu(&mut h, "b.md", "Remove from Group");
+    // In the group in use the file closes, and the group follows.
+    panel_menu(&mut h, "b.md", "Close");
     assert_eq!(open_names(&h), ["a.xlsx"]);
     assert_eq!(h.state().ui.groups[0].files, [path(&dir, "a.xlsx")]);
     // In another group: out of its list, the file left where it is.

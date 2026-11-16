@@ -19,6 +19,13 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Commands (every user-visible action): `crates/engine/src/cmd/*`; UI-only ones in `crates/ui-egui`.
 - UI: `crates/ui-egui` (ribbon, grid painting in `grid/quadrant.rs` and `grid/cell_paint.rs`,
   fonts in `fonts.rs` and `theme/font_setup.rs`).
+- Files in the window (`SheetApp::file_tabs`, the desktop's): no tabs at the bottom. The group panel
+  (`groups::panel`, shown from the start) lists the group in use's open windows
+  (`groups::open_files_listed`, unsaved files too), closes and orders them, and its + makes files and
+  groups; the title bar's `groups::file_button` names the file in front and lists the others. A
+  workbook shows Excel's sheet tabs (`tabs::sheet_tabs`, through `file_tabs::bottom_bar`); other
+  files have no bottom bar. Another pane shows in the group panel's place while open. Tests:
+  `common::app` turns the group panel off; a test of it turns it on.
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are

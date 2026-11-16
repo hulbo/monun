@@ -22,9 +22,12 @@ pub fn builder<State>() -> HarnessBuilder<State> {
     })
 }
 
-/// A test app whose first `logic` pass keeps the harness's pinned font set.
+/// A test app whose first `logic` pass keeps the harness's pinned font set. The group panel, which
+/// the app shows from the start, is off: a test of the panel turns it on.
 pub fn app(session: Session) -> SheetApp {
-    prepare(SheetApp::new(session, Services::default()))
+    let mut app = prepare(SheetApp::new(session, Services::default()));
+    app.ui.group_panel = false;
+    app
 }
 
 /// Mark `app` as already using the harness's pinned font set.

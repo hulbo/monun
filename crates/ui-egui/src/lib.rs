@@ -143,7 +143,8 @@ pub struct UiState {
     /// This PC's place in each project of the root it has left: the group in use, and each group's
     /// file in front and last use.
     pub project_views: Vec<projects::ProjectView>,
-    /// The group panel ([`groups::panel`]) shows, whichever file is in front.
+    /// The group panel ([`groups::panel`]) shows, whichever file is in front: it lists the files
+    /// (there are no file tabs). Another pane shows in its place while that one is open.
     pub group_panel: bool,
     /// The order the group panel lists the groups and their files in (its Sort button).
     #[serde(deserialize_with = "groups::lenient")]
@@ -227,7 +228,7 @@ impl Default for UiState {
             this_pc: None,
             project_views: vec![],
             doc_views: vec![],
-            group_panel: false,
+            group_panel: true,
             group_order: groups::GroupOrder::Custom,
             file_order: groups::FileOrder::Tabs,
             side_layer: false,

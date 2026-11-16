@@ -336,8 +336,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, app.ui.language.tr("New sheet (⇧F11)"), vec2(26.0, 26.0)).clicked() {
                 app.run_or_alert("home.insertSheet", json!({}));
             }
-            if crate::widgets::icon_button(ui, Icon::NewDocument, t.text_dim, app.ui.language.tr("New document (Markdown)"), vec2(26.0, 26.0))
-                .clicked()
+            // With file tabs a document is a Markdown file of its own, and a workbook holds sheets only.
+            if !app.file_tabs
+                && crate::widgets::icon_button(ui, Icon::NewDocument, t.text_dim, app.ui.language.tr("New document (Markdown)"), vec2(26.0, 26.0))
+                    .clicked()
             {
                 app.insert_document(None);
             }

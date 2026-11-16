@@ -183,10 +183,9 @@ pub(crate) fn start(app: &mut SheetApp, line: usize) {
     show_panel(app);
 }
 
-/// Opens the memo panel (in place of any other pane).
+/// Opens the memo panel (in place of any other pane; the group panel shows again when it closes).
 fn show_panel(app: &mut SheetApp) {
     app.grid.pane = None;
-    app.ui.group_panel = false;
     if !app.session.comments_pane {
         app.run_or_alert("review.showComments", json!({"on": true}));
     }

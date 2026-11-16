@@ -47,7 +47,6 @@ pub(super) fn review(app: &mut SheetApp, ui: &mut Ui) {
         act(app, "review.showComments", json!({"on": !shown}));
         if app.session.comments_pane {
             app.grid.pane = None;
-            app.ui.group_panel = false;
         }
     }
     let notes = big_button(ui, Icon::Note, "Notes", "Notes", true);
