@@ -1,7 +1,7 @@
 //! The desktop app's window of files (`SheetApp::file_tabs`): a start page while no file is open,
 //! the group panel listing the files (no tabs at the bottom), and a workbook's sheet tabs below it.
 
-use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_kittest::kittest::Queryable as _;
 use monun_engine::Session;
 use monun_ui_egui::SheetApp;
 use serde_json::json;
@@ -568,9 +568,15 @@ fn the_group_panel_tucks_into_a_tab_at_the_edge_and_comes_back_from_it() {
     h.run_steps(3);
     assert!(h.state().ui.group_tucked);
     assert!(h.query_by_label("Book1").is_none(), "tucked, its files are out of sight");
+    // A sliver of a tab at the right edge, floating over the files (they take the panel's room).
     let tab = h.get_by_role_and_label(Role::Button, "Groups").rect();
-    assert!(tab.width() < 26.0 && tab.right() > 1180.0 && tab.height() < 120.0, "a tab at the right edge: {tab:?}");
-    assert!(column.left() < tab.left() - 200.0, "the files take the panel's room");
+    assert!(tab.width() <= 14.0 && tab.right() > 1185.0 && tab.height() < 60.0, "a sliver at the right edge: {tab:?}");
+    // Under the pointer the whole tab slides out.
+    h.get_by_role_and_label(Role::Button, "Groups").hover();
+    h.run_steps(20);
+    let out = h.get_by_role_and_label(Role::Button, "Groups").rect();
+    assert!(out.width() > 20.0 && out.height() > tab.height(), "slid out: {out:?}");
+    assert!((out.right() - tab.right()).abs() < 1.0, "from the same edge");
     // A click on the tab brings the panel back where it was.
     h.get_by_role_and_label(Role::Button, "Groups").click();
     h.run_steps(3);

@@ -61,8 +61,14 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-/// The width of the strip the group panel is tucked into.
-const STRIP_W: f32 = 26.0;
+/// The tucked group panel's tab: the sliver of it that peeks out of the window's edge, the whole tab
+/// (slid out under the pointer), how far in from its edge the pointer finds the sliver, and how far
+/// below the top of the files it sits (below a document's or web page's tool bar, clear of the
+/// buttons at its end).
+const PEEK: egui::Vec2 = egui::vec2(8.0, 44.0);
+const TAB_W: f32 = 26.0;
+const PEEK_REACH: f32 = 14.0;
+const TAB_TOP: f32 = HEADER_H + 12.0;
 
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
 /// layer's corner.
@@ -70,54 +76,84 @@ fn tuck_left(app: &SheetApp) -> bool {
     if app.ui.side_layer { matches!(app.ui.side_corner, Corner::TopLeft | Corner::BottomLeft) } else { app.ui.side_left }
 }
 
-/// The group panel tucked into the window's edge: a strip there holding it as a tab (a folder
-/// and its name), which a click brings back as it was, a column or a layer.
+/// The group panel tucked into the window's edge as a tab floating over the files (they keep the
+/// whole width): a sliver of it peeks out ("[|"), the whole tab (a folder and the panel's name)
+/// slides out under the pointer, and a click brings the panel back as it was, a column or a layer.
 fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     use egui::{Rect, Sense, Stroke, StrokeKind, pos2};
     let lang = app.ui.language;
     let left = tuck_left(app);
-    let panel = if left { egui::Panel::left("group_strip") } else { egui::Panel::right("group_strip") };
+    let files = ui.available_rect_before_wrap();
+    let ctx = ui.ctx().clone();
+    let id = egui::Id::unique("monun.group_tab");
+    let pointed = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let out = ctx.animate_bool_with_time(id.with("out"), pointed, 0.12);
+    // The name down the tab: Latin letters turned a quarter, Hangul upright, a letter a line, as
+    // Korean is written down a page.
+    let name = lang.tr("Groups");
+    let font = theme::ui_font(12.5);
+    let upright = !name.is_ascii();
+    let letters: Vec<std::sync::Arc<egui::Galley>> = if upright {
+        name.chars().map(|c| ctx.fonts_mut(|f| f.layout_no_wrap(c.to_string(), font.clone(), t.text))).collect()
+    } else {
+        vec![ctx.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text))]
+    };
+    let long: f32 = if upright { letters.iter().map(|g| g.size().y).sum() } else { letters.iter().map(|g| g.size().x).sum() };
+    let full = vec2(TAB_W, 8.0 + 14.0 + 6.0 + long + 10.0);
+    let size = PEEK + (full - PEEK) * out;
+    let top = files.top() + TAB_TOP;
+    let at = |w: f32| if left { pos2(files.left(), top) } else { pos2(files.right() - w, top) };
+    let shown = Rect::from_min_size(at(size.x), size);
+    // Easier to point at than the sliver is wide.
+    let reach = size.x.max(PEEK_REACH);
+    let zone = Rect::from_min_size(at(reach), vec2(reach, size.y));
     let mut clicked = false;
-    panel.exact_size(STRIP_W).resizable(false).frame(egui::Frame::NONE.fill(t.ribbon)).show(ui, |ui| {
-        let r = ui.max_rect();
-        let edge = if left { r.right() - 0.5 } else { r.left() + 0.5 };
-        ui.painter().line_segment([pos2(edge, r.top()), pos2(edge, r.bottom())], Stroke::new(1.0, t.ribbon_border));
-        // The name down the tab: Latin letters turned a quarter, Hangul upright, a letter a line,
-        // as Korean is written down a page.
-        let name = lang.tr("Groups");
-        let font = theme::ui_font(12.5);
-        let upright = !name.is_ascii();
-        let letters: Vec<std::sync::Arc<egui::Galley>> = if upright {
-            name.chars().map(|c| ui.painter().layout_no_wrap(c.to_string(), font.clone(), t.text)).collect()
-        } else {
-            vec![ui.painter().layout_no_wrap(name.to_string(), font, t.text)]
-        };
-        let long: f32 = if upright { letters.iter().map(|g| g.size().y).sum() } else { letters.iter().map(|g| g.size().x).sum() };
-        let tab = Rect::from_min_size(pos2(r.left() + 3.0, r.top() + 6.0), vec2(r.width() - 6.0, 8.0 + 14.0 + 6.0 + long + 10.0));
-        let resp = ui.interact(tab, ui.scope_id().with("monun.group_tab"), Sense::click());
+    egui::Area::new(id).order(egui::Order::Middle).fixed_pos(zone.min).constrain(false).show(&ctx, |ui| {
+        let (_, resp) = ui.allocate_exact_size(zone.size(), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
-        ui.painter().rect_filled(tab, 4.0, if resp.hovered() { t.hover } else { t.window });
-        ui.painter().rect_stroke(tab, 4.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
-        let icon = Rect::from_center_size(pos2(tab.center().x, tab.top() + 8.0 + 7.0), vec2(14.0, 14.0));
-        crate::icons::paint(ui.painter(), icon, crate::icons::Icon::Folder, t.accent);
-        let mut y = icon.bottom() + 6.0;
-        for galley in letters {
-            if upright {
-                let h = galley.size().y;
-                ui.painter().galley(pos2(tab.center().x - galley.size().x / 2.0, y), galley, t.text);
-                y += h;
-            } else {
-                let at = pos2(tab.center().x + galley.size().y / 2.0, y);
-                ui.painter().add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
+        let hovered = resp.hovered();
+        ctx.data_mut(|d| d.insert_temp(id, hovered));
+        // Rounded on the side away from the edge.
+        let corners =
+            if left { egui::CornerRadius { ne: 5, se: 5, ..Default::default() } } else { egui::CornerRadius { nw: 5, sw: 5, ..Default::default() } };
+        let painter = ui.painter();
+        // The sliver in the panels' grey, to show against a white page; the tab in the page's own.
+        let fill = if out < 0.5 {
+            t.ribbon
+        } else if hovered && out >= 1.0 {
+            t.hover
+        } else {
+            t.window
+        };
+        painter.rect_filled(shown, corners, fill);
+        painter.rect_stroke(shown, corners, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
+        if out < 0.5 {
+            // The sliver: a grip down its middle.
+            let x = shown.center().x;
+            painter.line_segment([pos2(x, shown.top() + 9.0), pos2(x, shown.bottom() - 9.0)], Stroke::new(2.0, t.accent));
+        } else {
+            let icon = Rect::from_center_size(pos2(shown.center().x, shown.top() + 8.0 + 7.0), vec2(14.0, 14.0));
+            crate::icons::paint(painter, icon, crate::icons::Icon::Folder, t.accent);
+            let mut y = icon.bottom() + 6.0;
+            for galley in letters {
+                if upright {
+                    let h = galley.size().y;
+                    painter.galley(pos2(shown.center().x - galley.size().x / 2.0, y), galley, t.text);
+                    y += h;
+                } else {
+                    let at = pos2(shown.center().x + galley.size().y / 2.0, y);
+                    painter.add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
+                }
             }
         }
-        if resp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        if hovered {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        clicked = resp.on_hover_text(lang.tr("Show the group panel")).clicked();
+        clicked = resp.clicked();
     });
     if clicked {
         app.ui.group_tucked = false;
+        ctx.data_mut(|d| d.remove::<bool>(id));
     }
 }
 
