@@ -39,11 +39,15 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Web tabs: `crates/ui-egui/src/web_view.rs` and `apps/monun/src/web.rs` (Windows). An HTML file or
   a site link (`.url`, which New › Site Link writes) is an empty read-only tab to the engine
   (`TextKind::Web`, `docs::web_workbook`). Each frame the tab lists which page shows where
-  (`web.panes`, physical pixels; hidden while a popup, dialog or the Backstage is open, since a web
-  view covers them) and what was asked of it (`web.orders`). After `ui`, the desktop app's `web::Web`
-  makes, moves, shows and hides a WebView2 view per tab with `wry` (`=0.57.2`, no default
-  features) as a child of the eframe window, and reports titles and addresses back
-  (`web.pages`). Control screenshots don't show the page (it isn't drawn by egui): `ui.inspect`'s
+  (`web.panes`, physical pixels; hidden behind the Backstage) and what was asked of it
+  (`web.orders`). A web view is a child window over egui's, so every egui layer drawn over the page
+  this frame (Middle, Foreground and Tooltip: the floating memo or group panel, popups, dialogs,
+  tooltips) is listed as a hole (`Pane::holes`, `web_view::settle`). After `ui`, the desktop app's
+  `web::Web` makes, moves, shows and hides a WebView2 view per tab with `wry` (`=0.57.2`, no
+  default features) as a child of the eframe window, cuts the holes out of its `WRY_WEBVIEW`
+  container with a window region (`winsafe =0.0.29`, safe Win32; the region is the window's once
+  set, so it is `leak`ed), hands the keyboard back on a click in egui (`focus_parent`), and reports
+  titles and addresses back (`web.pages`). Control screenshots don't show the page (it isn't drawn by egui): `ui.inspect`'s
   `web` says whether it loaded.
 - 한글 tabs: `crates/ui-egui/src/hwp_view/` (feature `hwp`, desktop only). The document lives on a thread of
   its own (`thread.rs`) in rhwp's `HwpDocument` (crates.io `rhwp = "=0.9.0"`, no default features but

@@ -1,8 +1,13 @@
 //! Web tabs' pages (Windows): each a WebView2 view (the Edge engine Windows has, through Tauri's
 //! `wry`) placed in the window where the tab's page goes ([`monun_ui_egui::web_view`]). A view
 //! is made the first time its tab is shown, follows the window as it is moved and resized, hides
-//! while its tab isn't in front or a menu or dialog is open, and closes with its tab. A link that
-//! would open a window of its own opens in the same tab.
+//! while its tab isn't in front, and closes with its tab. A link that would open a window of its
+//! own opens in the same tab.
+//!
+//! A view is a window of its own over the app's: what the app floats over the page (the memo or
+//! group panel as a layer, a menu, a dialog, a tooltip) is cut out of it with a window region, and
+//! shows through, with the page around it. A click on the app's own parts takes the keyboard back
+//! from the page.
 //!
 //! Sign-ins and cookies are kept in `%LOCALAPPDATA%\Monun\WebView2`; a test run keeps its own in
 //! a folder of its own, removed at its end.
@@ -13,9 +18,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use monun_ui_egui::web_view::{Order, Page, State};
+use winsafe::prelude::*;
+use winsafe::{self as w, co};
 use wry::dpi::{PhysicalPosition, PhysicalSize};
 use wry::raw_window_handle::HasWindowHandle;
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
+
+/// The window class of the window `wry` hosts a view in.
+const CONTAINER: &str = "WRY_WEBVIEW";
 
 /// What a page's handlers saw since the last frame: its title, whether it is loading, and the
 /// addresses it asked to open in a window of their own.
@@ -32,6 +42,9 @@ struct View {
     url: String,
     rect: Option<[u32; 4]>,
     seen: Rc<RefCell<Seen>>,
+    /// The window the view is in, and the holes cut out of it.
+    container: Option<w::HWND>,
+    holes: Vec<[i32; 4]>,
 }
 
 /// The web views of the window.
@@ -55,6 +68,13 @@ impl Web {
     /// did is reported back.
     pub fn sync(&mut self, window: &impl HasWindowHandle, state: &mut State, ctx: &egui::Context) {
         state.host = Some(Ok(()));
+        // A click on the app's own parts (the page's clicks never reach it) takes the keyboard back
+        // from the page, so the app's keys and fields work again.
+        if !self.views.is_empty() && ctx.input(|i| i.pointer.any_pressed()) {
+            for view in self.views.values() {
+                let _ = view.webview.focus_parent();
+            }
+        }
         let ids: Vec<u64> = state.panes.iter().map(|p| p.id).collect();
         self.views.retain(|id, _| ids.contains(id));
         self.failed.retain(|id, _| ids.contains(id));
@@ -64,7 +84,8 @@ impl Web {
                     let _ = view.webview.load_url(&pane.url);
                     view.url.clone_from(&pane.url);
                 }
-                if view.rect != pane.rect {
+                let moved = view.rect != pane.rect;
+                if moved {
                     if let Some(r) = pane.rect {
                         let _ = view.webview.set_bounds(bounds(r));
                     }
@@ -72,6 +93,17 @@ impl Web {
                         let _ = view.webview.set_visible(pane.rect.is_some());
                     }
                     view.rect = pane.rect;
+                }
+                // Cut again when the holes change, or the page's size (the region is its size).
+                if let Some([_, _, wide, high]) = pane.rect
+                    && (moved || view.holes != pane.holes)
+                {
+                    view.holes.clone_from(&pane.holes);
+                    if let Some(container) = &view.container
+                        && let Err(e) = cut(container, wide, high, &pane.holes)
+                    {
+                        log::debug!("web page holes: {e}");
+                    }
                 }
                 continue;
             }
@@ -83,7 +115,16 @@ impl Web {
             match build(&mut self.context, window, &pane.url, pane.rect, &seen, ctx) {
                 Ok(webview) => {
                     self.failed.remove(&pane.id);
-                    self.views.insert(pane.id, View { webview, url: pane.url.clone(), rect: pane.rect, seen });
+                    // Its window: the one of the class no other view is in.
+                    let container = containers().into_iter().find(|c| !self.views.values().any(|v| v.container.as_ref() == Some(c)));
+                    if let (Some(c), Some([_, _, wide, high])) = (&container, pane.rect)
+                        && !pane.holes.is_empty()
+                        && let Err(e) = cut(c, wide, high, &pane.holes)
+                    {
+                        log::debug!("web page holes: {e}");
+                    }
+                    let holes = pane.holes.clone();
+                    self.views.insert(pane.id, View { webview, url: pane.url.clone(), rect: pane.rect, seen, container, holes });
                 }
                 Err(why) => {
                     log::warn!("web page {}: {why}", pane.url);
@@ -125,6 +166,42 @@ impl Web {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
+}
+
+/// The windows views are in (`wry`'s, of class [`CONTAINER`]) in this process's windows.
+fn containers() -> Vec<w::HWND> {
+    let me = w::GetCurrentProcessId();
+    let mut found = Vec::new();
+    let _ = w::EnumWindows(|top: w::HWND| {
+        if top.GetWindowThreadProcessId().1 == me {
+            top.EnumChildWindows(|child: w::HWND| {
+                if child.GetClassName().is_ok_and(|class| class == CONTAINER) {
+                    found.push(child);
+                }
+                true
+            });
+        }
+        true
+    });
+    found
+}
+
+/// Cuts `holes` (physical pixels from its top left corner) out of a view's window `wide` × `high`,
+/// or with none, shows all of it.
+fn cut(container: &w::HWND, wide: u32, high: u32, holes: &[[i32; 4]]) -> w::SysResult<()> {
+    if holes.is_empty() {
+        return container.SetWindowRgn(&w::HRGN::NULL, true);
+    }
+    let size = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+    let mut shown = w::HRGN::CreateRectRgn(w::RECT { left: 0, top: 0, right: size(wide), bottom: size(high) })?;
+    for &[x, y, hole_w, hole_h] in holes {
+        let hole = w::HRGN::CreateRectRgn(w::RECT { left: x, top: y, right: x.saturating_add(hole_w), bottom: y.saturating_add(hole_h) })?;
+        shown.CombineRgn(&shown, &hole, co::RGN::DIFF)?;
+    }
+    container.SetWindowRgn(&shown, true)?;
+    // The window owns the region now: it must not be deleted here.
+    let _ = shown.leak();
+    Ok(())
 }
 
 /// Where a page goes, in the window's physical pixels.

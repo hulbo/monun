@@ -5,9 +5,10 @@
 //! The desktop app owns the web views (WebView2, the Edge engine Windows has): each frame this
 //! module lists which page shows where ([`State::panes`]) and what the user asked of it
 //! ([`State::orders`]), and the app reports back each page's title and address
-//! ([`State::pages`]). A page is hidden while a menu, a dialog or the File view is open, as a web
-//! view is a window of its own over the app and would cover them. Where there is no web view
-//! (tests, the web build) the tab offers to open the page in the default browser.
+//! ([`State::pages`]). A web view is a window of its own over the app, so what the app floats over
+//! the page (the memo or group panel as a layer, a menu, a dialog, a tooltip) is cut out of it
+//! ([`Pane::holes`]) and shows through; the page hides only behind the File view. Where there is
+//! no web view (tests, the web build) the tab offers to open the page in the default browser.
 //!
 //! An HTML file is shown again when it changes on disk, as an AI tool writes it anew.
 
@@ -41,6 +42,9 @@ pub struct Pane {
     pub id: u64,
     pub url: String,
     pub rect: Option<[u32; 4]>,
+    /// What the app floats over the page, cut out of it so that it shows: left, top, width and
+    /// height in physical pixels from the page's top left corner, in order.
+    pub holes: Vec<[i32; 4]>,
 }
 
 /// What the user asked of a page.
@@ -74,6 +78,9 @@ pub struct State {
     /// What the app last reported of each page.
     pub pages: HashMap<u64, Page>,
     tabs: HashMap<u64, Tab>,
+    /// The page in front this frame and where it goes (points), for [`settle`] to cut what floats
+    /// over it out of it.
+    front: Option<(u64, Rect)>,
 }
 
 /// A web tab: its file, the address it gives, and when it was last seen changed.
@@ -167,6 +174,7 @@ pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
     app.web.pages.retain(|uid, _| ids.contains(uid));
     app.web.orders.retain(|(uid, _)| ids.contains(uid));
     app.web.panes.clear();
+    app.web.front = None;
     if open.is_empty() {
         return;
     }
@@ -190,7 +198,7 @@ pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
             }
         }
         if let Ok(url) = &tab.address {
-            app.web.panes.push(Pane { id: uid, url: url.clone(), rect: None });
+            app.web.panes.push(Pane { id: uid, url: url.clone(), rect: None, holes: Vec::new() });
         }
     }
     if front.is_some() {
@@ -200,7 +208,7 @@ pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
 
 /// At the end of a frame: the page of a web tab closed during it goes, and one no longer in front
 /// hides, so the window never shows a page over another tab.
-pub(crate) fn settle(app: &mut SheetApp) {
+pub(crate) fn settle(app: &mut SheetApp, ctx: &egui::Context) {
     if app.web.panes.is_empty() {
         return;
     }
@@ -212,47 +220,57 @@ pub(crate) fn settle(app: &mut SheetApp) {
             pane.rect = None;
         }
     }
+    // What floats over the page in front, drawn this frame (every layer above the files: the memo
+    // or group panel, menus, lists, dialogs, tooltips, notices), is cut out of it.
+    let Some((uid, area)) = app.web.front.filter(|(uid, _)| Some(*uid) == front) else { return };
+    // (The context is read once at a time: it is locked while it is read.)
+    let layers: Vec<(egui::LayerId, Rect)> = ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|l| matches!(l.order, egui::Order::Middle | egui::Order::Foreground | egui::Order::Tooltip))
+            .filter_map(|l| Some((l, m.area_rect(l.id)?)))
+            .collect()
+    });
+    // Those still drawn this frame: a menu closed in it is no longer over the page.
+    let over: Vec<Rect> =
+        ctx.graphics(|g| layers.iter().filter(|(l, _)| g.get(*l).is_some_and(|shapes| !shapes.is_empty())).map(|(_, r)| *r).collect());
+    let cut = holes(area, &over, ctx.pixels_per_point());
+    if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid && p.rect.is_some()) {
+        pane.holes = cut;
+    }
+}
+
+/// The parts of a page at `area` (points) that `over` cover, as [`Pane::holes`]: in physical pixels
+/// (`ppp` to a point) from the page's top left corner, whole pixels outwards, in order.
+pub fn holes(area: Rect, over: &[Rect], ppp: f32) -> Vec<[i32; 4]> {
+    let mut out: Vec<[i32; 4]> = over
+        .iter()
+        .map(|r| r.intersect(area))
+        .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+        .map(|r| {
+            let at = |v: f32, from: f32, up: bool| {
+                let v = (v - from) * ppp;
+                (if up { v.ceil() } else { v.floor() }) as i32
+            };
+            let (left, top) = (at(r.left(), area.left(), false), at(r.top(), area.top(), false));
+            let (right, bottom) = (at(r.right(), area.left(), true), at(r.bottom(), area.top(), true));
+            [left, top, right - left, bottom - top]
+        })
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 fn modified(path: &str) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Whether something of the app's is drawn over the tab, which a web view (a window of its own
-/// over the app) would cover: a menu or a list, a dialog, a message, the File view, or the memo
-/// or group panel while its title is dragged about.
-fn covered(app: &SheetApp, ctx: &egui::Context) -> bool {
-    app.dialog.is_some()
-        || app.message.is_some()
-        || app.backstage.is_some()
-        || app.grid.tab_menu.is_some()
-        || app.side_drag.is_some()
-        || egui::Popup::is_any_open(ctx)
-}
-
-/// The room between a page and the memo or group panel floating beside it (points).
-const LAYER_GAP: f32 = 8.0;
-
-/// The smallest a page is shown beside a floating panel (points); with less room it goes above or
-/// below it, or hides.
-const ROOM_MIN: f32 = 160.0;
-
-/// The part of `area` a page shows in clear of `cover` (the memo or group panel floating over the
-/// files in a corner): beside it, on whichever side has more room, as a column of its own would
-/// leave; above or below it when there's too little room beside it; `None` when there's too
-/// little room anywhere.
-pub fn clear_of(area: Rect, cover: Rect) -> Option<Rect> {
-    let cover = cover.expand(LAYER_GAP);
-    if !cover.intersects(area) {
-        return Some(area);
-    }
-    let left = Rect::from_min_max(area.min, egui::pos2(cover.left().min(area.right()), area.bottom()));
-    let right = Rect::from_min_max(egui::pos2(cover.right().max(area.left()), area.top()), area.max);
-    let above = Rect::from_min_max(area.min, egui::pos2(area.right(), cover.top().min(area.bottom())));
-    let below = Rect::from_min_max(egui::pos2(area.left(), cover.bottom().max(area.top())), area.max);
-    let roomy = |r: &Rect| r.width() >= ROOM_MIN && r.height() >= ROOM_MIN;
-    let larger = |a: Rect, b: Rect| if a.area() >= b.area() { a } else { b };
-    [larger(left, right), larger(above, below)].into_iter().find(roomy)
+/// Whether the File view is open over the files: the page hides behind it. (What else floats over
+/// the page is cut out of it, [`settle`].)
+fn covered(app: &SheetApp) -> bool {
+    app.backstage.is_some()
 }
 
 /// Draws the active web tab: its tool bar (Back, Forward, Show Again, the address, Open in
@@ -306,17 +324,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         (Some(Ok(())), Ok(_)) => {
             if let Some(why) = &page.error {
                 note(ui, &format!("{} {why}", lang.tr("The page couldn't be shown:")));
-            } else if !covered(app, ui.ctx()) {
-                // Beside the memo or group panel when it floats over the files.
-                let room = match app.side_layer_rect {
-                    Some(layer) => clear_of(area, layer),
-                    None => Some(area),
-                };
+            } else if !covered(app) {
                 let ppp = ui.ctx().pixels_per_point();
                 let px = |v: f32| (v * ppp).round().max(0.0) as u32;
-                let rect = room.map(|r| [px(r.left()), px(r.top()), px(r.width()), px(r.height())]);
+                let rect = [px(area.left()), px(area.top()), px(area.width()), px(area.height())];
                 if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid) {
-                    pane.rect = rect;
+                    pane.rect = Some(rect);
+                    app.web.front = Some((uid, area));
                 }
             }
         }
@@ -353,6 +367,7 @@ pub fn inspect(app: &SheetApp) -> Json {
         "url": page.url,
         "loading": page.loading,
         "rect": pane.and_then(|p| p.rect),
+        "holes": pane.map(|p| p.holes.clone()).unwrap_or_default(),
     })
 }
 
@@ -488,24 +503,19 @@ mod tests {
     }
 
     #[test]
-    fn a_page_goes_beside_a_floating_panel() {
+    fn what_floats_over_a_page_is_cut_out_of_it() {
         let area = Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(1200.0, 800.0));
-        // Top right, most of the height: the page to its left.
-        let layer = Rect::from_min_max(egui::pos2(888.0, 92.0), egui::pos2(1188.0, 700.0));
-        assert_eq!(clear_of(area, layer), Some(Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(880.0, 800.0))));
-        // Top left: to its right.
-        let layer = Rect::from_min_max(egui::pos2(12.0, 92.0), egui::pos2(312.0, 400.0));
-        assert_eq!(clear_of(area, layer).map(|r| r.left()), Some(320.0));
-        // Elsewhere (a column, the start page): the whole area.
-        let layer = Rect::from_min_max(egui::pos2(1210.0, 0.0), egui::pos2(1500.0, 800.0));
-        assert_eq!(clear_of(area, layer), Some(area));
-        // Too narrow beside it: above or below.
-        let narrow = Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(400.0, 800.0));
-        let layer = Rect::from_min_max(egui::pos2(60.0, 500.0), egui::pos2(360.0, 790.0));
-        assert_eq!(clear_of(narrow, layer), Some(Rect::from_min_max(egui::pos2(0.0, 80.0), egui::pos2(400.0, 492.0))));
-        // No room anywhere: hidden.
-        let layer = Rect::from_min_max(egui::pos2(20.0, 100.0), egui::pos2(380.0, 790.0));
-        assert_eq!(clear_of(narrow, layer), None);
+        // The group panel in the top right corner, a menu reaching over the tool bar, and a layer
+        // beside the page (a column): only what is over the page, from its corner, at 1.5x.
+        let over = [
+            Rect::from_min_max(egui::pos2(888.0, 92.0), egui::pos2(1188.0, 700.0)),
+            Rect::from_min_max(egui::pos2(100.5, 40.0), egui::pos2(300.2, 200.0)),
+            Rect::from_min_max(egui::pos2(1210.0, 0.0), egui::pos2(1500.0, 800.0)),
+        ];
+        assert_eq!(holes(area, &over, 1.5), vec![[150, 0, 301, 180], [1332, 18, 450, 912]]);
+        // The same twice is one hole; nothing over it, none.
+        assert_eq!(holes(area, &[over[0], over[0]], 1.0).len(), 1);
+        assert!(holes(area, &[], 1.0).is_empty());
     }
 
     #[test]

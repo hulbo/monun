@@ -61,13 +61,17 @@ fn an_html_file_shows_in_its_tab_where_the_page_goes() {
     h.run_steps(2);
     let [x, y, w, hgt] = pane(&h).and_then(|p| p.rect).expect("shown");
     assert!(x < 10 && y > 60 && w > 1100 && hgt > 500, "{:?}", (x, y, w, hgt));
-    // Hidden while a menu is open over it (a web view would cover the menu).
+    assert_eq!(pane(&h).map(|p| p.holes), Some(vec![]), "nothing floats over it");
+    // A menu open over it is cut out of it (a web view would cover the menu); the page stays.
     h.get_by_label("New file").click();
     h.run_steps(2);
-    assert_eq!(pane(&h).and_then(|p| p.rect), None, "hidden under the menu");
+    let p = pane(&h).expect("listed");
+    assert!(p.rect.is_some(), "still shown under the menu");
+    let [_, top, _, height] = *p.holes.first().expect("the menu is cut out");
+    assert!(height > 50 && top + height <= hgt as i32, "{:?}", p.holes);
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    assert!(pane(&h).and_then(|p| p.rect).is_some(), "shown again");
+    assert_eq!(pane(&h).map(|p| p.holes), Some(vec![]), "closed, nothing is cut out");
     // Back, Forward and Show Again are asked of the page.
     for (label, order) in [("Back", Order::Back), ("Forward", Order::Forward), ("Show Again", Order::Reload)] {
         h.get_by_label(label).click();
@@ -167,7 +171,7 @@ fn a_site_link_is_made_from_its_address_and_opens() {
 }
 
 #[test]
-fn the_page_keeps_clear_of_the_group_panel() {
+fn the_group_panel_floats_over_the_page() {
     let dir = temp_dir("panel");
     let path = dir.join("page.html");
     std::fs::write(&path, "<p>page</p>").unwrap();
@@ -182,23 +186,28 @@ fn the_page_keeps_clear_of_the_group_panel() {
     let mut h = harness(app);
     h.run_steps(2);
     assert!(h.query_by_label("Groups").is_some(), "the group panel shows");
-    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
-    // The page to the panel's left (a column's width and the room around it), not under it.
-    assert!(x < 10 && x + w <= 1200 - 300 - 12 && w > 700, "{:?}", (x, w));
-    // In the top left corner: to its right.
+    // The page takes the whole width, the panel cut out of it in its corner.
+    let p = pane(&h).expect("listed");
+    let [x, _, w, _] = p.rect.expect("shown");
+    assert!(x < 10 && w > 1150, "{:?}", (x, w));
+    assert_eq!(p.holes.len(), 1, "{:?}", p.holes);
+    let [left, top, width, _] = p.holes[0];
+    assert!((870..=900).contains(&left) && top < 30 && (280..=320).contains(&width), "{:?}", p.holes);
+    // In the top left corner: cut out there.
     h.state_mut().ui.side_corner = monun_ui_egui::panes::Corner::TopLeft;
     h.run_steps(3);
-    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
-    assert!(x >= 300 + 12 && x + w >= 1190, "{:?}", (x, w));
-    // As a column of its own: the page beside it too, the files' area being narrower.
+    let p = pane(&h).expect("listed");
+    assert!(p.holes.len() == 1 && p.holes[0][0] < 30, "{:?}", p.holes);
+    // As a column of its own: the page beside it, nothing cut out.
     h.state_mut().ui.side_layer = false;
     h.run_steps(3);
-    let [x, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
-    assert!(x < 10 && x + w <= 1200 - 250, "{:?}", (x, w));
-    // Closed, the page takes the whole width again.
+    let p = pane(&h).expect("listed");
+    let [x, _, w, _] = p.rect.expect("shown");
+    assert!(x + w <= 1200 - 250 && p.holes.is_empty(), "{:?}", (x, w, &p.holes));
+    // Closed: the whole width, nothing cut out.
     h.state_mut().ui.group_panel = false;
     h.run_steps(3);
-    let [_, _, w, _] = pane(&h).and_then(|p| p.rect).expect("shown");
-    assert!(w > 1150, "{w}");
+    let p = pane(&h).expect("listed");
+    assert!(p.rect.is_some_and(|r| r[2] > 1150) && p.holes.is_empty(), "{:?}", p);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -91,7 +91,6 @@ impl SheetApp {
             changes_told: Default::default(),
             side_drag: None,
             side_layer_shown_h: 0.0,
-            side_layer_rect: None,
             file_tabs: false,
             groups_frozen: false,
             project_loaded: None,
@@ -277,8 +276,6 @@ impl SheetApp {
         }
         // Set again below for this window, unless Backstage covers its files.
         self.files_rect = None;
-        // Set again below when the memo or group panel floats as a layer.
-        self.side_layer_rect = None;
         if start_page {
             crate::file_tabs::bottom_bar(self, ui);
             // The group panel, to go to a group's files from here.
@@ -337,7 +334,7 @@ impl SheetApp {
             // Closed pictures' textures go.
             crate::image_view::tidy(self);
             // A web tab closed or put behind this frame: its page goes, or hides.
-            crate::web_view::settle(self);
+            crate::web_view::settle(self, &ctx);
         }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.

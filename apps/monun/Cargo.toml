@@ -47,6 +47,10 @@ windows-registry = "0.6"
 # wrapper; its Windows crates are those already in the tree. Pinned exactly: review the diff before
 # bumping.
 wry = { version = "=0.57.2", default-features = false }
+# What floats over a web tab's page (the group panel as a layer, menus, dialogs) is cut out of its
+# window with a window region (`web.rs`): Win32 behind a safe API, no dependencies of its own.
+# Pinned exactly: review the diff before bumping.
+winsafe = { version = "=0.0.29", features = ["gdi"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
