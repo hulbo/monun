@@ -61,9 +61,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-/// The tucked group panel's handle at the window's edge: its width, and how long the panel stays
+/// The tucked group panel's handle at the window's edge: its size, and how long the panel stays
 /// out once the pointer has left it (seconds).
-const HANDLE_W: f32 = 20.0;
+const HANDLE: egui::Vec2 = egui::vec2(12.0, 56.0);
 const LINGER: f64 = 0.35;
 
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
@@ -86,10 +86,9 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     // Near the top of the edge, just below a document's or web page's tool bar (clear of its buttons).
     let top = files.top() + HEADER_H + 10.0;
     let name = app.ui.language.tr("Groups");
-    let mark = Mark::new(&ctx, name, t);
-    let zone = Rect::from_min_size(if left { pos2(files.left(), top) } else { pos2(files.right() - HANDLE_W, top) }, vec2(HANDLE_W, mark.height()));
+    let zone = Rect::from_min_size(if left { pos2(files.left(), top) } else { pos2(files.right() - HANDLE.x, top) }, HANDLE);
     let Some(since) = app.group_peek else {
-        if handle(&ctx, t, zone, (name, mark), left) {
+        if handle(&ctx, t, zone, name, left) {
             app.group_peek = Some(now);
         }
         return;
@@ -116,68 +115,22 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     }
 }
 
-/// What the handle shows: a folder over the panel's name down it (Latin letters turned a quarter,
-/// Hangul upright, a letter a line, as Korean is written down a page).
-struct Mark {
-    letters: Vec<std::sync::Arc<egui::Galley>>,
-    upright: bool,
-    long: f32,
-}
-
-impl Mark {
-    fn new(ctx: &egui::Context, name: &str, t: &Tokens) -> Mark {
-        let font = theme::ui_font(12.0);
-        let upright = !name.is_ascii();
-        let letters: Vec<std::sync::Arc<egui::Galley>> = if upright {
-            name.chars().map(|c| ctx.fonts_mut(|f| f.layout_no_wrap(c.to_string(), font.clone(), t.text))).collect()
-        } else {
-            vec![ctx.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text))]
-        };
-        let long = if upright { letters.iter().map(|g| g.size().y).sum() } else { letters.iter().map(|g| g.size().x).sum() };
-        Mark { letters, upright, long }
-    }
-
-    /// The handle's height: the folder and the name, with room round them.
-    fn height(&self) -> f32 {
-        10.0 + 13.0 + 6.0 + self.long + 10.0
-    }
-}
-
-/// The tucked group panel's handle (`shown`): a tab at the window's edge with a band of the accent
-/// along its inner side, the folder and the panel's name down it. Its corners are barely rounded,
-/// and it fills all its room: on a web page that room is cut out of the page. Whether the pointer
-/// is on it.
-fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, (name, mark): (&str, Mark), left: bool) -> bool {
-    use egui::{Sense, Stroke, StrokeKind, pos2};
+/// The tucked group panel's handle (`shown`): a plain tab of the accent at the window's edge,
+/// rounded on the side away from it, to be seen at a glance on any page. It fills all its room:
+/// on a web page that room is cut out of the page. Whether the pointer is on it.
+fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str, left: bool) -> bool {
     let mut pointed = false;
     let area =
         egui::Area::new(egui::Id::unique("monun.group_handle")).order(egui::Order::Middle).fixed_pos(shown.min).constrain(false).fade_in(false);
     area.show(ctx, |ui| {
-        let (_, resp) = ui.allocate_exact_size(shown.size(), Sense::click());
+        let (_, resp) = ui.allocate_exact_size(shown.size(), egui::Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
         pointed = resp.hovered();
         let corners =
-            if left { egui::CornerRadius { ne: 4, se: 4, ..Default::default() } } else { egui::CornerRadius { nw: 4, sw: 4, ..Default::default() } };
-        let painter = ui.painter();
-        painter.rect_filled(shown, corners, if pointed { t.hover } else { t.ribbon });
-        painter.rect_stroke(shown, corners, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
-        // The accent band on its inner side.
-        let band_x = if left { shown.right() - 3.5 } else { shown.left() + 3.5 };
-        painter.line_segment([pos2(band_x, shown.top() + 6.0), pos2(band_x, shown.bottom() - 6.0)], Stroke::new(2.0, t.accent));
-        let x = shown.center().x + if left { -1.5 } else { 1.5 };
-        let folder = egui::Rect::from_center_size(pos2(x, shown.top() + 10.0 + 6.5), vec2(13.0, 13.0));
-        crate::icons::paint(painter, folder, crate::icons::Icon::Folder, t.accent);
-        let mut y = folder.bottom() + 6.0;
-        for galley in mark.letters {
-            if mark.upright {
-                let h = galley.size().y;
-                painter.galley(pos2(x - galley.size().x / 2.0, y), galley, t.text);
-                y += h;
-            } else {
-                let at = pos2(x + galley.size().y / 2.0, y);
-                painter.add(egui::epaint::TextShape::new(at, galley, t.text).with_angle(std::f32::consts::FRAC_PI_2));
-            }
-        }
+            if left { egui::CornerRadius { ne: 6, se: 6, ..Default::default() } } else { egui::CornerRadius { nw: 6, sw: 6, ..Default::default() } };
+        // A shade lighter under the pointer.
+        let fill = if pointed { t.accent.gamma_multiply(0.8) } else { t.accent };
+        ui.painter().rect_filled(shown, corners, fill);
         if pointed {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
