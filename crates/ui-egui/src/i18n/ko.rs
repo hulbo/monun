@@ -577,6 +577,15 @@ const MORE: &[(&str, &str)] = &[
         "This file is encrypted by document security (DRM): only Excel on a PC running that security program can open it. Ask the sender or your security administrator for a copy without DRM.",
         "문서 보안(DRM)으로 암호화된 파일입니다. 그 보안 프로그램이 설치된 PC의 엑셀에서만 열 수 있습니다. 보낸 사람이나 보안 담당자에게 DRM이 해제된 파일을 요청하세요.",
     ),
+    ("Secure Document", "보안 문서"),
+    (
+        "'{file}' is encrypted by document security (DRM), which Monun can't read. In File Explorer, right-click it and choose Secure Document › Remove Encryption: Monun opens it as soon as it is released.",
+        "'{file}'은(는) 문서 보안(DRM)으로 암호화되어 있어 모눈이 읽을 수 없습니다. 탐색기에서 이 파일을 오른쪽 클릭해 '보안 문서 › 암호화 해제'를 고르세요. 해제되면 모눈이 바로 엽니다.",
+    ),
+    (
+        "A file encrypted by document security (DRM) opens as soon as it is released: in File Explorer, right-click it and choose Secure Document › Remove Encryption.",
+        "문서 보안(DRM)으로 암호화된 파일은 해제되면 바로 열립니다. 탐색기에서 오른쪽 클릭해 '보안 문서 › 암호화 해제'를 고르세요.",
+    ),
     ("Unhide sheet:", "숨기기 취소할 시트:"),
     ("Hidden: {sheets}", "숨김: {sheets}"),
     // Paste Special, Series

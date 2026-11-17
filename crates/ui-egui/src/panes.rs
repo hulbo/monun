@@ -63,7 +63,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
 
 /// The tucked group panel's handle at the window's edge: its size, and how long the panel stays
 /// out once the pointer has left it (seconds).
-const HANDLE: egui::Vec2 = egui::vec2(12.0, 56.0);
+const HANDLE: egui::Vec2 = egui::vec2(16.0, 76.0);
 const LINGER: f64 = 0.35;
 
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
@@ -127,7 +127,7 @@ fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str, left: 
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
         pointed = resp.hovered();
         let corners =
-            if left { egui::CornerRadius { ne: 6, se: 6, ..Default::default() } } else { egui::CornerRadius { nw: 6, sw: 6, ..Default::default() } };
+            if left { egui::CornerRadius { ne: 7, se: 7, ..Default::default() } } else { egui::CornerRadius { nw: 7, sw: 7, ..Default::default() } };
         // A shade lighter under the pointer.
         let fill = if pointed { t.accent.gamma_multiply(0.8) } else { t.accent };
         ui.painter().rect_filled(shown, corners, fill);
@@ -138,22 +138,25 @@ fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str, left: 
     pointed
 }
 
-/// The tucked group panel slid out over the files from its edge, as tall as they are. Returns where
-/// it shows.
+/// The tucked group panel slid out over the files at the top of its edge, as its layer floats: a
+/// card as tall as what it holds, up to the whole area. Returns where it shows.
 fn slid_out(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, files: egui::Rect, left: bool) -> egui::Rect {
-    use egui::Align2;
-    let (pivot, at) = if left { (Align2::LEFT_TOP, files.left_top()) } else { (Align2::RIGHT_TOP, files.right_top()) };
-    let width = app.ui.side_layer_w.unwrap_or(LAYER_W).max(LAYER_MIN_W).min((files.width() - 40.0).max(LAYER_MIN_W));
-    let tall = files.height();
-    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
+    use egui::{Align2, pos2};
+    let top = files.top() + HEADER_H + LAYER_INSET;
+    let (pivot, at) =
+        if left { (Align2::LEFT_TOP, pos2(files.left() + LAYER_INSET, top)) } else { (Align2::RIGHT_TOP, pos2(files.right() - LAYER_INSET, top)) };
+    let widest = (files.width() - 2.0 * LAYER_INSET).max(LAYER_MIN_W);
+    let width = app.ui.side_layer_w.unwrap_or(LAYER_W).clamp(LAYER_MIN_W, widest);
+    let tall = (files.bottom() - LAYER_INSET - top).max(LAYER_MIN_H);
     let shadow = ui.style().visuals.popup_shadow;
     let area = egui::Area::new(egui::Id::unique("monun.group_slid_out")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain(false).show(
         ui.ctx(),
         |ui| {
+            // The room it may take, or it shrinks to what it holds and never grows back.
             ui.set_max_width(width);
-            egui::Frame::new().fill(t.ribbon).stroke(egui::Stroke::new(1.0, t.ribbon_border)).shadow(shadow).inner_margin(margin).show(ui, |ui| {
+            ui.set_max_height(tall);
+            card(t, shadow).show(ui, |ui| {
                 ui.set_width(width - 20.0);
-                ui.set_min_height(tall - 10.0);
                 header(app, ui, "group", t, false);
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical()
@@ -164,6 +167,16 @@ fn slid_out(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, files: egui::Rect, left
         },
     );
     area.response.rect
+}
+
+/// A layer's card: the ribbon's colour, a thin border, rounded corners and a shadow.
+fn card(t: &Tokens, shadow: egui::Shadow) -> egui::Frame {
+    egui::Frame::new().fill(t.ribbon).stroke(egui::Stroke::new(1.0, t.ribbon_border)).corner_radius(8.0).shadow(shadow).inner_margin(egui::Margin {
+        left: 10,
+        right: 10,
+        top: 0,
+        bottom: 10,
+    })
 }
 
 /// What a pane shows under its title.
@@ -237,7 +250,6 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
     let mut title = None;
     let mut resized = None;
     let mut shown = 0.0;
-    let margin = egui::Margin { left: 10, right: 10, top: 0, bottom: 10 };
     let shadow = ui.style().visuals.popup_shadow;
     egui::Area::new(egui::Id::unique("monun.side_layer")).order(egui::Order::Middle).pivot(pivot).fixed_pos(at).constrain_to(area).show(
         ui.ctx(),
@@ -247,26 +259,17 @@ fn layer(app: &mut SheetApp, ui: &mut Ui, pane: &str, t: &Tokens) {
             // files added).
             ui.set_max_width(width);
             ui.set_max_height(tall);
-            let frame = egui::Frame::new()
-                .fill(t.ribbon)
-                .stroke(egui::Stroke::new(1.0, t.ribbon_border))
-                .corner_radius(8.0)
-                .shadow(shadow)
-                .inner_margin(margin)
-                .show(ui, |ui| {
-                    ui.set_width(width - 20.0);
-                    title = Some(header(app, ui, pane, t, true));
-                    ui.add_space(6.0);
-                    let room = (tall - HEADER_H - 16.0).max(40.0);
-                    let mut scroll = egui::ScrollArea::vertical().max_height(room);
-                    // A height chosen is kept, however little it holds.
-                    scroll = if chosen.is_some() {
-                        scroll.min_scrolled_height(room).auto_shrink([false, false])
-                    } else {
-                        scroll.auto_shrink([false, true])
-                    };
-                    scroll.show(ui, |ui| content(app, ui, pane));
-                });
+            let frame = card(t, shadow).show(ui, |ui| {
+                ui.set_width(width - 20.0);
+                title = Some(header(app, ui, pane, t, true));
+                ui.add_space(6.0);
+                let room = (tall - HEADER_H - 16.0).max(40.0);
+                let mut scroll = egui::ScrollArea::vertical().max_height(room);
+                // A height chosen is kept, however little it holds.
+                scroll =
+                    if chosen.is_some() { scroll.min_scrolled_height(room).auto_shrink([false, false]) } else { scroll.auto_shrink([false, true]) };
+                scroll.show(ui, |ui| content(app, ui, pane));
+            });
             shown = frame.response.rect.height();
             app.side_layer_shown_h = shown;
             resized = edges(ui, frame.response.rect, corner, t);

@@ -253,11 +253,17 @@ pub fn restore(app: &mut SheetApp) {
 /// can't be opened (moved, deleted, password-protected) is left out and named in a message.
 fn open_group(app: &mut SheetApp, g: &FileGroup) {
     let mut missing = Vec::new();
+    let mut protected = false;
     for path in &g.files {
         if app.session.documents().iter().any(|d| d.path.as_deref() == Some(path.as_str())) {
             continue;
         }
-        if app.run("file.open", json!({"path": path})).is_err() {
+        if let Err(e) = app.run("file.open", json!({"path": path})) {
+            // A file of document security (DRM) opens once it is released.
+            if e.contains(monun_engine::io::DRM_PROTECTED) {
+                crate::drm::refused(app, path, false);
+                protected = true;
+            }
             missing.push(path.clone());
         }
     }
@@ -274,6 +280,12 @@ fn open_group(app: &mut SheetApp, g: &FileGroup) {
     if !missing.is_empty() {
         let lang = app.ui.language;
         let mut text = format!("{}\n\n{}", lang.tr("These files of the group could not be opened:"), missing.join("\n"));
+        if protected {
+            text.push_str("\n\n");
+            text.push_str(lang.tr(
+                "A file encrypted by document security (DRM) opens as soon as it is released: in File Explorer, right-click it and choose Secure Document › Remove Encryption.",
+            ));
+        }
         // A message already up (why a project gave way) comes first.
         if let Some((_, earlier)) = app.message.take() {
             text = format!("{earlier}\n\n{text}");
@@ -821,7 +833,7 @@ fn kept_file_rows(ui: &mut Ui, g: &FileGroup, rows: &Rows) -> Option<PanelAction
 }
 
 /// Opens Explorer at the folder holding `path`, with the file selected.
-fn show_in_folder(path: &str) {
+pub(crate) fn show_in_folder(path: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;

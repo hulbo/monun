@@ -26,11 +26,17 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   workbook shows Excel's sheet tabs (`tabs::sheet_tabs`, through `file_tabs::bottom_bar`); other
   files have no bottom bar. Its title strip tucks it into the window's edge
   (`UiState::group_tucked`, `panes::tucked`): a handle floats over the files there (an egui `Area`,
-  so a web page has it cut out); under the pointer the panel slides out over the files and stays
-  while the pointer, a menu it opened or a drag is on it (`SheetApp::group_peek`), and its pin
-  keeps it shown again as it was.
+  so a web page has it cut out); under the pointer the panel slides out over the files as a card
+  as tall as what it holds (`panes::slid_out`, the layer's look) and stays while the pointer, a
+  menu it opened or a drag is on it (`SheetApp::group_peek`), and its pin keeps it shown again as
+  it was.
   Another pane shows in the group panel's place while open. Tests:
   `common::app` turns the group panel off; a test of it turns it on.
+- Document security (DRM, such as the Fasoo agent): the agent decrypts only for the
+  programs it has a module for (Excel, Hancom, Acrobat, Notepad…), so a protected file is refused
+  (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. `drm.rs`
+  says how to release it (Explorer, Secure Document › Remove Encryption) with a Show in Folder
+  button (`SheetApp::message_file`), and watches it for an hour: released in place, it opens.
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are

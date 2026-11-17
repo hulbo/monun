@@ -589,8 +589,9 @@ fn the_tucked_group_panel_slides_out_under_the_pointer_and_its_pin_keeps_it() {
     h.run_steps(3);
     assert!(!h.state().session.active().unwrap().is_text_file(), "the file clicked shows");
     assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some());
-    // Away from it, it goes back a moment later.
-    move_to(&mut h, egui::pos2(300.0, 400.0));
+    // As tall as what it holds, not as the files: below its files the pointer is off it, and it
+    // goes back a moment later.
+    move_to(&mut h, egui::pos2(row.center().x, 700.0));
     assert!(h.query_by_role_and_label(Role::Button, "Book1").is_none(), "gone back into its edge");
     assert!(h.query_by_role_and_label(Role::Button, "Groups").is_some(), "the handle again");
     // Its pin keeps it shown, in its column as it was. (The handle is a little way down the files,

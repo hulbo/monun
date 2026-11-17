@@ -138,6 +138,51 @@ fn the_backstage_closes_once_the_password_opens_the_workbook() {
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
+/// A workbook as Fasoo's document security (DRM) leaves it on disk: its container's header, which
+/// only its agent decrypts, for the programs it is made for.
+fn fasoo_bytes() -> Vec<u8> {
+    [&[0x9B, b' '][..], b"DRMONE  This Document is encrypted and protected by Fasoo DRM ", &[0; 64]].concat()
+}
+
+#[test]
+fn a_file_of_document_security_says_how_to_release_it_and_opens_once_released() {
+    let dir = std::env::temp_dir().join(format!("monun-drm-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Secured.xlsx");
+    std::fs::write(&path, fasoo_bytes()).unwrap();
+    let p = path.to_string_lossy().to_string();
+    let mut h = harness(Services::default());
+    h.state_mut().open_path(&p);
+    h.run_steps(3);
+    // Why it doesn't open and how to release it, with a button that shows it in its folder.
+    let (title, text) = h.state().message.clone().unwrap_or_default();
+    assert_eq!(title, "Secure Document");
+    assert!(text.contains("'Secured.xlsx'") && text.contains("Secure Document › Remove Encryption"), "{text}");
+    assert!(h.query_by_label("Show in Folder").is_some());
+    assert!(h.state().drm.is_waiting(&p), "watched until it is released");
+    assert!(h.state().session.documents().iter().all(|d| d.path.as_deref() != Some(p.as_str())));
+
+    // Released in its place (Fasoo's Remove Encryption): it opens a moment later, and the message
+    // about it goes.
+    let mut s = Session::new();
+    s.new_workbook();
+    s.run("cell.set", json!({"cell": "A1", "input": "42"})).unwrap();
+    std::fs::write(&path, monun_engine::io::save_bytes(&s.active().unwrap().wb, "book.xlsx").unwrap()).unwrap();
+    let opened = |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().and_then(|d| d.path.clone()) == Some(p.clone());
+    for _ in 0..40 {
+        if opened(&h) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        h.run_steps(1);
+    }
+    assert!(opened(&h), "released, it opens");
+    assert_eq!(a1(&h), Value::Number(42.0));
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    assert!(!h.state().drm.is_waiting(&p));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn app_open_over_the_control_channel_never_opens_a_dialog() {
     use monun_ui_egui::control::{Outcome, handle};
