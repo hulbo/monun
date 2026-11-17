@@ -128,9 +128,20 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
 /// the title bar when the app draws one, else above the ribbon card. Clicking the active tab
 /// collapses the ribbon, double-clicking toggles it, and a tab click leaves the File view.
 pub(crate) fn tab_strip(app: &mut SheetApp, ui: &mut Ui) {
+    tab_strip_within(app, ui, f32::INFINITY);
+}
+
+/// The least room the title bar keeps for File, a tab and the overflow list.
+pub(crate) const TABS_MIN: f32 = 130.0;
+/// The overflow list's button (»).
+const OVERFLOW_W: f32 = 26.0;
+
+/// File and the ribbon's tabs in `room` (from where they start): the tabs that don't fit wait in an
+/// overflow list (») after the last that does, the active tab always among those shown.
+pub(crate) fn tab_strip_within(app: &mut SheetApp, ui: &mut Ui, room: f32) {
     let t = Tokens::get(ui.ctx());
-    let collapsed = app.ui.ribbon_collapsed;
     ui.spacing_mut().item_spacing.x = 2.0;
+    let start = ui.cursor().left();
     if app.chrome.file_tab {
         file_menu(app, ui);
     }
@@ -141,49 +152,110 @@ pub(crate) fn tab_strip(app: &mut SheetApp, ui: &mut Ui) {
     let mut tabs: Vec<&str> = TABS.to_vec();
     let ctx_tabs = contextual_tabs(app);
     tabs.extend(ctx_tabs.iter());
-    for tab in tabs {
-        let active = app.ui.ribbon_tab == tab && app.backstage.is_none();
-        let contextual = ctx_tabs.contains(&tab);
-        let font = theme::ui_font(13.5);
-        let label = app.ui.language.tr(tab);
-        let tw = ui.painter().layout_no_wrap(label.to_string(), font.clone(), t.text).size().x;
-        let (r, resp) = ui.allocate_exact_size(vec2(tw + 22.0, 30.0), Sense::click());
-        if resp.hovered() && !active {
-            ui.painter().rect_filled(r.shrink2(vec2(2.0, 4.0)), 5.0, t.hover);
+    let font = theme::ui_font(13.5);
+    let widths: Vec<f32> =
+        tabs.iter().map(|tab| ui.painter().layout_no_wrap(app.ui.language.tr(tab).to_string(), font.clone(), t.text).size().x + 22.0 + 2.0).collect();
+    let left = room - (ui.cursor().left() - start);
+    let active = app.ui.ribbon_tab.clone();
+    let (shown, hidden) = fit_tabs(&tabs, &widths, left, &active);
+    for tab in shown {
+        ribbon_tab(app, ui, tab, ctx_tabs.contains(&tab), &t);
+    }
+    if !hidden.is_empty() {
+        overflow_tabs(app, ui, &hidden, &t);
+    }
+}
+
+/// Which tabs show in `room` and which wait in the overflow list: as many as fit, in order, beside
+/// the overflow button; the active one always shows (in the last place, when it wouldn't).
+fn fit_tabs<'a>(tabs: &[&'a str], widths: &[f32], room: f32, active: &str) -> (Vec<&'a str>, Vec<&'a str>) {
+    if widths.iter().sum::<f32>() <= room {
+        return (tabs.to_vec(), Vec::new());
+    }
+    let mut used = OVERFLOW_W;
+    let mut fit = 0;
+    for w in widths {
+        if used + w > room {
+            break;
         }
-        let color = if contextual {
-            t.accent
-        } else if active {
-            t.text
+        used += w;
+        fit += 1;
+    }
+    let mut shown: Vec<&'a str> = tabs.iter().take(fit).copied().collect();
+    if let Some(&tab) = tabs.iter().skip(fit).find(|tab| **tab == active) {
+        shown.pop();
+        shown.push(tab);
+    }
+    let hidden = tabs.iter().filter(|tab| !shown.contains(tab)).copied().collect();
+    (shown, hidden)
+}
+
+/// One of the ribbon's tabs: a click shows its commands (again on the active one, hides them), a
+/// double-click shows or hides the ribbon.
+fn ribbon_tab(app: &mut SheetApp, ui: &mut Ui, tab: &str, contextual: bool, t: &Tokens) {
+    let collapsed = app.ui.ribbon_collapsed;
+    let active = app.ui.ribbon_tab == tab && app.backstage.is_none();
+    let font = theme::ui_font(13.5);
+    let label = app.ui.language.tr(tab);
+    let tw = ui.painter().layout_no_wrap(label.to_string(), font.clone(), t.text).size().x;
+    let (r, resp) = ui.allocate_exact_size(vec2(tw + 22.0, 30.0), Sense::click());
+    if resp.hovered() && !active {
+        ui.painter().rect_filled(r.shrink2(vec2(2.0, 4.0)), 5.0, t.hover);
+    }
+    let color = if contextual {
+        t.accent
+    } else if active {
+        t.text
+    } else {
+        t.text_dim
+    };
+    // A point above the centre, so the labels' glyphs line up with the title bar's buttons and
+    // the AutoSave label beside them (the larger tab font otherwise reads a pixel low).
+    let text_at = r.center() - vec2(0.0, 1.0);
+    ui.painter().text(text_at, Align2::CENTER_CENTER, label, if active { theme::ui_bold(13.5) } else { font }, color);
+    if active {
+        let ul = Rect::from_center_size(pos2(r.center().x, r.bottom() - 3.0), vec2(tw.clamp(20.0, 40.0), 3.0));
+        ui.painter().rect_filled(ul, 1.5, t.accent);
+    }
+    if resp.clicked() {
+        if active && !collapsed {
+            app.ui.ribbon_collapsed = true;
         } else {
-            t.text_dim
-        };
-        // A point above the centre, so the labels' glyphs line up with the title bar's buttons and
-        // the AutoSave label beside them (the larger tab font otherwise reads a pixel low).
-        let text_at = r.center() - vec2(0.0, 1.0);
-        ui.painter().text(text_at, Align2::CENTER_CENTER, label, if active { theme::ui_bold(13.5) } else { font }, color);
-        if active {
-            let ul = Rect::from_center_size(pos2(r.center().x, r.bottom() - 3.0), vec2(tw.clamp(20.0, 40.0), 3.0));
-            ui.painter().rect_filled(ul, 1.5, t.accent);
-        }
-        if resp.clicked() {
-            if active && !collapsed {
-                app.ui.ribbon_collapsed = true;
-            } else {
-                app.ui.ribbon_tab = tab.to_string();
-                app.ui.ribbon_collapsed = false;
-            }
-            app.backstage = None;
-        }
-        if resp.double_clicked() {
-            app.ui.ribbon_collapsed = !collapsed;
-        }
-        if app.keytips.prefix() == Some("")
-            && let Some(sequence) = keytip_table::tab_sequence(tab)
-        {
-            keytip(app, ui, sequence, pos2(r.center().x, r.bottom() - 1.0));
+            show_tab(app, tab);
         }
     }
+    if resp.double_clicked() {
+        app.ui.ribbon_collapsed = !collapsed;
+    }
+    if app.keytips.prefix() == Some("")
+        && let Some(sequence) = keytip_table::tab_sequence(tab)
+    {
+        keytip(app, ui, sequence, pos2(r.center().x, r.bottom() - 1.0));
+    }
+}
+
+/// Shows the ribbon tab `tab`'s commands.
+fn show_tab(app: &mut SheetApp, tab: &str) {
+    app.ui.ribbon_tab = tab.to_string();
+    app.ui.ribbon_collapsed = false;
+    app.backstage = None;
+}
+
+/// The overflow list (») of the tabs the title bar has no room for: one picked shows its commands.
+fn overflow_tabs(app: &mut SheetApp, ui: &mut Ui, hidden: &[&str], t: &Tokens) {
+    let lang = app.ui.language;
+    let text = egui::RichText::new("»").font(theme::ui_font(15.0)).color(t.text_dim);
+    let button = ui.add(egui::Button::new(text).frame(false).min_size(vec2(OVERFLOW_W - 2.0, 30.0)));
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("More tabs")));
+    let button = button.on_hover_text(lang.tr("More tabs"));
+    egui::Popup::menu(&button).show(|ui| {
+        for tab in hidden {
+            if ui.button(lang.tr(tab)).clicked() {
+                show_tab(app, tab);
+                ui.close();
+            }
+        }
+    });
 }
 
 /// How much of the active tab's groups the ribbon card shows, recorded each frame for the scroll
@@ -313,4 +385,25 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
         }
     }
     v
+}
+
+#[cfg(test)]
+mod fit_tabs_tests {
+    use super::fit_tabs;
+
+    #[test]
+    fn the_tabs_that_dont_fit_wait_in_the_overflow_list_with_the_active_one_shown() {
+        let tabs = ["Home", "Insert", "Draw", "Data", "View"];
+        let widths = [60.0, 60.0, 60.0, 60.0, 60.0];
+        assert_eq!(fit_tabs(&tabs, &widths, 400.0, "Home"), (tabs.to_vec(), vec![]), "all fit");
+        // Room for two beside the overflow button.
+        let (shown, hidden) = fit_tabs(&tabs, &widths, 160.0, "Home");
+        assert_eq!((shown, hidden), (vec!["Home", "Insert"], vec!["Draw", "Data", "View"]));
+        // The active one takes the last place.
+        let (shown, hidden) = fit_tabs(&tabs, &widths, 160.0, "View");
+        assert_eq!((shown, hidden), (vec!["Home", "View"], vec!["Insert", "Draw", "Data"]));
+        // No room at all: the active one still shows.
+        let (shown, _) = fit_tabs(&tabs, &widths, 10.0, "Data");
+        assert_eq!(shown, vec!["Data"]);
+    }
 }

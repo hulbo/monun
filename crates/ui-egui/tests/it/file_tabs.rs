@@ -615,3 +615,39 @@ fn the_tucked_group_panel_slides_out_under_the_pointer_and_its_pin_keeps_it() {
     assert!(h.state().ui.side_layer && !h.state().ui.group_tucked);
     assert!(h.query_by_role_and_label(Role::Button, "Book1").is_some());
 }
+
+#[test]
+fn in_a_narrow_window_the_title_bar_keeps_the_group_and_the_tabs_wait_in_a_list() {
+    let narrow = |width: f32| {
+        let mut s = Session::new();
+        s.new_workbook();
+        let mut app = crate::common::app(s);
+        app.use_file_tabs();
+        let mut h = crate::common::builder().with_size(egui::vec2(width, 700.0)).build_ui_state(
+            |ui, app: &mut SheetApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        h
+    };
+    // Wide: every tab shows.
+    let h = narrow(1600.0);
+    assert!(h.query_by_label("More tabs").is_none());
+    // Narrow: the file, group and project keep their place; the quick commands end before them, and
+    // the tabs with no room wait in the list.
+    let mut h = narrow(1000.0);
+    let more = h.get_by_label("More commands").rect();
+    let group = h.get_by_label("Group: Default group").rect();
+    assert!(more.right() < group.left(), "the quick commands end before the group button: {more:?} {group:?}");
+    assert!(h.query_by_label("Open files").is_some(), "the file in front shows");
+    h.get_by_label("More tabs").click();
+    h.run_steps(3);
+    h.get_by_label("Automate").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ribbon_tab, "Automate", "a tab picked from the list shows its commands");
+    assert!(h.query_by_label("More tabs").is_some(), "the active tab shows in the bar, the others wait");
+}
