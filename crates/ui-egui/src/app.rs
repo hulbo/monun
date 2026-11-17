@@ -41,8 +41,6 @@ impl SheetApp {
             dialog: None,
             backstage: None,
             message: None,
-            message_file: None,
-            drm: Default::default(),
             toast: None,
             notice: None,
             recovery: None,
@@ -169,8 +167,6 @@ impl SheetApp {
         let saves = now_ms();
         self.autosave(ctx);
         self.watch_files(ctx);
-        // Files refused for their document security open once released.
-        crate::drm::watch(self, ctx);
         // The memos kept in the working root: read for it, and again after a git pull.
         crate::memos::root_file::watch(self);
         self.auto_recover(ctx);

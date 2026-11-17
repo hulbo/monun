@@ -32,11 +32,11 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   it was.
   Another pane shows in the group panel's place while open. Tests:
   `common::app` turns the group panel off; a test of it turns it on.
-- Document security (DRM, such as the Fasoo agent): the agent decrypts only for the
-  programs it has a module for (Excel, Hancom, Acrobat, Notepad…), so a protected file is refused
-  (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. `drm.rs`
-  says how to release it (Explorer, Secure Document › Remove Encryption) with a Show in Folder
-  button (`SheetApp::message_file`), and watches it for an hour: released in place, it opens.
+- Document security (DRM, such as the Fasoo agent) decrypts a file only as one of the
+  programs it has a module for (Excel, Hancom, Acrobat, Notepad…) reads it, so a protected file is
+  refused (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. A
+  notice with release steps and a watch for the released file was tried and taken out: the user
+  wants it opened automatically or not at all.
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are

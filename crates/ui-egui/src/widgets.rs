@@ -662,14 +662,11 @@ pub fn dialog_buttons(ui: &mut Ui, buttons: &[DialogButton<'_>]) -> Option<usize
 }
 
 /// Draws the modal warning/error message; OK, Enter or Esc clears it and restores editor focus when an edit exists.
-/// A message about a file (`SheetApp::message_file`) has a button that shows it in its folder too.
 pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     let Some((title, msg)) = app.message.clone() else { return };
-    let file = app.message_file.as_ref().filter(|(text, _)| *text == msg).map(|(_, path)| path.clone());
     let title = app.ui.language.tr(&title).to_owned();
     let msg = app.ui.language.tr_error(&msg);
     let mut close = false;
-    let mut show_folder = false;
     egui::Modal::new(egui::Id::unique("message_box")).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.horizontal(|ui| {
@@ -683,22 +680,14 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
             });
         });
         ui.add_space(8.0);
-        let clicked = if file.is_some() {
-            dialog_buttons(ui, &[DialogButton::confirm("Show in Folder"), DialogButton::neutral("OK")])
-        } else {
-            dialog_buttons(ui, &[DialogButton::confirm("OK")])
-        };
-        show_folder = file.is_some() && clicked == Some(0);
-        if clicked.is_some() || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
+        if dialog_buttons(ui, &[DialogButton::confirm("OK")]).is_some()
+            || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
+        {
             close = true;
         }
     });
-    if show_folder && let Some(path) = &file {
-        crate::groups::show_in_folder(path);
-    }
     if close {
         app.message = None;
-        app.message_file = None;
         // Back to the entry the message was about (a validation alert, a formula error), so it can
         // be fixed from the keyboard without clicking the cell again.
         if let Some(ed) = &mut app.editor {

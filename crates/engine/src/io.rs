@@ -84,12 +84,6 @@ pub const WRONG_PASSWORD: &str = "The password is incorrect.";
 /// The error for a file wrapped by document security (DRM). It names no file, so the interface
 /// can show it in its own language.
 pub const DRM_PROTECTED: &str = "This file is encrypted by document security (DRM): only Excel on a PC running that security program can open it. Ask the sender or your security administrator for a copy without DRM.";
-
-/// Whether a file's first bytes (its first few kilobytes are enough) are a document-security (DRM)
-/// container, which opening refuses with [`DRM_PROTECTED`].
-pub fn is_drm_protected(head: &[u8]) -> bool {
-    monun_xlsx::sniff(head) == monun_xlsx::Format::Drm
-}
 /// The first open warning of a workbook decrypted with its password.
 pub const DECRYPTED_NOTICE: &str = "This workbook was password-protected. Monun saves it without the password.";
 

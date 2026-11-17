@@ -6,8 +6,6 @@ impl SheetApp {
             Ok(r) => self.after_open(Some(path), &r),
             // A password-protected workbook: ask for the password; the dialog opens it.
             Err(e) if e.contains(monun_engine::io::PASSWORD_REQUIRED) => self.open_dialog("openPassword", json!({"path": path})),
-            // A file of document security (DRM): how to release it, and it opens once released.
-            Err(e) if e.contains(monun_engine::io::DRM_PROTECTED) => crate::drm::refused(self, path, true),
             Err(e) => self.message = Some(("Monun".into(), clean_error(&e))),
         }
         self.after_engine();

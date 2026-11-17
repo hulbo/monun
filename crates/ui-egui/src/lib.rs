@@ -19,7 +19,6 @@ pub mod dnd;
 pub mod doc_view;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_windows;
-pub mod drm;
 pub mod editor;
 pub mod file_tabs;
 mod floating_pictures;
@@ -372,11 +371,6 @@ pub struct SheetApp {
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,
     pub message: Option<(String, String)>,
-    /// The file the message (its text) is about, which a button there shows in its folder: one
-    /// only its document security's own menu can release ([`drm`]).
-    pub(crate) message_file: Option<(String, String)>,
-    /// Files refused for their document security, watched until they are released ([`drm`]).
-    pub drm: drm::Drm,
     pub toast: Option<(String, f64)>,
     /// Dismissible info bar under the ribbon (open-time notices).
     pub notice: Option<Notice>,
