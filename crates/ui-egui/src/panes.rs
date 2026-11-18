@@ -61,9 +61,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-/// The tucked group panel's handle at the window's edge: its size, and how long the panel stays
-/// out once the pointer has left it (seconds).
-const HANDLE: egui::Vec2 = egui::vec2(16.0, 76.0);
+/// The tucked group panel's handle by the window's edge: its size, how far in from the edge it
+/// stands, and how long the panel stays out once the pointer has left it (seconds).
+const HANDLE: egui::Vec2 = egui::vec2(24.0, 84.0);
+const HANDLE_GAP: f32 = 4.0;
 const LINGER: f64 = 0.35;
 
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
@@ -86,9 +87,10 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     // Near the top of the edge, just below a document's or web page's tool bar (clear of its buttons).
     let top = files.top() + HEADER_H + 10.0;
     let name = app.ui.language.tr("Groups");
-    let zone = Rect::from_min_size(if left { pos2(files.left(), top) } else { pos2(files.right() - HANDLE.x, top) }, HANDLE);
+    let x = if left { files.left() + HANDLE_GAP } else { files.right() - HANDLE_GAP - HANDLE.x };
+    let zone = Rect::from_min_size(pos2(x, top), HANDLE);
     let Some(since) = app.group_peek else {
-        if handle(&ctx, t, zone, name, left) {
+        if handle(&ctx, t, zone, name) {
             app.group_peek = Some(now);
         }
         return;
@@ -115,10 +117,10 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     }
 }
 
-/// The tucked group panel's handle (`shown`): a plain tab of the accent at the window's edge,
-/// rounded on the side away from it, to be seen at a glance on any page. It fills all its room:
+/// The tucked group panel's handle (`shown`): a plain tab of the accent just inside the window's
+/// edge, its corners rounded a little, to be seen at a glance on any page. It fills all its room:
 /// on a web page that room is cut out of the page. Whether the pointer is on it.
-fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str, left: bool) -> bool {
+fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str) -> bool {
     let mut pointed = false;
     let area =
         egui::Area::new(egui::Id::unique("monun.group_handle")).order(egui::Order::Middle).fixed_pos(shown.min).constrain(false).fade_in(false);
@@ -126,11 +128,9 @@ fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str, left: 
         let (_, resp) = ui.allocate_exact_size(shown.size(), egui::Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
         pointed = resp.hovered();
-        let corners =
-            if left { egui::CornerRadius { ne: 7, se: 7, ..Default::default() } } else { egui::CornerRadius { nw: 7, sw: 7, ..Default::default() } };
         // A shade lighter under the pointer.
         let fill = if pointed { t.accent.gamma_multiply(0.8) } else { t.accent };
-        ui.painter().rect_filled(shown, corners, fill);
+        ui.painter().rect_filled(shown, 7, fill);
         if pointed {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }

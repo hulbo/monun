@@ -573,9 +573,12 @@ fn the_tucked_group_panel_slides_out_under_the_pointer_and_its_pin_keeps_it() {
     move_to(&mut h, egui::pos2(300.0, 400.0));
     assert!(h.state().ui.group_tucked);
     assert!(h.query_by_role_and_label(Role::Button, "Book1").is_none(), "tucked, its files are out of sight");
-    // A handle at the right edge, over the files (they take the panel's room).
+    // A handle just inside the right edge, over the files (they take the panel's room).
     let handle = h.get_by_role_and_label(Role::Button, "Groups").rect();
-    assert!(handle.width() <= 24.0 && handle.right() > 1185.0 && (50.0..90.0).contains(&handle.height()), "a handle at the right edge: {handle:?}");
+    assert!(
+        handle.width() <= 24.0 && (1185.0..1199.0).contains(&handle.right()) && (50.0..90.0).contains(&handle.height()),
+        "a handle just inside the right edge: {handle:?}"
+    );
     // Under the pointer the panel slides out over the files from the edge, and stays while the
     // pointer is on it.
     move_to(&mut h, handle.center());
