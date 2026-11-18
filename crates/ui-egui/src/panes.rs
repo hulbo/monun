@@ -117,10 +117,12 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     }
 }
 
-/// The tucked group panel's handle (`shown`): a plain tab of the accent just inside the window's
-/// edge, its corners rounded a little, to be seen at a glance on any page. It fills all its room:
-/// on a web page that room is cut out of the page. Whether the pointer is on it.
+/// The tucked group panel's handle (`shown`): a tab of the accent just inside the window's edge,
+/// its corners rounded a little, raised off the page by a soft shadow and a thin light along its
+/// top, with three dots down its middle to pull it out by. It fills all its room: on a web page
+/// that room is cut out of the page (and the page covers its shadow). Whether the pointer is on it.
 fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str) -> bool {
+    use egui::{Color32, Stroke, pos2, vec2};
     let mut pointed = false;
     let area =
         egui::Area::new(egui::Id::unique("monun.group_handle")).order(egui::Order::Middle).fixed_pos(shown.min).constrain(false).fade_in(false);
@@ -128,9 +130,20 @@ fn handle(ctx: &egui::Context, t: &Tokens, shown: egui::Rect, name: &str) -> boo
         let (_, resp) = ui.allocate_exact_size(shown.size(), egui::Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
         pointed = resp.hovered();
+        let painter = ui.painter();
+        let corners = egui::CornerRadius::same(7);
+        let shadow = egui::Shadow { offset: [0, 2], blur: 6, spread: 0, color: Color32::from_black_alpha(if t.dark { 110 } else { 70 }) };
+        painter.add(shadow.as_shape(shown, corners));
         // A shade lighter under the pointer.
-        let fill = if pointed { t.accent.gamma_multiply(0.8) } else { t.accent };
-        ui.painter().rect_filled(shown, 7, fill);
+        let fill = if pointed { t.accent.lerp_to_gamma(Color32::WHITE, 0.15) } else { t.accent };
+        painter.rect_filled(shown, corners, fill);
+        painter.line_segment(
+            [pos2(shown.left() + 6.0, shown.top() + 1.0), pos2(shown.right() - 6.0, shown.top() + 1.0)],
+            Stroke::new(1.0, Color32::from_white_alpha(70)),
+        );
+        for k in [-1.0, 0.0, 1.0] {
+            painter.circle_filled(shown.center() + vec2(0.0, 8.0 * k), 2.0, t.on_accent);
+        }
         if pointed {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
