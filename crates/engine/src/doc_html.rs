@@ -253,7 +253,11 @@ fn spans(out: &mut String, spans: &[Span], cx: &Context) {
             let _ = write!(out, "<a href=\"{}\">", esc(h));
         }
         let tags: Vec<&str> =
-            [(s.style.bold, "strong"), (s.style.italic, "em"), (s.style.strike, "del")].iter().filter(|(on, _)| *on).map(|(_, t)| *t).collect();
+            [(s.style.bold, "strong"), (s.style.italic, "em"), (s.style.strike, "del"), (s.style.underline, "u"), (s.style.mark, "mark")]
+                .iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, t)| *t)
+                .collect();
         for t in &tags {
             let _ = write!(out, "<{t}>");
         }

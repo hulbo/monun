@@ -281,6 +281,23 @@ fn tables_centre_their_header_and_wrap_to_the_width() {
     assert!((short.left() - wrapped.left()).abs() < 1.0);
 }
 
+#[test]
+fn html_in_the_text_shows_as_github_shows_it() {
+    let mut h = with_document(
+        "| Step | Work |\n|---|---|\n| 2 Move | insert<br>kept as <u>they are</u> |\n\n<!-- a note -->\n\n<details>\n<summary>More</summary>\n\nBody text\n\n</details>\n",
+    );
+    h.run_steps(2);
+    // `<br>` breaks the cell's line; the tags don't show.
+    let cell = h.get_by_label("insert\nkept as they are").rect();
+    let one = h.get_by_label("2 Move").rect();
+    assert!(cell.height() > 1.8 * one.height(), "two lines: {cell:?} vs {one:?}");
+    for tag in ["<br>", "<u>", "a note", "<details>", "<summary>"] {
+        assert!(h.query_by_label_contains(tag).is_none(), "{tag} shows");
+    }
+    assert!(h.query_by_label("More").is_some());
+    assert!(h.query_by_label("Body text").is_some());
+}
+
 fn paste_picture(h: &mut Harness) {
     let image = egui::ColorImage::filled([40, 20], egui::Color32::from_rgb(30, 120, 200));
     h.input_mut().events.push(Event::PasteImage(std::sync::Arc::new(image)));

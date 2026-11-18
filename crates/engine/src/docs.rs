@@ -279,8 +279,18 @@ const PICTURE_LIMIT: u64 = 32 * 1024 * 1024;
 /// Refused for a picture that is neither PNG nor JPEG.
 pub const NOT_A_PICTURE: &str = "Only PNG and JPEG pictures can be put in a document.";
 
-/// The links of the text's pictures (`![…](link)`), each once, in order.
+/// The links of the text's pictures (`![…](link)`, then `<img src="link">`), each once, in order.
 pub fn image_links(text: &str) -> Vec<String> {
+    let mut links = markdown_image_links(text);
+    for src in monun_markdown::img_sources(text) {
+        if !links.contains(&src) {
+            links.push(src);
+        }
+    }
+    links
+}
+
+fn markdown_image_links(text: &str) -> Vec<String> {
     let mut links: Vec<String> = Vec::new();
     let mut rest = text;
     while let Some(start) = rest.find("![") {
@@ -298,10 +308,11 @@ pub fn image_links(text: &str) -> Vec<String> {
     links
 }
 
-/// The file a picture link names, `%20` and the like decoded; `None` for a web address, a
-/// `data:` picture or a document tab's own `image:N`.
+/// The file a picture link names, its title (`a.png "제목"`) left off and `%20` and the like
+/// decoded; `None` for a web address, a `data:` picture or a document tab's own `image:N`. A
+/// space is part of the name (`<img src="스크린샷 1.png">`, `![](<스크린샷 1.png>)`).
 pub fn local_path(link: &str) -> Option<String> {
-    let link = link.split_once(' ').map_or(link, |(path, _title)| path);
+    let link = link.split_once(" \"").or_else(|| link.split_once(" '")).map_or(link, |(path, _title)| path).trim();
     if link.contains("://") || link.starts_with("image:") || link.starts_with("data:") || link.starts_with("mailto:") {
         return None;
     }

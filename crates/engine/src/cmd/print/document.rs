@@ -32,6 +32,8 @@ const DIM: Rgb = [0x60, 0x60, 0x60];
 const LINK: Rgb = [0x06, 0x45, 0xAD];
 const RULE: Rgb = [0xC0, 0xC0, 0xC0];
 const SHADE: Rgb = [0xF2, 0xF2, 0xF2];
+/// Highlighted text (`<mark>`).
+const MARK: Rgb = [0xFF, 0xF1, 0x8C];
 /// A table's header row.
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
@@ -89,8 +91,10 @@ struct Piece {
     size: f32,
     color: Rgb,
     link: Option<String>,
-    shade: bool,
+    /// The band behind the text: grey for code and fields, yellow for highlighted text.
+    shade: Option<Rgb>,
     strike: bool,
+    underline: bool,
 }
 
 impl Piece {
@@ -226,8 +230,15 @@ impl Flow<'_> {
                         color
                     },
                     link: web.map(str::to_owned),
-                    shade: s.style.code || s.style.field,
+                    shade: if s.style.mark {
+                        Some(MARK)
+                    } else if s.style.code || s.style.field {
+                        Some(SHADE)
+                    } else {
+                        None
+                    },
                     strike: s.style.strike,
+                    underline: s.style.underline,
                 }
             })
             .collect()
@@ -286,22 +297,29 @@ impl Flow<'_> {
         let base = self.y + size * 1.05;
         let mut x = self.left + indent;
         for p in runs(line) {
-            let w = p.width();
-            if p.shade {
-                self.push(Op::Fill { x: x - 1.0, y: base - p.size * 0.85, w: w + 2.0, h: p.size * 1.15, color: SHADE });
-            }
-            if p.strike {
-                let y = base - p.size * 0.3;
-                self.push(Op::Line { x0: x, y0: y, x1: x + w, y1: y, width: 0.6, color: p.color });
-            }
-            if let Some(uri) = &p.link {
-                self.push(Op::Line { x0: x, y0: base + 1.2, x1: x + w, y1: base + 1.2, width: 0.5, color: p.color });
-                self.push(Op::Link { x, y: base - p.size, w, h: p.size * 1.25, uri: uri.clone() });
-            }
-            self.push(Op::Text { x, y: base, size: p.size, font: p.font, color: p.color, text: p.text });
-            x += w;
+            x += self.piece(p, x, base);
         }
         self.y += h;
+    }
+
+    /// Draws a piece with its band, lines and link at `x` on baseline `base`; its width.
+    fn piece(&mut self, p: Piece, x: f32, base: f32) -> f32 {
+        let w = p.width();
+        if let Some(color) = p.shade {
+            self.push(Op::Fill { x: x - 1.0, y: base - p.size * 0.85, w: w + 2.0, h: p.size * 1.15, color });
+        }
+        if p.strike {
+            let y = base - p.size * 0.3;
+            self.push(Op::Line { x0: x, y0: y, x1: x + w, y1: y, width: 0.6, color: p.color });
+        }
+        if p.underline || p.link.is_some() {
+            self.push(Op::Line { x0: x, y0: base + 1.2, x1: x + w, y1: base + 1.2, width: 0.5, color: p.color });
+        }
+        if let Some(uri) = &p.link {
+            self.push(Op::Link { x, y: base - p.size, w, h: p.size * 1.25, uri: uri.clone() });
+        }
+        self.push(Op::Text { x, y: base, size: p.size, font: p.font, color: p.color, text: p.text });
+        w
     }
 
     fn item(&mut self, item: &Item, number: Option<u64>, indent: f32, color: Rgb) {
@@ -350,8 +368,16 @@ impl Flow<'_> {
         let max = (self.width - indent - 12.0).max(24.0);
         let lead = CODE * 1.35;
         for raw in text.trim_end_matches('\n').split('\n') {
-            let piece =
-                Piece { text: raw.replace('\t', "    "), font: Font::Courier, size: CODE, color: INK, link: None, shade: false, strike: false };
+            let piece = Piece {
+                text: raw.replace('\t', "    "),
+                font: Font::Courier,
+                size: CODE,
+                color: INK,
+                link: None,
+                shade: None,
+                strike: false,
+                underline: false,
+            };
             let chunks = if piece.width() > max { cut(&piece, max) } else { vec![piece] };
             for chunk in chunks {
                 self.need(lead);
@@ -392,8 +418,16 @@ impl Flow<'_> {
     /// A picture of the document tab, at its size narrowed to fit.
     fn picture(&mut self, span: &Span, indent: f32) {
         let Some(image) = span.link.as_deref().and_then(|l| crate::docs::picture(self.sh, l)) else {
-            let piece =
-                Piece { text: format!("[{}]", span.text), font: Font::Helvetica, size: BODY, color: DIM, link: None, shade: false, strike: false };
+            let piece = Piece {
+                text: format!("[{}]", span.text),
+                font: Font::Helvetica,
+                size: BODY,
+                color: DIM,
+                link: None,
+                shade: None,
+                strike: false,
+                underline: false,
+            };
             self.lines(vec![piece], indent);
             return;
         };
@@ -439,8 +473,13 @@ impl Flow<'_> {
                 std::iter::once(&head_cells)
                     .chain(body.iter())
                     .filter_map(|row| row.get(c))
-                    // Measured as `wrap` measures it, word by word, with a point to spare for rounding.
-                    .map(|cell| cell.iter().flat_map(words).map(|w| w.width()).sum::<f32>() + pad * 2.0 + 1.0)
+                    // Measured as `wrap` measures it, word by word and line by line (a `<br>` breaks
+                    // one), with a point to spare for rounding.
+                    .map(|cell| {
+                        cell.split(|p| p.text == "\n").map(|line| line.iter().flat_map(words).map(|w| w.width()).sum::<f32>()).fold(0.0, f32::max)
+                            + pad * 2.0
+                            + 1.0
+                    })
                     .fold(24.0, f32::max)
             })
             .collect();
@@ -478,9 +517,7 @@ impl Flow<'_> {
                         _ => x + pad,
                     };
                     for p in line {
-                        let pw = p.width();
-                        flow.push(Op::Text { x: lx, y: y + BODY * 1.05, size: p.size, font: p.font, color: p.color, text: p.text });
-                        lx += pw;
+                        lx += flow.piece(p, lx, y + BODY * 1.05);
                     }
                     y += line_h;
                 }
@@ -521,7 +558,8 @@ fn runs(line: Vec<Piece>) -> Vec<Piece> {
                     && last.color == p.color
                     && last.link == p.link
                     && last.shade == p.shade
-                    && last.strike == p.strike =>
+                    && last.strike == p.strike
+                    && last.underline == p.underline =>
             {
                 last.text.push_str(&p.text);
             }
@@ -576,22 +614,30 @@ fn cut(piece: &Piece, max: f32) -> Vec<Piece> {
 fn wrap(pieces: Vec<Piece>, max: f32) -> Vec<Vec<Piece>> {
     let mut lines: Vec<Vec<Piece>> = vec![Vec::new()];
     let mut used = 0.0;
-    for word in pieces.iter().flat_map(words) {
-        let w = word.width();
-        if used + w > max && lines.last().is_some_and(|l| !l.is_empty()) {
+    for piece in &pieces {
+        // A line break (a `<br>` in a table cell) starts a line.
+        if piece.text == "\n" {
             lines.push(Vec::new());
             used = 0.0;
+            continue;
         }
-        let chunks = if w > max { cut(&word, max) } else { vec![word] };
-        for chunk in chunks {
-            let cw = chunk.width();
-            if used + cw > max && lines.last().is_some_and(|l| !l.is_empty()) {
+        for word in words(piece) {
+            let w = word.width();
+            if used + w > max && lines.last().is_some_and(|l| !l.is_empty()) {
                 lines.push(Vec::new());
                 used = 0.0;
             }
-            used += cw;
-            if let Some(line) = lines.last_mut() {
-                line.push(chunk);
+            let chunks = if w > max { cut(&word, max) } else { vec![word] };
+            for chunk in chunks {
+                let cw = chunk.width();
+                if used + cw > max && lines.last().is_some_and(|l| !l.is_empty()) {
+                    lines.push(Vec::new());
+                    used = 0.0;
+                }
+                used += cw;
+                if let Some(line) = lines.last_mut() {
+                    line.push(chunk);
+                }
             }
         }
     }

@@ -5,7 +5,11 @@
 //! and every task-list item knows where its `[ ]` box is, so [`toggle_task`] can tick it in the
 //! text. The syntax is CommonMark with GitHub's tables, strikethrough and task lists. A single
 //! line break inside a paragraph stays a line break, as in Obsidian and most note apps, rather
-//! than becoming a space.
+//! than becoming a space. HTML in the text shows as GitHub and Obsidian show it, not as its
+//! source: `<br>` breaks the line (in a table cell too), `<b>`, `<i>`, `<u>`, `<s>`, `<mark>`,
+//! `<code>` and `<kbd>` style their text, `<a href>` and `<img>` are a link and a picture,
+//! comments are hidden, and an HTML block (`<details>`, `<div>`, `<table>`, `<ul>`, `<h2>`, `<p>`)
+//! becomes the paragraphs, headings, lists and table it holds ([`html`]).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -14,6 +18,9 @@ use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Par
 
 #[cfg(feature = "diagrams")]
 pub mod diagram;
+mod html;
+
+pub use html::img_sources;
 
 /// A block of a document, with the zero-based source line it starts on.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,6 +104,10 @@ pub struct Style {
     pub bold: bool,
     pub italic: bool,
     pub strike: bool,
+    /// Underlined (`<u>`, `<ins>`).
+    pub underline: bool,
+    /// Highlighted (`<mark>`).
+    pub mark: bool,
     pub code: bool,
     /// The run is an image's alternative text (the preview shows no pictures yet).
     pub image: bool,
@@ -202,10 +213,28 @@ struct Builder<'a> {
     bold: u32,
     italic: u32,
     strike: u32,
+    underline: u32,
+    mark: u32,
+    /// `<code>`, `<kbd>` and the like open around the text.
+    code_tags: u32,
     image: u32,
     links: Vec<String>,
     code: Option<(String, String, usize)>,
     table: Option<TableBuild>,
+    /// The HTML tags open that style the text, innermost last.
+    open_tags: Vec<(String, html::Effect)>,
+    /// The `<ul>` and `<ol>` open inside a paragraph or cell: the next item's number in a
+    /// numbered one.
+    leaf_lists: Vec<Option<u64>>,
+    /// An HTML block being read: its text and the line it starts on.
+    html: Option<(String, usize)>,
+    /// While an HTML block is laid out: how many containers were open before it (it closes
+    /// only its own).
+    html_depth: Option<usize>,
+    html_table: Option<html::HtmlTable>,
+    /// The leaf's last run is a line break of the source, which a `<br>` right after it doesn't
+    /// add to.
+    soft: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -220,10 +249,19 @@ impl<'a> Builder<'a> {
             bold: 0,
             italic: 0,
             strike: 0,
+            underline: 0,
+            mark: 0,
+            code_tags: 0,
             image: 0,
             links: Vec::new(),
             code: None,
             table: None,
+            open_tags: Vec::new(),
+            leaf_lists: Vec::new(),
+            html: None,
+            html_depth: None,
+            html_table: None,
+            soft: false,
         }
     }
 
@@ -239,20 +277,32 @@ impl<'a> Builder<'a> {
             Event::Text(t) => {
                 if let Some((_, code, _)) = self.code.as_mut() {
                     code.push_str(&t);
+                } else if let Some((html, _)) = self.html.as_mut() {
+                    // An indented HTML block's indent comes as text.
+                    html.push_str(&t);
                 } else {
                     self.text(&t, false, line);
                 }
             }
             Event::Code(t) => self.text(&t, true, line),
-            Event::InlineMath(t) | Event::DisplayMath(t) | Event::InlineHtml(t) | Event::FootnoteReference(t) => self.text(&t, false, line),
+            Event::InlineMath(t) | Event::DisplayMath(t) | Event::FootnoteReference(t) => self.text(&t, false, line),
+            Event::InlineHtml(t) => self.inline_html(&t, line),
             Event::Html(t) => {
                 if let Some((_, code, _)) = self.code.as_mut() {
                     code.push_str(&t);
+                } else if let Some((html, _)) = self.html.as_mut() {
+                    html.push_str(&t);
                 } else {
-                    self.text(&t, false, line);
+                    self.inline_html(&t, line);
                 }
             }
-            Event::SoftBreak | Event::HardBreak => self.text("\n", false, line),
+            // A `<br>` ending the line has broken it already (GitHub shows one break, not two).
+            Event::SoftBreak if self.spans.last().is_some_and(|s| s.text == "\n") => {}
+            Event::SoftBreak => {
+                self.text("\n", false, line);
+                self.soft = true;
+            }
+            Event::HardBreak => self.text("\n", false, line),
             Event::Rule => {
                 self.flush_implicit();
                 self.push(Block::Rule { line });
@@ -291,7 +341,7 @@ impl<'a> Builder<'a> {
             }
             Tag::HtmlBlock => {
                 self.flush_implicit();
-                self.code = Some((String::new(), String::new(), line));
+                self.html = Some((String::new(), line));
             }
             Tag::List(start) => {
                 self.flush_implicit();
@@ -339,13 +389,13 @@ impl<'a> Builder<'a> {
         match tag {
             TagEnd::Paragraph => {
                 if let Some(Leaf::Paragraph(line)) = self.leaf.take() {
-                    let text = split_fields(std::mem::take(&mut self.spans));
+                    let text = self.take_spans();
                     self.push(Block::Paragraph { text, line });
                 }
             }
             TagEnd::Heading(_) => {
                 if let Some(Leaf::Heading(level, line)) = self.leaf.take() {
-                    let text = split_fields(std::mem::take(&mut self.spans));
+                    let text = self.take_spans();
                     self.push(Block::Heading { level, text, line });
                 }
             }
@@ -355,9 +405,14 @@ impl<'a> Builder<'a> {
                     self.push(Block::Quote { blocks, line });
                 }
             }
-            TagEnd::CodeBlock | TagEnd::HtmlBlock => {
+            TagEnd::CodeBlock => {
                 if let Some((lang, text, line)) = self.code.take() {
                     self.push(Block::Code { lang, text, line });
+                }
+            }
+            TagEnd::HtmlBlock => {
+                if let Some((html, line)) = self.html.take() {
+                    self.html_block(&html, line);
                 }
             }
             TagEnd::List(_) => {
@@ -376,7 +431,7 @@ impl<'a> Builder<'a> {
             }
             TagEnd::TableCell => {
                 self.leaf = None;
-                let cell = split_fields(std::mem::take(&mut self.spans));
+                let cell = self.take_spans();
                 if let Some(t) = self.table.as_mut() {
                     t.row.push(cell);
                 }
@@ -411,28 +466,71 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The look of text added now.
+    fn style(&self, code: bool) -> Style {
+        Style {
+            bold: self.bold > 0,
+            italic: self.italic > 0,
+            strike: self.strike > 0,
+            underline: self.underline > 0,
+            mark: self.mark > 0,
+            code: code || self.code_tags > 0,
+            image: self.image > 0,
+            field: false,
+        }
+    }
+
     /// Adds a run of text to the current leaf, opening an implicit paragraph for the bare text of
-    /// a tight list item.
+    /// a tight list item (or of an HTML block).
     fn text(&mut self, text: &str, code: bool, line: usize) {
+        let brk = text == "\n";
+        // A line starts without the spaces after the `<br>` that broke it.
+        let text = if !code && !brk && self.spans.last().is_some_and(|s| s.text == "\n") { text.trim_start_matches(' ') } else { text };
+        if text.is_empty() {
+            return;
+        }
         if self.leaf.is_none() {
             self.leaf = Some(Leaf::Implicit(line));
         }
-        let style = Style { bold: self.bold > 0, italic: self.italic > 0, strike: self.strike > 0, code, image: self.image > 0, field: false };
+        let style = if brk { Style { code: false, ..self.style(false) } } else { self.style(code) };
         let link = self.links.last().cloned();
         match self.spans.last_mut() {
             Some(last) if last.style == style && last.link == link && text != "\n" && last.text != "\n" => last.text.push_str(text),
             _ => self.spans.push(Span { text: text.to_owned(), style, link }),
         }
+        self.soft = false;
     }
 
     fn flush_implicit(&mut self) {
         if let Some(Leaf::Implicit(line)) = self.leaf {
             self.leaf = None;
-            let text = split_fields(std::mem::take(&mut self.spans));
+            let text = self.take_spans();
             if !text.is_empty() {
                 self.push(Block::Paragraph { text, line });
             }
+        } else if self.leaf.is_none() && self.html_depth.is_none() {
+            // Tags opened in a list item without text (`- <b>`) end with it.
+            self.close_tags();
         }
+    }
+
+    /// The finished leaf's runs: a break or space at its end dropped (a `<br>` closing a
+    /// paragraph adds no line, as in a browser), its fields split out. In Markdown the HTML
+    /// tags left open in a leaf close with it.
+    fn take_spans(&mut self) -> Vec<Span> {
+        if self.html_depth.is_none() {
+            self.close_tags();
+        }
+        self.leaf_lists.clear();
+        let mut spans = std::mem::take(&mut self.spans);
+        while spans.last().is_some_and(|s| !s.style.code && !s.style.image && s.text.trim_matches([' ', '\n']).is_empty()) {
+            spans.pop();
+        }
+        if let Some(last) = spans.last_mut().filter(|s| !s.style.code && !s.style.image) {
+            let end = last.text.trim_end_matches([' ', '\n']).len();
+            last.text.truncate(end);
+        }
+        split_fields(spans)
     }
 
     fn push(&mut self, block: Block) {

@@ -445,6 +445,12 @@ fn styled<'a>(spans: &'a [Span], cx: &Cx, font: FontSpec, color: Color32, width:
         if s.style.strike {
             f.strikethrough = Stroke::new(1.0, color);
         }
+        if s.style.underline {
+            f.underline = Stroke::new(1.0, color);
+        }
+        if s.style.mark {
+            f.background = if t.dark { Color32::from_rgba_unmultiplied(0xE8, 0xC5, 0x2E, 0x50) } else { Color32::from_rgb(0xFF, 0xF1, 0x8C) };
+        }
         let text = if s.style.field && cx.plain_fields {
             format!("{{{{{}}}}}", s.text)
         } else if s.style.field {

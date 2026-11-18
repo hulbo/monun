@@ -133,3 +133,210 @@ fn front_matter_is_left_out_of_the_view() {
     let blocks = parse("본문\n---\n");
     assert!(matches!(blocks.as_slice(), [Block::Heading { level: 2, .. }]), "{blocks:?}");
 }
+
+/// The runs of a table cell joined, line breaks and all.
+fn cell(blocks: &[Block], row: usize, col: usize) -> String {
+    let Some(Block::Table { rows, .. }) = blocks.iter().find(|b| matches!(b, Block::Table { .. })) else { panic!("{blocks:?}") };
+    plain(&rows[row][col])
+}
+
+#[test]
+fn br_breaks_the_line_in_a_table_cell_and_a_paragraph() {
+    let blocks =
+        parse("| 단계 | 하는 일 |\n|---|---|\n| 2 이관 | insert<br>**희리패 행**은 그대로<br/>· 공고 18<BR />· 신청 16 |\n\n첫 줄<br>둘째 줄 <br>\n");
+    assert_eq!(cell(&blocks, 0, 1), "insert\n희리패 행은 그대로\n· 공고 18\n· 신청 16");
+    let Some(Block::Table { rows, .. }) = blocks.first() else { panic!("{blocks:?}") };
+    assert!(rows[0][1].iter().any(|s| s.style.bold && s.text == "희리패 행"));
+    // A break is a run of its own; the paragraph's last one adds no line.
+    let Some(Block::Paragraph { text, .. }) = blocks.get(1) else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "첫 줄\n둘째 줄");
+    assert!(text.iter().any(|s| s.text == "\n"));
+    // A `<br>` at a line's end or start breaks the line once with the source's break, as on
+    // GitHub; two make an empty line.
+    for (source, shown) in
+        [("가<br>\n나", "가\n나"), ("가\n<br>나", "가\n나"), ("가\n<br>\n나", "가\n나"), ("가<br><br>\n나", "가\n\n나"), ("가\n나", "가\n나")]
+    {
+        let blocks = parse(source);
+        let [Block::Paragraph { text, .. }] = blocks.as_slice() else { panic!("{source:?}: {blocks:?}") };
+        assert_eq!(plain(text), shown, "{source:?}");
+    }
+}
+
+#[test]
+fn inline_tags_style_their_text() {
+    let blocks = parse(
+        "<b>굵게</b> <i>기울임</i> <u>밑줄</u> <s>취소</s> <mark>강조</mark> <kbd>Ctrl</kbd>+<code>C</code> <sup>2</sup> <span style=\"color:red\">빨강</span> <a href=\"https://x.kr\">링크</a> <!-- 메모 -->끝",
+    );
+    let Block::Paragraph { text, .. } = &blocks[0] else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "굵게 기울임 밑줄 취소 강조 Ctrl+C 2 빨강 링크 끝");
+    let find = |t: &str| text.iter().find(|s| s.text == t).unwrap_or_else(|| panic!("{t}: {text:?}"));
+    assert!(find("굵게").style.bold);
+    assert!(find("기울임").style.italic);
+    assert!(find("밑줄").style.underline);
+    assert!(find("취소").style.strike);
+    assert!(find("강조").style.mark);
+    assert!(find("Ctrl").style.code && find("C").style.code);
+    assert_eq!(find("링크").link.as_deref(), Some("https://x.kr"));
+    assert!(text.iter().any(|s| s.text.contains("빨강") && s.style == Style::default()));
+    assert!(find(" 끝").link.is_none());
+}
+
+#[test]
+fn a_tag_left_open_ends_with_its_cell() {
+    let blocks = parse("| a | b |\n|---|---|\n| <b>굵게 | 보통 |\n\n<i>기울임\n\n보통\n");
+    let Some(Block::Table { rows, .. }) = blocks.first() else { panic!("{blocks:?}") };
+    assert!(rows[0][0][0].style.bold);
+    assert!(!rows[0][1][0].style.bold);
+    let Some(Block::Paragraph { text, .. }) = blocks.last() else { panic!("{blocks:?}") };
+    assert!(!text[0].style.italic, "{blocks:?}");
+}
+
+#[test]
+fn lists_in_a_cell_become_lines() {
+    let blocks = parse("| 항목 |\n|---|\n| <ul><li>하나</li><li>둘</li></ul> |\n| <ol start=\"3\"><li>셋</li><li>넷</li></ol> |\n");
+    assert_eq!(cell(&blocks, 0, 0), "• 하나\n• 둘");
+    assert_eq!(cell(&blocks, 1, 0), "3. 셋\n4. 넷");
+}
+
+#[test]
+fn comments_are_hidden() {
+    let blocks = parse("<!-- 머리말 메모\n여러 줄 -->\n\n본문 <!-- 안쪽 --> 계속\n\n<!-- 끝 -->\n");
+    let [Block::Paragraph { text, line: 3 }] = blocks.as_slice() else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "본문  계속");
+}
+
+#[test]
+fn html_blocks_become_blocks() {
+    let text = "<div align=\"center\">\n  <h2>제목</h2>\n  <b>굵게</b> 그리고\n  여러   칸<br>둘째 줄\n</div>\n\n<details>\n<summary>펼치기</summary>\n\n본문 **굵게**\n\n</details>\n\n<ul>\n  <li>하나</li>\n  <li>둘<ol><li>안쪽</li></ol></li>\n</ul>\n\n<hr>\n\n<blockquote>인용</blockquote>\n\n<pre>\n  코드\n    줄\n</pre>\n";
+    let blocks = parse(text);
+    let Block::Heading { level: 2, text: title, line: 1 } = &blocks[0] else { panic!("{blocks:?}") };
+    assert_eq!(plain(title), "제목");
+    let Block::Paragraph { text: para, line: 2 } = &blocks[1] else { panic!("{blocks:?}") };
+    assert_eq!(plain(para), "굵게 그리고 여러 칸\n둘째 줄");
+    assert!(para[0].style.bold);
+    let Block::Paragraph { text: summary, line: 7 } = &blocks[2] else { panic!("{blocks:?}") };
+    assert_eq!(plain(summary), "펼치기");
+    assert!(summary.iter().all(|s| s.style.bold));
+    let Block::Paragraph { text: body, .. } = &blocks[3] else { panic!("{blocks:?}") };
+    assert_eq!(plain(body), "본문 굵게");
+    let Block::List { start: None, items, line: 13 } = &blocks[4] else { panic!("{blocks:?}") };
+    assert_eq!(items.len(), 2);
+    assert!(matches!(&items[1].blocks[..], [Block::Paragraph { .. }, Block::List { start: Some(1), .. }]), "{items:?}");
+    assert!(matches!(blocks[5], Block::Rule { line: 18 }));
+    assert!(matches!(&blocks[6], Block::Quote { blocks, .. } if matches!(&blocks[..], [Block::Paragraph { .. }])));
+    let Block::Code { lang, text: code, .. } = &blocks[7] else { panic!("{blocks:?}") };
+    assert_eq!((lang.as_str(), code.as_str()), ("", "  코드\n    줄\n"));
+    assert_eq!(blocks.len(), 8, "{blocks:?}");
+}
+
+#[test]
+fn html_tables_become_tables() {
+    let text = "<table>\n<tr><th>이름</th><th align=\"right\">금액</th></tr>\n<tr><td>가<br>나</td><td style=\"text-align: right\">1,000</td></tr>\n<tr><td><b>합계</b></td><td>&nbsp;</td></tr>\n</table>\n\n<table><tr><td>머리 없음</td><td>둘</td></tr><tr><td>셋</td></tr></table>\n";
+    let blocks = parse(text);
+    let Block::Table { align, head, rows, line: 0 } = &blocks[0] else { panic!("{blocks:?}") };
+    assert_eq!(align, &[Align::None, Align::Right]);
+    assert_eq!(head.iter().map(|c| plain(c)).collect::<Vec<_>>(), ["이름", "금액"]);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(plain(&rows[0][0]), "가\n나");
+    assert!(rows[1][0][0].style.bold);
+    assert_eq!(plain(&rows[1][1]), "\u{a0}");
+    // Without `<th>`, the first row is the header.
+    let Block::Table { head, rows, .. } = &blocks[1] else { panic!("{blocks:?}") };
+    assert_eq!(head.iter().map(|c| plain(c)).collect::<Vec<_>>(), ["머리 없음", "둘"]);
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn html_pictures_and_checkboxes() {
+    let blocks = parse(
+        "<p align=\"center\"><img src=\"pictures/로고.png\" width=\"200\"></p>\n\n<img alt=\"그림\" src='a.png'>\n\n<input type=\"checkbox\" checked> 끝냄 <input type=checkbox> 남음\n",
+    );
+    let Block::Paragraph { text, .. } = &blocks[0] else { panic!("{blocks:?}") };
+    assert!(text.len() == 1 && text[0].style.image && text[0].text == "로고.png" && text[0].link.as_deref() == Some("pictures/로고.png"), "{text:?}");
+    let Block::Paragraph { text, .. } = &blocks[1] else { panic!("{blocks:?}") };
+    assert_eq!((text[0].text.as_str(), text[0].link.as_deref()), ("그림", Some("a.png")));
+    let Block::Paragraph { text, .. } = &blocks[2] else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "☑ 끝냄 ☐ 남음");
+    assert_eq!(img_sources("![x](b.png) <img src=\"a.png\"> <IMG SRC=a.png> <img src=\"c.jpg\">"), ["a.png", "c.jpg"]);
+}
+
+#[test]
+fn what_looks_like_html_but_isnt_stays_text() {
+    let blocks = parse("a < b, 3<4, <기본값>, 화살표 <-- 와 -->\n\n`<br>` 는 코드\n\n```html\n<b>코드 블록</b>\n```\n");
+    let Block::Paragraph { text, .. } = &blocks[0] else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "a < b, 3<4, <기본값>, 화살표 <-- 와 -->");
+    let Block::Paragraph { text, .. } = &blocks[1] else { panic!("{blocks:?}") };
+    assert!(text[0].style.code && text[0].text == "<br>");
+    assert!(matches!(&blocks[2], Block::Code { text, .. } if text == "<b>코드 블록</b>\n"));
+}
+
+#[test]
+fn odd_html_never_panics() {
+    for text in [
+        "<",
+        "</",
+        "<table>",
+        "<table><td>",
+        "</table></tr></td>",
+        "<ul><li>",
+        "</li></ul></ol>",
+        "<li>a</li>",
+        "<blockquote><ul><li>a</blockquote>b</li>",
+        "<table><tr><td><table><tr><td>안</td></tr></table></td></tr></table>",
+        "<pre>",
+        "<script>x",
+        "<!--",
+        "<a href=\"x\"><a href=\"y\">a</a>",
+        "> <div>\n> <b>인용 안",
+        "- <ul>\n  <li>목록 안",
+        "| <table> |\n|---|\n| </td> |",
+        "<h7>x</h7><h0>",
+        "<img>",
+        "<b></b></b></i>",
+        "<details><summary></summary></details>",
+    ] {
+        let _ = parse(text);
+    }
+}
+
+#[test]
+fn html_blocks_cut_by_a_blank_line_leave_no_empty_blocks() {
+    // GitHub's way of putting Markdown in a table cell or list item: the HTML around it ends at
+    // the blank line, and the Markdown shows as itself.
+    for (text, at) in [("<table>\n<tr>\n<td>\n\n**본문**\n\n</td>\n</tr>\n</table>\n", 4), ("<ul>\n<li>\n\n**본문**\n\n</li>\n</ul>\n", 3)] {
+        let blocks = parse(text);
+        let [Block::Paragraph { text: body, line }] = blocks.as_slice() else { panic!("{text:?}: {blocks:?}") };
+        assert_eq!((plain(body).as_str(), *line), ("본문", at));
+    }
+}
+
+#[test]
+fn html_block_paragraphs_know_their_line() {
+    let blocks = parse("<div>\n본문\n</div>\n\n<details>\n<summary>요약</summary>\n\n내용\n\n</details>\n");
+    assert!(matches!(&blocks[0], Block::Paragraph { line: 1, .. }), "{blocks:?}");
+    assert!(matches!(&blocks[1], Block::Paragraph { line: 5, .. }), "{blocks:?}");
+}
+
+#[test]
+fn an_indented_html_block_starts_without_spaces() {
+    let blocks = parse("  <span>\n  글\n  </span>\n");
+    let [Block::Paragraph { text, .. }] = blocks.as_slice() else { panic!("{blocks:?}") };
+    assert_eq!(plain(text), "글");
+}
+
+#[test]
+fn tags_in_an_item_without_text_end_with_it() {
+    let blocks = parse("- <b><i>\n- 다음\n");
+    let Some(Block::List { items, .. }) = blocks.first() else { panic!("{blocks:?}") };
+    let Some(Block::Paragraph { text, .. }) = items.get(1).and_then(|i| i.blocks.first()) else { panic!("{items:?}") };
+    assert_eq!(text[0].style, Style::default());
+}
+
+#[test]
+fn many_ampersands_read_quickly() {
+    let text = format!("<img src=\"a.png\">\n\n{}", "R&D ".repeat(50_000));
+    let started = std::time::Instant::now();
+    assert_eq!(img_sources(&text), ["a.png"]);
+    let _ = parse(&text);
+    assert!(started.elapsed().as_secs_f32() < 2.0, "{:?}", started.elapsed());
+}
