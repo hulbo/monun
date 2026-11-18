@@ -172,6 +172,39 @@ fn view_text_selects_with_a_drag_and_copies() {
 }
 
 #[test]
+fn a_code_block_copies_its_code_with_its_button() {
+    let code = "SELECT ID, NAME
+  FROM T -- a very long line that wraps in a narrow window and still copies as one line
+ WHERE ID = 1;";
+    let mut h = with_document(&format!(
+        "Query:
+
+```sql
+{code}
+```
+"
+    ));
+    h.run_steps(2);
+    // The code's text is as written (in the language's colours).
+    assert!(h.query_by_label_contains("SELECT ID, NAME").is_some());
+    h.get_by_label("Copy code").click();
+    h.run_steps(1);
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copied, [code.to_string()]);
+    h.run_steps(1);
+    assert!(h.query_by_label("Copied").is_some(), "it says it copied");
+}
+
+#[test]
 fn fields_show_cell_values_and_follow_them() {
     let mut s = blank_session();
     s.run("cell.set", json!({"cell": "A1", "input": "30000"})).unwrap();

@@ -1,10 +1,14 @@
 //! A small code editor: monospace text with syntax colours, Tab to indent, Enter that keeps the
 //! indentation, and a scroll area that follows the caret. It colours Python (for code in cells,
 //! where `xl()` reads the sheet), LaTeX (for equation source) and SQL (for .sql files, in the
-//! document editor, see [`sql`]); reached as `widgets::code_editor`. The tokenizer and the key
-//! edits are pure functions, tested below.
+//! document editor, see [`sql`]); reached as `widgets::code_editor`. A Markdown code block's
+//! language (```` ```java ````) picks its colours too ([`lang_of`], [`langs`]). The tokenizer and
+//! the key edits are pure functions, tested below.
 
+mod langs;
 mod sql;
+
+pub use langs::lang_of;
 
 use std::ops::Range;
 
@@ -19,6 +23,25 @@ pub enum Lang {
     Python,
     Latex,
     Sql,
+    /// Java, Scala and Groovy.
+    Java,
+    Kotlin,
+    /// JavaScript and TypeScript (and Swift, Dart, PHP, read alike).
+    Script,
+    /// C, C++ and Objective-C.
+    C,
+    CSharp,
+    Go,
+    Rust,
+    Json,
+    /// XML and HTML.
+    Markup,
+    /// YAML, TOML, INI and properties files.
+    Config,
+    /// Shell, PowerShell and batch scripts, Dockerfiles and makefiles.
+    Shell,
+    Css,
+    Diff,
     Plain,
 }
 
@@ -80,6 +103,7 @@ pub fn highlight(text: &str, lang: Lang) -> Vec<(Range<usize>, Token)> {
         Lang::Latex => latex(text),
         Lang::Sql => sql::sql(text),
         Lang::Plain => Vec::new(),
+        other => langs::highlight(text, other),
     }
 }
 
@@ -216,6 +240,16 @@ pub fn font() -> FontId {
 /// section but the one of an empty text.
 pub fn layout_job(text: &str, lang: Lang, font: &FontId, plain: egui::Color32, syntax: &Syntax, wrap_width: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
+    append(&mut job, text, lang, font, plain, syntax);
+    if job.sections.is_empty() {
+        job.append("", 0.0, egui::TextFormat::simple(font.clone(), plain));
+    }
+    job.wrap.max_width = wrap_width;
+    job
+}
+
+/// Adds `text` to `job` with syntax colours, every byte of it, in no empty section.
+pub fn append(job: &mut egui::text::LayoutJob, text: &str, lang: Lang, font: &FontId, plain: egui::Color32, syntax: &Syntax) {
     let put = |job: &mut egui::text::LayoutJob, s: &str, color: egui::Color32| {
         if !s.is_empty() {
             job.append(s, 0.0, egui::TextFormat::simple(font.clone(), color));
@@ -227,17 +261,12 @@ pub fn layout_job(text: &str, lang: Lang, font: &FontId, plain: egui::Color32, s
             continue;
         }
         if let (Some(before), Some(span)) = (text.get(pos..range.start), text.get(range.clone())) {
-            put(&mut job, before, plain);
-            put(&mut job, span, color(syntax, token));
+            put(job, before, plain);
+            put(job, span, color(syntax, token));
             pos = range.end;
         }
     }
-    put(&mut job, text.get(pos..).unwrap_or(""), plain);
-    if job.sections.is_empty() {
-        job.append("", 0.0, egui::TextFormat::simple(font.clone(), plain));
-    }
-    job.wrap.max_width = wrap_width;
-    job
+    put(job, text.get(pos..).unwrap_or(""), plain);
 }
 
 fn byte_of(text: &str, char_index: usize) -> usize {

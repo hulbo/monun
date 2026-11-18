@@ -1965,6 +1965,8 @@ const MORE: &[(&str, &str)] = &[
     ("The line breaks the file is saved with: CRLF (Windows) or LF", "저장할 때 쓰는 줄바꿈: CRLF(Windows) 또는 LF"),
     ("Only PNG and JPEG pictures can be put in a document.", "문서에는 PNG와 JPEG 그림만 넣을 수 있습니다."),
     ("Insert Picture", "그림 넣기"),
+    ("Copy code", "코드 복사"),
+    ("Copied", "복사됨"),
     ("Default group", "기본 그룹"),
     ("These files of the group could not be opened, so they were taken out of it:", "그룹의 다음 파일을 열지 못해 그룹에서 뺐습니다:"),
     ("Type a name for the group.", "그룹 이름을 입력하세요."),

@@ -884,15 +884,28 @@ pub fn markdown_job(text: &str, font: &FontId, c: &Colors, wrap: f32) -> LayoutJ
             job.append(s, 0.0, TextFormat::simple(font.clone(), color));
         }
     };
-    let mut fence = false;
+    // An open code block: its language (`sql`, `java`…) and where its code starts. Its code is
+    // coloured as that language reads, once the block closes (or the text ends).
+    let mut fence: Option<(Lang, usize)> = None;
+    let mut at = 0;
+    let code = |job: &mut LayoutJob, (lang, from): (Lang, usize), to: usize| {
+        if let Some(s) = text.get(from..to) {
+            code_editor::append(job, s, lang, font, c.text, &c.syntax);
+        }
+    };
     for line in text.split_inclusive('\n') {
         let body = line.trim_end_matches(['\n', '\r']);
         let lead = body.trim_start();
+        let here = at;
+        at += line.len();
         if lead.starts_with("```") || lead.starts_with("~~~") {
+            match fence.take() {
+                Some(open) => code(&mut job, open, here),
+                None => fence = Some((code_editor::lang_of(lead.trim_start_matches(['`', '~']).split_whitespace().next().unwrap_or("")), at)),
+            }
             put(&mut job, line, c.code);
-            fence = !fence;
-        } else if fence {
-            put(&mut job, line, c.code);
+        } else if fence.is_some() {
+            continue;
         } else if lead.starts_with('#') && lead.trim_start_matches('#').starts_with([' ', '\t']) {
             put(&mut job, line, c.heading);
         } else if lead.starts_with('>') {
@@ -903,6 +916,9 @@ pub fn markdown_job(text: &str, font: &FontId, c: &Colors, wrap: f32) -> LayoutJ
             put(&mut job, head, c.mark);
             inline(&mut job, rest, font, c);
         }
+    }
+    if let Some(open) = fence {
+        code(&mut job, open, text.len());
     }
     if job.sections.is_empty() {
         job.append("", 0.0, TextFormat::simple(font.clone(), c.text));

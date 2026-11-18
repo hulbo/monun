@@ -306,22 +306,54 @@ fn code(ui: &mut Ui, lang: &str, text: &str, line: usize, cx: &Cx, out: &mut Out
     let t = cx.t;
     let font = FontId::new(13.5 * cx.z, FontFamily::Name(theme::MONO.into()));
     let fill = if t.dark { Color32::from_white_alpha(14) } else { Color32::from_black_alpha(10) };
-    let resp = egui::Frame::new()
-        .fill(fill)
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::same((10.0 * cx.z).round() as i8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if !lang.is_empty() {
-                ui.label(egui::RichText::new(lang).font(theme::ui_font(11.0 * cx.z)).color(t.text_dim));
-            }
-            let mut job = LayoutJob::simple(text.trim_end_matches('\n').to_owned(), font, t.text, ui.available_width());
-            job.wrap.max_width = ui.available_width();
-            ui.label(job);
+    let code = text.trim_end_matches('\n');
+    // The block's clicks (a double-click, Add Memo) are under its text and Copy button, which
+    // take theirs first.
+    let resp = ui
+        .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+            egui::Frame::new().fill(fill).corner_radius(6.0).inner_margin(egui::Margin::same((10.0 * cx.z).round() as i8)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                code_head(ui, lang, code, line, cx);
+                // Coloured as the language it names reads (`sql`, `java`, `json`…), in the theme's
+                // colours.
+                let job = crate::code_editor::layout_job(code, crate::code_editor::lang_of(lang), &font, t.text, &t.syntax, ui.available_width());
+                ui.add(egui::Label::new(job).selectable(true));
+            });
         })
-        .response
-        .interact(Sense::click());
+        .response;
     clicks(&resp, line, cx, out);
+}
+
+/// How long a code block's Copy button says it copied.
+const COPIED_FOR: f64 = 1.5;
+
+/// A code block's head: its language's name, and Copy, which puts its code on the clipboard (as
+/// it is written, whatever the wrapping) and says so for a moment.
+fn code_head(ui: &mut Ui, lang: &str, code: &str, line: usize, cx: &Cx) {
+    let t = cx.t;
+    let copied_id = egui::Id::unique(("monun.code_copied", cx.doc, line));
+    let now = ui.input(|i| i.time);
+    let copied = ui.data(|d| d.get_temp::<f64>(copied_id)).is_some_and(|at| now - at < COPIED_FOR);
+    ui.horizontal(|ui| {
+        ui.set_height(22.0 * cx.z);
+        if !lang.is_empty() {
+            ui.label(egui::RichText::new(lang).font(theme::ui_font(11.0 * cx.z)).color(t.text_dim));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (icon, tip) = if copied { (crate::icons::Icon::Check, "Copied") } else { (crate::icons::Icon::Copy, "Copy code") };
+            let b = crate::widgets::icon_button(ui, icon, if copied { t.accent } else { t.text_dim }, tip, vec2(24.0, 22.0) * cx.z);
+            let name = cx.lang.tr("Copy code");
+            b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+            if copied {
+                ui.label(egui::RichText::new(cx.lang.tr("Copied")).font(theme::ui_font(11.0 * cx.z)).color(t.accent));
+            }
+            if b.clicked() {
+                ui.ctx().copy_text(code.to_owned());
+                ui.data_mut(|d| d.insert_temp(copied_id, now));
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(COPIED_FOR + 0.05));
+            }
+        });
+    });
 }
 
 /// A table with its lines drawn: the header row shaded, bold and centred, the other rows aligned
