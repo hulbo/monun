@@ -20,6 +20,7 @@ pub mod doc_view;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_windows;
 pub mod editor;
+pub mod file_history;
 pub mod file_tabs;
 mod floating_pictures;
 pub mod fonts;
@@ -481,6 +482,8 @@ pub struct SheetApp {
     /// Where the tucked group panel's handle stands this frame ([`panes::show`], before the files
     /// are drawn): the files' vertical scroll bars start below it ([`panes::below_handle`]).
     pub(crate) group_handle: Option<egui::Rect>,
+    /// The files that were in front, for the mouse's Back and Forward buttons ([`file_history`]).
+    pub(crate) history: file_history::History,
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,

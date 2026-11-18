@@ -11,6 +11,10 @@
 //!
 //! Sign-ins and cookies are kept in `%LOCALAPPDATA%\Monun\WebView2`; a test run keeps its own in
 //! a folder of its own, removed at its end.
+//!
+//! The mouse's Back and Forward buttons go through the page's own pages ([`STEPS`]); once there is
+//! none left that way, the page passes the button on and the app goes to the file before or after
+//! ([`monun_ui_egui::file_history`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -27,14 +31,43 @@ use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBu
 /// The window class of the window `wry` hosts a view in.
 const CONTAINER: &str = "WRY_WEBVIEW";
 
-/// What a page's handlers saw since the last frame: its title, whether it is loading, and the
-/// addresses it asked to open in a window of their own.
+/// What a page's handlers saw since the last frame: its title, whether it is loading, the
+/// addresses it asked to open in a window of their own, and the mouse's Back (`true`) and Forward
+/// buttons it passed on.
 #[derive(Default)]
 struct Seen {
     title: String,
     loading: bool,
     opened: Vec<String>,
+    steps: Vec<bool>,
 }
+
+/// Run in each page as it loads: the mouse's Back and Forward buttons (3 and 4) go back or forward
+/// in the page's own pages, and when the page is still where it was a moment later (none left that
+/// way), it tells the app by asking to go to [`STEP`]`back` (or `forward`), which the app turns
+/// down. (`wry`'s `ipc` drops a message from a `file://` page, whose address `http::Uri` can't
+/// read: local HTML files and presentations are such pages.) A page that goes leaves no timer
+/// behind.
+const STEPS: &str = r#"(() => {
+  if (window.__monunSteps) return;
+  window.__monunSteps = true;
+  let wait = 0;
+  addEventListener('pagehide', () => clearTimeout(wait));
+  addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    const back = e.button === 3, at = location.href;
+    clearTimeout(wait);
+    if (back) history.back(); else history.forward();
+    wait = setTimeout(() => {
+      if (location.href === at) location.href = 'https://monun.invalid/step/' + (back ? 'back' : 'forward');
+    }, 400);
+  }, true);
+})();"#;
+
+/// Where a page asks to go to pass the mouse's Back or Forward button on (`.invalid` is never a
+/// real site, should one ever not be turned down).
+const STEP: &str = "https://monun.invalid/step/";
 
 /// A page shown: its view, the address it was given, where it is (or hidden), and what it did.
 struct View {
@@ -132,6 +165,15 @@ impl Web {
                 }
             }
         }
+        // The buttons a page in front passed on, for the files.
+        for (id, view) in &self.views {
+            let steps = view.seen.try_borrow_mut().map(|mut seen| std::mem::take(&mut seen.steps)).unwrap_or_default();
+            if !steps.is_empty() && state.panes.iter().any(|p| p.id == *id && p.rect.is_some()) {
+                state.file_steps.extend(steps);
+                // Taken in the next frame's logic: one is drawn now, not at the next input.
+                ctx.request_repaint();
+            }
+        }
         for (id, order) in state.orders.drain(..) {
             let Some(view) = self.views.get(&id) else { continue };
             let _ = match order {
@@ -222,10 +264,25 @@ fn build(
     seen: &Rc<RefCell<Seen>>,
     ctx: &egui::Context,
 ) -> Result<WebView, String> {
-    let (title, load, open) = (Rc::clone(seen), Rc::clone(seen), Rc::clone(seen));
-    let (c1, c2, c3) = (ctx.clone(), ctx.clone(), ctx.clone());
+    let (title, load, open, steps) = (Rc::clone(seen), Rc::clone(seen), Rc::clone(seen), Rc::clone(seen));
+    let (c1, c2, c3, c4) = (ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone());
     WebViewBuilder::new_with_web_context(context)
         .with_url(url)
+        .with_initialization_script(STEPS)
+        // A page passing the mouse's Back or Forward button on ([`STEPS`]) goes nowhere.
+        .with_navigation_handler(move |to| {
+            let back = match to.strip_prefix(STEP) {
+                Some("back") => true,
+                Some("forward") => false,
+                Some(_) => return false,
+                None => return true,
+            };
+            if let Ok(mut s) = steps.try_borrow_mut() {
+                s.steps.push(back);
+            }
+            c4.request_repaint();
+            false
+        })
         .with_bounds(bounds(rect.unwrap_or([0, 0, 1, 1])))
         .with_visible(rect.is_some())
         .with_focused(false)

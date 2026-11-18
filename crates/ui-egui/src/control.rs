@@ -5,7 +5,8 @@
 //! - `engine.commands {search?}` — every command with enablement and params docs
 //! - `document.inspect`, `sheet.read {range?}`, `cell.get {cell?}` — read state
 //! - `ui.inspect` — UI state (ribbon tab, editor, dialog, grid geometry, perf)
-//! - `ui.click {x, y, button?, count?, shift?, cmd?, alt?}`, `ui.drag {x, y, toX, toY}`,
+//! - `ui.click {x, y, button?, count?, shift?, cmd?, alt?}` (`button`: `right`, or the mouse's
+//!   `back` and `forward`), `ui.drag {x, y, toX, toY}`,
 //!   `ui.move {x, y}`, `ui.wheel {x, y, dy?, dx?, ctrl?, shift?}` (lines, +dy turned away: up, or
 //!   zoom in with Ctrl) — real pointer input in window points
 //! - `ui.cell.click {cell}`, `ui.cell.drag {from, to}` — pointer input on a cell's centre
@@ -373,7 +374,12 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
             }
         }
         "ui.click" => {
-            let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
+            let button = match s("button") {
+                Some("right") => egui::PointerButton::Secondary,
+                Some("back") => egui::PointerButton::Extra1,
+                Some("forward") => egui::PointerButton::Extra2,
+                _ => egui::PointerButton::Primary,
+            };
             let count = p.get("count").and_then(Json::as_u64).unwrap_or(1).min(u64::from(u32::MAX)) as u32;
             match push_click(app, egui::pos2(f("x"), f("y")), button, count, modifiers(p)) {
                 Ok(()) => ok(Json::Null),

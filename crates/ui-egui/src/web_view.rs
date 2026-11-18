@@ -89,6 +89,9 @@ pub struct State {
     pub orders: Vec<(u64, Order)>,
     /// What the app last reported of each page.
     pub pages: HashMap<u64, Page>,
+    /// The mouse's Back (`true`) and Forward buttons pressed on a page with no page of its own
+    /// left that way, which the app passes on to the files ([`crate::file_history`]).
+    pub file_steps: Vec<bool>,
     tabs: HashMap<u64, Tab>,
     /// The page in front this frame and where it goes (points), for [`settle`] to cut what floats
     /// over it out of it.

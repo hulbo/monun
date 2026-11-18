@@ -655,3 +655,71 @@ fn in_a_narrow_window_the_title_bar_keeps_the_group_and_the_tabs_wait_in_a_list(
     assert_eq!(h.state().ui.ribbon_tab, "Automate", "a tab picked from the list shows its commands");
     assert!(h.query_by_label("More tabs").is_some(), "the active tab shows in the bar, the others wait");
 }
+
+/// The title of the file in front.
+fn front_title(h: &egui_kittest::Harness<'static, SheetApp>) -> String {
+    let s = &h.state().session;
+    s.active_window().and_then(|w| s.window_title(w)).unwrap_or_default()
+}
+
+/// Presses and lets go of the mouse's Back (`Extra1`) or Forward (`Extra2`) button over the window.
+fn mouse_button(h: &mut egui_kittest::Harness<'static, SheetApp>, button: egui::PointerButton) {
+    let pos = egui::pos2(500.0, 400.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(pos));
+    h.input_mut().events.push(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.input_mut().events.push(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+}
+
+#[test]
+fn the_mouse_back_and_forward_buttons_go_between_the_files_that_were_in_front() {
+    use egui::PointerButton::{Extra1 as Back, Extra2 as Forward};
+    let mut h = harness(Session::new());
+    let mut titles = Vec::new();
+    for _ in 0..3 {
+        h.state_mut().run("file.new", json!({"document": true})).unwrap();
+        h.run_steps(2);
+        titles.push(front_title(&h));
+    }
+    let [a, b, c] = [titles[0].clone(), titles[1].clone(), titles[2].clone()];
+    mouse_button(&mut h, Back);
+    assert_eq!(front_title(&h), b);
+    mouse_button(&mut h, Back);
+    assert_eq!(front_title(&h), a);
+    // Nothing before the first: it stays.
+    mouse_button(&mut h, Back);
+    assert_eq!(front_title(&h), a);
+    mouse_button(&mut h, Forward);
+    assert_eq!(front_title(&h), b);
+    // Bringing another file forward (here from the group panel) clears the way forward.
+    h.get_by_label(&c).click();
+    h.run_steps(3);
+    assert_eq!(front_title(&h), c);
+    mouse_button(&mut h, Forward);
+    assert_eq!(front_title(&h), c);
+    mouse_button(&mut h, Back);
+    assert_eq!(front_title(&h), b);
+    // A file closed is passed over: closing B, the way back is A.
+    h.state_mut().run("file.close", json!({"document": true})).unwrap();
+    h.run_steps(3);
+    assert_ne!(front_title(&h), b);
+    mouse_button(&mut h, Back);
+    assert_eq!(front_title(&h), a);
+}
+
+#[test]
+fn a_web_page_with_no_page_left_passes_the_back_button_to_the_files() {
+    let mut h = harness(Session::new());
+    for _ in 0..2 {
+        h.state_mut().run("file.new", json!({"document": true})).unwrap();
+        h.run_steps(2);
+    }
+    let second = front_title(&h);
+    h.state_mut().run("file.new", json!({"document": true})).unwrap();
+    h.run_steps(2);
+    // What the desktop app's page reports.
+    h.state_mut().web.file_steps.push(true);
+    h.run_steps(2);
+    assert_eq!(front_title(&h), second);
+    assert!(h.state().web.file_steps.is_empty());
+}

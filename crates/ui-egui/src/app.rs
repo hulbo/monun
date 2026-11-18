@@ -94,6 +94,7 @@ impl SheetApp {
             file_tabs: false,
             group_peek: None,
             group_handle: None,
+            history: Default::default(),
             groups_frozen: false,
             project_loaded: None,
             root_memos: None,
@@ -182,6 +183,9 @@ impl SheetApp {
         // The group in use follows its tabs.
         if self.file_tabs {
             crate::groups::sync(self);
+            // The mouse's Back and Forward buttons go between the files that were in front.
+            crate::file_history::input(self, ctx);
+            crate::file_history::track(self);
         }
     }
 

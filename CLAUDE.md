@@ -34,7 +34,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   menu it opened or a drag is on it (`SheetApp::group_peek`), and its pin keeps it shown again as
   it was.
   Another pane shows in the group panel's place while open. Tests:
-  `common::app` turns the group panel off; a test of it turns it on.
+  `common::app` turns the group panel off; a test of it turns it on. The mouse's Back and Forward
+  buttons go between the windows that were in front (`file_history`); a web page goes through its
+  own pages first and passes the button on (`web_view::State::file_steps`, from a script in
+  `apps/monun/src/web.rs`).
 - Document security (DRM, such as the Fasoo agent) decrypts a file only as one of the
   programs it has a module for (Excel, Hancom, Acrobat, Notepad…) reads it, so a protected file is
   refused (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. A
