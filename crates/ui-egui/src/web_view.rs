@@ -362,7 +362,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     } else {
         web_strip(app, ui, &t, uid, (&address, &page));
     }
-    let area = ui.available_rect_before_wrap();
+    // Beside the tucked group panel's handle, which would cover the page's scroll bar.
+    let area = crate::panes::beside_handle(app.group_handle, ui.available_rect_before_wrap());
     ui.allocate_rect(area, Sense::hover());
     // A line in the middle of the tab instead of the page, read out as any label is.
     let note = |ui: &mut Ui, text: &str| {

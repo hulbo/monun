@@ -27,8 +27,9 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   files have no bottom bar. Its title strip tucks it into the window's edge
   (`UiState::group_tucked`, `panes::tucked`): a handle floats over the files there (an egui `Area`,
   so a web page has it cut out; `SheetApp::group_handle` is where it stands, and the sheet's and
-  the documents' vertical scroll bars start below it, `panes::below_handle`, though a web page's
-  own can't); under the pointer the panel slides out over the files as a card
+  the documents' vertical scroll bars start below it, `panes::below_handle`; a web page, whose
+  scroll bar is its own, leaves the handle's strip by the edge, `panes::beside_handle`. The handle
+  itself never moves for a kind of file); under the pointer the panel slides out over the files as a card
   as tall as what it holds (`panes::slid_out`, the layer's look) and stays while the pointer, a
   menu it opened or a drag is on it (`SheetApp::group_peek`), and its pin keeps it shown again as
   it was.

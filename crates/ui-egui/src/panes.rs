@@ -91,6 +91,20 @@ pub(crate) fn scroll_bars_below(handle: Option<egui::Rect>, outer: egui::Rect) -
     below_handle(handle, outer, BAR_STRIP)
 }
 
+/// A web page's room (`area`) clear of the tucked group panel's handle: a web view draws its own
+/// scroll bar, which can't start below the handle as the others do, so the page leaves the
+/// handle's strip by the edge instead. The handle stays where it is in every kind of file.
+pub(crate) fn beside_handle(handle: Option<egui::Rect>, area: egui::Rect) -> egui::Rect {
+    let Some(h) = handle.filter(|h| h.intersects(area)) else { return area };
+    let mut room = area;
+    if h.center().x > area.center().x {
+        room.max.x = (h.left() - HANDLE_GAP).max(area.left());
+    } else {
+        room.min.x = (h.right() + HANDLE_GAP).min(area.right());
+    }
+    room
+}
+
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
 /// layer's corner.
 fn tuck_left(app: &SheetApp) -> bool {
@@ -874,5 +888,18 @@ mod tests {
         // A handle below the area.
         let below = handle.translate(egui::vec2(0.0, area.height() + 20.0));
         assert_eq!(scroll_bars_below(Some(below), area), None);
+    }
+
+    #[test]
+    fn a_web_page_leaves_the_handle_its_strip() {
+        use super::beside_handle;
+        let (area, handle) = area_and_handle();
+        let room = beside_handle(Some(handle), area);
+        assert_eq!((room.left(), room.right()), (area.left(), handle.left() - HANDLE_GAP));
+        assert_eq!((room.top(), room.bottom()), (area.top(), area.bottom()));
+        assert_eq!(beside_handle(None, area), area);
+        // By the left edge, the page starts beside it.
+        let left = handle.translate(egui::vec2(area.left() + HANDLE_GAP - handle.left(), 0.0));
+        assert_eq!(beside_handle(Some(left), area).left(), left.right() + HANDLE_GAP);
     }
 }
