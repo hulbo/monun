@@ -2,7 +2,8 @@
 //! and Forward buttons bring the file that was in front before (or after) to the front again, so a
 //! document read a moment ago is a click away without the group panel. A web page goes back
 //! through its own pages first and passes the button on once it has none left that way
-//! ([`crate::web_view::State::file_steps`]).
+//! ([`crate::web_view::State::file_steps`]); so does a button pressed on its tab's tool bar
+//! ([`crate::web_view::Order::Step`]).
 //!
 //! The history is of the open windows: one that has closed (its file closed, the group changed) is
 //! passed over.
@@ -40,14 +41,21 @@ pub(crate) fn track(app: &mut SheetApp) {
 }
 
 /// The mouse's Back and Forward buttons anywhere in the window, and those a web page passed on.
+/// On a web tab's tool bar (its address line) they go to the page first, as on the page itself.
 pub(crate) fn input(app: &mut SheetApp, ctx: &egui::Context) {
-    let (back, forward) = ctx.input(|i| (i.pointer.button_pressed(PointerButton::Extra1), i.pointer.button_pressed(PointerButton::Extra2)));
+    let (back, forward, pos) =
+        ctx.input(|i| (i.pointer.button_pressed(PointerButton::Extra1), i.pointer.button_pressed(PointerButton::Extra2), i.pointer.interact_pos()));
     let mut steps: Vec<bool> = std::mem::take(&mut app.web.file_steps);
-    if back {
-        steps.push(true);
-    }
-    if forward {
-        steps.push(false);
+    // A menu or the group panel floating over the tab is the app's, not the page's.
+    let floating = pos.and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.order != egui::Order::Background);
+    for (pressed, way) in [(back, true), (forward, false)] {
+        if !pressed {
+            continue;
+        }
+        match crate::web_view::page_at(app, pos.filter(|_| !floating)) {
+            Some(uid) => app.web.orders.push((uid, crate::web_view::Order::Step { back: way })),
+            None => steps.push(way),
+        }
     }
     for back in steps {
         step(app, back);

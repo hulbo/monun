@@ -42,28 +42,37 @@ struct Seen {
     steps: Vec<bool>,
 }
 
-/// Run in each page as it loads: the mouse's Back and Forward buttons (3 and 4) go back or forward
-/// in the page's own pages, and when the page is still where it was a moment later (none left that
-/// way), it tells the app by asking to go to [`STEP`]`back` (or `forward`), which the app turns
-/// down. (`wry`'s `ipc` drops a message from a `file://` page, whose address `http::Uri` can't
-/// read: local HTML files and presentations are such pages.) A page that goes leaves no timer
-/// behind.
+/// Run in each page as it loads: the mouse's Back and Forward buttons (3 and 4), on the page or
+/// on its tab's tool bar ([`Order::Step`], through `__monunStep`), go back or forward in the
+/// page's own pages, and when the page is still where it was a moment later (none left that way),
+/// it tells the app by asking to go to [`STEP`]`back` (or `forward`), which the app turns down.
+/// (`wry`'s `ipc` drops a message from a `file://` page, whose address `http::Uri` can't read:
+/// local HTML files and presentations are such pages.) A page that goes leaves no timer behind.
 const STEPS: &str = r#"(() => {
-  if (window.__monunSteps) return;
-  window.__monunSteps = true;
+  if (window.__monunStep) return;
   let wait = 0;
   addEventListener('pagehide', () => clearTimeout(wait));
-  addEventListener('mouseup', (e) => {
-    if (e.button !== 3 && e.button !== 4) return;
-    e.preventDefault();
-    const back = e.button === 3, at = location.href;
+  window.__monunStep = (back) => {
+    const at = location.href;
     clearTimeout(wait);
     if (back) history.back(); else history.forward();
     wait = setTimeout(() => {
       if (location.href === at) location.href = 'https://monun.invalid/step/' + (back ? 'back' : 'forward');
     }, 400);
+  };
+  addEventListener('mouseup', (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    window.__monunStep(e.button === 3);
   }, true);
 })();"#;
+
+/// What the tab's tool bar runs in the page for the mouse's Back (`true`) or Forward button: as
+/// [`STEPS`] does on the page, or (a page without it, not loaded yet) straight on to the files.
+fn step_script(back: bool) -> String {
+    let way = if back { "back" } else { "forward" };
+    format!("if (window.__monunStep) window.__monunStep({back}); else location.href = '{STEP}{way}';")
+}
 
 /// Where a page asks to go to pass the mouse's Back or Forward button on (`.invalid` is never a
 /// real site, should one ever not be turned down).
@@ -180,6 +189,7 @@ impl Web {
                 Order::Back => view.webview.evaluate_script("history.back()"),
                 Order::Forward => view.webview.evaluate_script("history.forward()"),
                 Order::Reload => view.webview.reload(),
+                Order::Step { back } => view.webview.evaluate_script(&step_script(back)),
             };
         }
         state.pages.clear();

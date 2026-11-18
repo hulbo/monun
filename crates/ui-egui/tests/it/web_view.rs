@@ -222,3 +222,49 @@ fn the_group_panel_floats_over_the_page() {
     assert!(p.rect.is_some_and(|r| r[2] > 1150) && p.holes.is_empty(), "{:?}", p);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Presses and lets go of the mouse's Back button (`Extra1`) at `pos`.
+fn mouse_back(h: &mut Harness, pos: egui::Pos2) {
+    h.input_mut().events.push(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Extra1, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    h.run_steps(3);
+}
+
+#[test]
+fn the_mouse_back_button_on_the_tool_bar_goes_back_in_the_page() {
+    let dir = temp_dir("back");
+    let (notes, page) = (dir.join("notes.md"), dir.join("page.html"));
+    std::fs::write(&notes, "# Notes\n").unwrap();
+    std::fs::write(&page, "<html><body>page</body></html>").unwrap();
+    let mut app = crate::common::app(Session::new());
+    app.use_file_tabs();
+    for path in [&notes, &page] {
+        app.run("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    }
+    let mut h = harness(app);
+    h.state_mut().web.host = Some(Ok(()));
+    h.run_steps(2);
+    let web = h.state().session.active().unwrap().uid;
+    let title = |h: &Harness| h.state().session.active().map(|d| d.display_title()).unwrap_or_default();
+    // Back to the notes and to the page again, so the page has a file before it.
+    let windows: Vec<u64> = h.state().session.windows().iter().map(|w| w.id).collect();
+    h.state_mut().run("window.activate", json!({"window": windows[0]})).unwrap();
+    h.run_steps(2);
+    let notes_title = title(&h);
+    h.state_mut().run("window.activate", json!({"window": windows[1]})).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().uid, web);
+    let address = h.get_by_label("Open in Browser").rect();
+    // On the tool bar (the address line), the button goes to the page, which goes back in its own
+    // pages first.
+    h.state_mut().web.orders.clear();
+    mouse_back(&mut h, egui::pos2(400.0, address.center().y));
+    assert_eq!(h.state().web.orders.last(), Some(&(web, Order::Step { back: true })));
+    assert_eq!(h.state().session.active().unwrap().uid, web, "the page's tab stays in front");
+    // Off the tab (the title bar), it goes to the file before.
+    mouse_back(&mut h, egui::pos2(400.0, 10.0));
+    assert_eq!(title(&h), notes_title);
+    let _ = std::fs::remove_dir_all(&dir);
+}

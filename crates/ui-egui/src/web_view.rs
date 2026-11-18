@@ -65,6 +65,11 @@ pub enum Order {
     Back,
     Forward,
     Reload,
+    /// The mouse's Back (`back`) or Forward button pressed on the tab's tool bar: as on the page,
+    /// back or forward in its pages, and on to the files once it has none left that way.
+    Step {
+        back: bool,
+    },
 }
 
 /// What a page did, as the app reports it: its title and address now, whether it is loading, and
@@ -96,6 +101,8 @@ pub struct State {
     /// The page in front this frame and where it goes (points), for [`settle`] to cut what floats
     /// over it out of it.
     front: Option<(u64, Rect)>,
+    /// The web tab in front (its tool bar and page, points) when its page shows.
+    tab: Option<(u64, Rect)>,
 }
 
 /// A web tab: its file, the address it gives, and when it was last seen changed; a presentation's
@@ -246,6 +253,7 @@ pub(crate) fn tidy(app: &mut SheetApp, ctx: &egui::Context) {
     app.web.orders.retain(|(uid, _)| ids.contains(uid));
     app.web.panes.clear();
     app.web.front = None;
+    app.web.tab = None;
     if open.is_empty() {
         return;
     }
@@ -337,6 +345,15 @@ pub fn holes(area: Rect, over: &[Rect], ppp: f32) -> Vec<[i32; 4]> {
     out
 }
 
+/// The web tab in front whose page shows, when `pos` (points) is on it (its tool bar, the address
+/// line): the mouse's Back and Forward buttons pressed there go to the page
+/// ([`Order::Step`]). As drawn last frame.
+pub(crate) fn page_at(app: &SheetApp, pos: Option<egui::Pos2>) -> Option<u64> {
+    let (uid, area) = app.web.tab?;
+    let front = app.session.active().filter(|d| paged(d))?.uid;
+    (uid == front && pos.is_some_and(|p| area.contains(p))).then_some(uid)
+}
+
 fn modified(path: &str) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
@@ -388,6 +405,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 if let Some(pane) = app.web.panes.iter_mut().find(|p| p.id == uid) {
                     pane.rect = Some(rect);
                     app.web.front = Some((uid, area));
+                    app.web.tab = Some((uid, ui.max_rect()));
                 }
             }
         }
