@@ -333,6 +333,8 @@ fn tags_in_an_item_without_text_end_with_it() {
 }
 
 #[test]
+// A test reads the clock natively, never on wasm.
+#[allow(clippy::disallowed_methods)]
 fn many_ampersands_read_quickly() {
     let text = format!("<img src=\"a.png\">\n\n{}", "R&D ".repeat(50_000));
     let started = std::time::Instant::now();

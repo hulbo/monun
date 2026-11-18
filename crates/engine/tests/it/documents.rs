@@ -140,6 +140,36 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn code_blocks_print_and_export_coloured_as_their_language() {
+    let dir = temp_dir("code");
+    let path = dir.join("쿼리.md");
+    std::fs::write(&path, "# 확인\n\n```sql\n-- 공고 수\nSELECT COUNT(*) FROM T WHERE A = 'HO' AND N > 10;\n```\n\n```\n<b>그대로</b>\n```\n")
+        .unwrap();
+    let mut s = session();
+    s.execute("file.open", json!({"path": path.to_str().unwrap()})).unwrap();
+    let html = dir.join("쿼리.html");
+    s.execute("file.exportHtml", json!({"path": html.to_str().unwrap()})).unwrap();
+    let page = std::fs::read_to_string(&html).unwrap();
+    for part in [
+        "<span class=\"tk-c\">-- 공고 수</span>",
+        "<span class=\"tk-k\">SELECT</span>",
+        "<span class=\"tk-b\">COUNT</span>",
+        "<span class=\"tk-s\">'HO'</span>",
+        "<span class=\"tk-n\">10</span>",
+    ] {
+        assert!(page.contains(part), "{part} in {page}");
+    }
+    // A block naming no language stays as it is, escaped.
+    assert!(page.contains("&lt;b&gt;그대로&lt;/b&gt;"), "{page}");
+    // Printing lays the coloured runs out too.
+    let pdf = dir.join("쿼리.pdf");
+    let out = s.execute("file.exportPdf", json!({"path": pdf.to_str().unwrap()})).unwrap();
+    assert_eq!(out["pages"], 1);
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_markdown_file_opens_as_a_document_and_saves_back() {
     let bytes = "\u{feff}# 메모\r\n\r\n- [ ] 할 일\r\n".as_bytes();
     let (wb, _) = io::open_bytes("매수 메모.md", bytes).unwrap();
@@ -526,7 +556,8 @@ fn a_sql_file_prints_its_text_line_for_line() {
     s.execute("file.new", json!({"document": true, "kind": "sql"})).unwrap();
     s.execute("doc.setText", json!({"text": "# not a heading\nSELECT *\n  FROM t -- *all*\n"})).unwrap();
     let (pdf, _) = pdf_of(&mut s, json!({}));
-    for needle in ["(# not a heading)", "(SELECT *)", "(  FROM t -- *all*)"] {
+    // As written, not as Markdown, in runs coloured as SQL reads (keywords, the comment).
+    for needle in ["(# )", "(not)", "( a heading)", "(SELECT)", "( *)", "(  )", "(FROM)", "( t )", "(-- *all*)"] {
         assert!(contains(&pdf, needle), "{needle} is printed as written, not as Markdown");
     }
 }

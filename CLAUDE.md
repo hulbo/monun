@@ -43,6 +43,9 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   refused (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. A
   notice with release steps and a watch for the released file was tried and taken out: the user
   wants it opened automatically or not at all.
+- Code colours: `monun_markdown::code` (`highlight`, `lang_of`; SQL, Python, LaTeX and the languages a
+  Markdown code block names) is shared by the code editor, the document view and editor
+  (`code_editor::layout_job`), printing (`print/document.rs`) and the web page export (`doc_html.rs`).
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are

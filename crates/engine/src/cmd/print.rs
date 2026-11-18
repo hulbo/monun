@@ -97,8 +97,13 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
     // Document tabs print as text pages of their own, laid out first so the page count is known.
-    // A SQL or plain text file prints as its text, line for line.
-    let code = crate::docs::is_text_file(wb) && crate::docs::TextKind::of_name(file) != crate::docs::TextKind::Markdown;
+    // A SQL or plain text file prints as its text, line for line (SQL coloured).
+    let code = match crate::docs::TextKind::of_name(file) {
+        _ if !crate::docs::is_text_file(wb) => None,
+        crate::docs::TextKind::Markdown => None,
+        crate::docs::TextKind::Sql => Some(monun_markdown::code::Lang::Sql),
+        _ => Some(monun_markdown::code::Lang::Plain),
+    };
     let documents: Vec<Option<Vec<Vec<document::Op>>>> = layouts
         .iter()
         .map(|lay| wb.sheet(lay.sheet).filter(|sh| sh.is_document()).map(|sh| document::pages(wb, sh, lay, (fit_width, code))))

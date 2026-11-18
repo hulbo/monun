@@ -16,6 +16,7 @@
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+pub mod code;
 #[cfg(feature = "diagrams")]
 pub mod diagram;
 mod html;

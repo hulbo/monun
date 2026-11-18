@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use monun_markdown::code::{Lang, Token};
 use monun_markdown::{Align, Block, Item, Span};
 use monun_model::{Sheet, Workbook};
 use monun_pdf::{Font, Page, Rect, Rgb, text_width};
@@ -38,9 +39,10 @@ const MARK: Rgb = [0xFF, 0xF1, 0x8C];
 const HEAD: Rgb = [0xE3, 0xE8, 0xEF];
 
 /// The pages of document tab `sh`, as drawings; with `fit` (or the document's own Fit Width) its
-/// tables are as wide as the page and its diagrams centred. With `code` (a SQL or plain text file) its text
-/// prints as it is, in a monospace font, rather than as Markdown.
-pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, (fit, code): (bool, bool)) -> Vec<Vec<Op>> {
+/// tables are as wide as the page and its diagrams centred. With `code` (a SQL or plain text file:
+/// the language it is coloured as) its text prints as it is, in a monospace font, rather than as
+/// Markdown.
+pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, (fit, code): (bool, Option<Lang>)) -> Vec<Vec<Op>> {
     let Some(doc) = &sh.document else { return Vec::new() };
     let [l, r, t, b, ..] = lay.margins;
     let mut flow = Flow {
@@ -54,8 +56,8 @@ pub(super) fn pages(wb: &Workbook, sh: &Sheet, lay: &SheetLayout, (fit, code): (
         bottom: (lay.page_h - b).max(t + 72.0),
         fit: fit || doc.fit_width,
     };
-    if code {
-        flow.code(&doc.text, 0.0, false);
+    if let Some(lang) = code {
+        flow.code(&doc.text, 0.0, false, lang);
         flow.pages.truncate(MAX_PAGES);
         return flow.pages;
     }
@@ -187,7 +189,7 @@ impl Flow<'_> {
                 if lang == "mermaid" && self.diagram(text, indent) {
                     self.y += 6.0;
                 } else {
-                    self.code(text, indent, true);
+                    self.code(text, indent, true, monun_markdown::code::lang_of(lang));
                     self.y += 6.0;
                 }
             }
@@ -362,38 +364,26 @@ impl Flow<'_> {
         }
     }
 
-    /// Code, line for line in a monospace font, long lines cut; `shade` puts it on a grey band (a
-    /// code block in a document, not a SQL or text file's own text).
-    fn code(&mut self, text: &str, indent: f32, shade: bool) {
+    /// Code, line for line in a monospace font, long lines cut, coloured as `lang` reads (as on
+    /// screen, in the light theme's colours); `shade` puts it on a grey band (a code block in a
+    /// document, not a SQL or text file's own text).
+    fn code(&mut self, text: &str, indent: f32, shade: bool, lang: Lang) {
         let max = (self.width - indent - 12.0).max(24.0);
         let lead = CODE * 1.35;
-        for raw in text.trim_end_matches('\n').split('\n') {
-            let piece = Piece {
-                text: raw.replace('\t', "    "),
-                font: Font::Courier,
-                size: CODE,
-                color: INK,
-                link: None,
-                shade: None,
-                strike: false,
-                underline: false,
-            };
-            let chunks = if piece.width() > max { cut(&piece, max) } else { vec![piece] };
-            for chunk in chunks {
-                self.need(lead);
-                if shade {
-                    self.push(Op::Fill { x: self.left + indent, y: self.y, w: self.width - indent, h: lead, color: SHADE });
-                }
-                self.push(Op::Text {
-                    x: self.left + indent + 6.0,
-                    y: self.y + CODE * 1.0,
-                    size: CODE,
-                    font: Font::Courier,
-                    color: INK,
-                    text: chunk.text,
-                });
-                self.y += lead;
+        let text = text.trim_end_matches('\n');
+        let spans = monun_markdown::code::highlight(text, lang);
+        for row in code_rows(text, &spans, max) {
+            self.need(lead);
+            if shade {
+                self.push(Op::Fill { x: self.left + indent, y: self.y, w: self.width - indent, h: lead, color: SHADE });
             }
+            let mut x = self.left + indent + 6.0;
+            for (run, color) in row {
+                let w = text_width(Font::Courier, CODE, &run);
+                self.push(Op::Text { x, y: self.y + CODE * 1.0, size: CODE, font: Font::Courier, color, text: run });
+                x += w;
+            }
+            self.y += lead;
         }
     }
 
@@ -590,6 +580,50 @@ fn words(piece: &Piece) -> Vec<Piece> {
         out.push(Piece { text: word.to_owned(), ..piece.clone() });
     }
     out
+}
+
+/// Code's printed rows, each its coloured runs: its lines (tabs as four spaces), a line wider than
+/// `max` cut where it fills a row. `spans` are the code's coloured stretches (bytes, in order).
+fn code_rows(text: &str, spans: &[(std::ops::Range<usize>, Token)], max: f32) -> Vec<Vec<(String, Rgb)>> {
+    let mut rows = Vec::new();
+    let mut next = 0;
+    let mut at = 0;
+    for line in text.split('\n') {
+        let mut row: Vec<(String, Rgb)> = Vec::new();
+        let mut used = 0.0;
+        for (i, c) in line.char_indices() {
+            let byte = at + i;
+            while spans.get(next).is_some_and(|(r, _)| r.end <= byte) {
+                next += 1;
+            }
+            let color = spans.get(next).filter(|(r, _)| r.start <= byte).map_or(INK, |(_, t)| syntax(*t));
+            let s = if c == '\t' { "    ".to_string() } else { c.to_string() };
+            let w = text_width(Font::Courier, CODE, &s);
+            if used + w > max && used > 0.0 {
+                rows.push(std::mem::take(&mut row));
+                used = 0.0;
+            }
+            used += w;
+            match row.last_mut() {
+                Some((run, last)) if *last == color => run.push_str(&s),
+                _ => row.push((s, color)),
+            }
+        }
+        rows.push(row);
+        at += line.len() + 1;
+    }
+    rows
+}
+
+/// Code's colours on paper: the light theme's.
+fn syntax(token: Token) -> Rgb {
+    match token {
+        Token::Keyword => [0x0B, 0x57, 0xB3],
+        Token::String => [0xA3, 0x36, 0x1B],
+        Token::Number => [0x15, 0x7A, 0x5A],
+        Token::Comment => [0x6B, 0x72, 0x80],
+        Token::Builtin => [0x7B, 0x3F, 0xB5],
+    }
 }
 
 /// A piece cut into chunks no wider than `max`.

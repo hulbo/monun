@@ -10,6 +10,7 @@ use monun_markdown::{Align, Block, Item, Span};
 use monun_model::{Sheet, Workbook};
 
 use crate::io::{base64_encode, esc};
+use monun_markdown::code::Token;
 
 /// The look of the document page, as the document tab draws it in the light theme.
 pub(crate) const CSS: &str = concat!(
@@ -26,6 +27,7 @@ pub(crate) const CSS: &str = concat!(
     ".doc .code .lang{font-size:11px;color:#606060;margin-bottom:4px}",
     ".doc pre{margin:0;white-space:pre-wrap;font-family:Consolas,\"D2Coding\",monospace;font-size:13.5px}",
     ".doc pre code{background:none;padding:0;font-size:inherit}",
+    ".doc .tk-k{color:#0b57b3}.doc .tk-s{color:#a3361b}.doc .tk-n{color:#157a5a}.doc .tk-c{color:#6b7280}.doc .tk-b{color:#7b3fb5}",
     ".doc hr{border:0;border-top:1.5px solid #e0e0e0;margin:4px 0 14px}",
     ".doc a{color:#107c41}.doc del{color:inherit}",
     ".doc .field{background:#dff1e6;border-radius:2px}.doc .field.err{color:#c42b1c}",
@@ -149,12 +151,28 @@ fn list_item(out: &mut String, item: &Item, cx: &Context) {
     out.push_str("</li>");
 }
 
+/// A code block, coloured as its language reads (as on screen, in the light theme's colours).
 fn code(out: &mut String, lang: &str, text: &str) {
     out.push_str("<div class=\"code\">");
     if !lang.is_empty() {
         let _ = write!(out, "<div class=\"lang\">{}</div>", esc(lang));
     }
-    let _ = write!(out, "<pre><code>{}</code></pre></div>", esc(text.trim_end_matches('\n')));
+    let text = text.trim_end_matches('\n');
+    out.push_str("<pre><code>");
+    let mut at = 0;
+    for (range, token) in monun_markdown::code::highlight(text, monun_markdown::code::lang_of(lang)) {
+        let (Some(before), Some(span)) = (text.get(at..range.start), text.get(range.clone())) else { continue };
+        let class = match token {
+            Token::Keyword => "tk-k",
+            Token::String => "tk-s",
+            Token::Number => "tk-n",
+            Token::Comment => "tk-c",
+            Token::Builtin => "tk-b",
+        };
+        let _ = write!(out, "{}<span class=\"{class}\">{}</span>", esc(before), esc(span));
+        at = range.end;
+    }
+    let _ = write!(out, "{}</code></pre></div>", esc(text.get(at..).unwrap_or("")));
 }
 
 /// A Mermaid diagram as SVG; false when this build draws none (or it has an error), so its code
