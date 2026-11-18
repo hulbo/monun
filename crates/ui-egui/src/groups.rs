@@ -210,21 +210,8 @@ pub(crate) fn sync(app: &mut SheetApp) {
         // The quit was cancelled.
         app.groups_frozen = false;
     }
-    let (mut files, active) = open_files(app);
+    let (files, active) = open_files(app);
     let i = ensure(app);
-    // A project's files this PC couldn't open stay in its list, where they were, for the PCs that
-    // have them.
-    app.unopened.retain(|p| !files.contains(p));
-    if !app.unopened.is_empty()
-        && let Some(g) = app.ui.groups.get(i)
-    {
-        let tabs: Vec<&String> = g.files.iter().filter(|p| !app.unopened.contains(p)).collect();
-        if tabs == files.iter().collect::<Vec<_>>() {
-            files = g.files.clone();
-        } else {
-            files.extend(app.unopened.iter().filter(|p| !files.contains(p)).cloned().collect::<Vec<_>>());
-        }
-    }
     let mut changed = false;
     if let Some(g) = app.ui.groups.get_mut(i)
         && (g.files != files || g.active != active)
@@ -250,7 +237,8 @@ pub fn restore(app: &mut SheetApp) {
 }
 
 /// Opens a group's files in its tab order, the one that was in front in front again. A file that
-/// can't be opened (moved, deleted, password-protected) is left out and named in a message.
+/// can't be opened (moved, deleted, password-protected, on another PC) is taken out of the group
+/// (the group follows its tabs, a project of the root's too) and named in a message.
 fn open_group(app: &mut SheetApp, g: &FileGroup) {
     let mut missing = Vec::new();
     for path in &g.files {
@@ -268,12 +256,10 @@ fn open_group(app: &mut SheetApp, g: &FileGroup) {
     }
     app.follow_active_window();
     app.after_engine();
-    // In a project of the root they stay in the group, for the PCs that have them; This PC's
-    // groups let them go.
-    app.unopened = if app.project_loaded.is_some() { missing.clone() } else { Vec::new() };
     if !missing.is_empty() {
         let lang = app.ui.language;
-        let mut text = format!("{}\n\n{}", lang.tr("These files of the group could not be opened:"), missing.join("\n"));
+        let mut text =
+            format!("{}\n\n{}", lang.tr("These files of the group could not be opened, so they were taken out of it:"), missing.join("\n"));
         // A message already up (why a project gave way) comes first.
         if let Some((_, earlier)) = app.message.take() {
             text = format!("{earlier}\n\n{text}");
@@ -362,7 +348,6 @@ fn neighbour(app: &SheetApp, name: &str) -> Option<String> {
 /// Takes the file `path` out of the group `group`; the file itself stays where it is. In the group
 /// in use that closes it (asking first about unsaved changes): the group follows its tabs.
 fn remove_file(app: &mut SheetApp, group: &str, path: &str) {
-    app.unopened.retain(|p| p != path);
     if group == app.ui.group {
         let uid = app.session.documents().iter().find(|d| d.path.as_deref() == Some(path)).map(|d| d.uid);
         if let Some(window) = uid.and_then(|uid| app.session.doc_window(uid)) {
@@ -589,11 +574,11 @@ pub(crate) fn sort_menu(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 /// A file of the group in use as the group panel and the title bar's file list show it: an open
-/// window's file (one never saved among them), or a file of the group this PC couldn't open.
+/// window's file (one never saved among them).
 #[derive(Clone, Debug)]
 pub struct OpenFile {
-    /// The window it shows in; `None` for a file this PC couldn't open.
-    pub window: Option<u64>,
+    /// The window it shows in.
+    pub window: u64,
     pub path: Option<String>,
     /// Its window's title (`Book1`, `Book1:2` for a workbook's second window, `Doc1.md`).
     pub title: String,
@@ -602,9 +587,8 @@ pub struct OpenFile {
     pub front: bool,
 }
 
-/// The files of the group in use in the order the panel lists them: the open windows (as they were
-/// put in Your Own Order), then the group's files this PC couldn't open; by name or type as the
-/// Sort menu says.
+/// The files of the group in use in the order the panel lists them: the open windows, as they were
+/// put in Your Own Order, or by name or type as the Sort menu says.
 pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
     let front = app.session.active_window();
     let mut rows: Vec<OpenFile> = app
@@ -614,7 +598,7 @@ pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
         .filter_map(|w| {
             let d = app.session.documents().iter().find(|d| d.uid == w.doc_uid)?;
             Some(OpenFile {
-                window: Some(w.id),
+                window: w.id,
                 path: d.path.clone(),
                 title: app.session.window_title(w.id)?,
                 kind: d.text_kind(),
@@ -623,14 +607,6 @@ pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
             })
         })
         .collect();
-    rows.extend(app.unopened.iter().map(|p| OpenFile {
-        window: None,
-        path: Some(p.clone()),
-        title: file_name(p).to_string(),
-        kind: None,
-        dirty: false,
-        front: false,
-    }));
     let kind = |f: &OpenFile| {
         std::path::Path::new(f.path.as_deref().unwrap_or(&f.title)).extension().and_then(std::ffi::OsStr::to_str).unwrap_or_default().to_lowercase()
     };
@@ -640,15 +616,6 @@ pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
         FileOrder::Kind => rows.sort_by(|a, b| kind(a).cmp(&kind(b)).then_with(|| natural_cmp(&a.title, &b.title))),
     }
     rows
-}
-
-/// The icon of a file the panel lists.
-fn open_file_icon(f: &OpenFile) -> Icon {
-    match (&f.window, &f.path) {
-        (Some(_), _) => crate::file_tabs::file_icon(f.kind),
-        (None, Some(path)) => crate::file_tabs::path_icon(path),
-        (None, None) => Icon::Sheet,
-    }
 }
 
 /// How the panel's file rows are drawn: the panel's width, and whether they drag (Your Own Order).
@@ -697,38 +664,17 @@ fn dragged_to(ui: &Ui, rects: &[Rect], index: usize, dropped: bool, t: &Tokens) 
 
 /// The files of the group in use: a click shows one, its ✕ (or the middle button) closes it, the
 /// right button offers Close, Close Others, Close All and Copy Full Path, and in Your Own Order a
-/// file drags to another place. A file with unsaved changes has a dot in its ✕'s place; one this
-/// PC couldn't open is dim, and can only be taken out of the group.
-fn open_file_rows(ui: &mut Ui, files: &[OpenFile], group: &str, rows: &Rows) -> Option<PanelAction> {
+/// file drags to another place. A file with unsaved changes has a dot in its ✕'s place.
+fn open_file_rows(ui: &mut Ui, files: &[OpenFile], rows: &Rows) -> Option<PanelAction> {
     let (t, lang) = (rows.t, rows.lang);
     let mut action = None;
     let mut rects: Vec<(u64, Rect)> = Vec::new();
     let mut moving = None;
     for f in files {
-        let ink = if f.front {
-            t.accent_text
-        } else if f.window.is_some() {
-            t.text
-        } else {
-            t.text_dim
-        };
+        let ink = if f.front { t.accent_text } else { t.text };
         let label = if f.dirty { format!("{} ({})", f.title, lang.tr("unsaved changes")) } else { f.title.clone() };
-        let (r, resp) = file_row(ui, rows, (open_file_icon(f), &f.title, &label), f.front, ink, 24.0);
-        let Some(window) = f.window else {
-            let tip = format!(
-                "{}\n{}",
-                f.path.as_deref().unwrap_or_default(),
-                lang.tr("Couldn't be opened on this PC; it stays in the project for the others.")
-            );
-            resp.on_hover_text(tip).context_menu(|ui| {
-                if let Some(path) = &f.path
-                    && ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr("The file itself stays where it is.")).clicked()
-                {
-                    action = Some(PanelAction::Remove { group: group.to_string(), path: path.clone() });
-                }
-            });
-            continue;
-        };
+        let (r, resp) = file_row(ui, rows, (crate::file_tabs::file_icon(f.kind), &f.title, &label), f.front, ink, 24.0);
+        let window = f.window;
         rects.push((window, r));
         if resp.dragged() || resp.drag_stopped() {
             moving = Some((window, resp.drag_stopped()));
@@ -1008,7 +954,7 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
                 ui.label(egui::RichText::new(lang.tr("No files")).font(theme::ui_font(12.0)).color(t.text_dim).italics());
             });
         }
-        let asked = if on { open_file_rows(ui, &listed, &g.name, &rows) } else { kept_file_rows(ui, g, &rows) };
+        let asked = if on { open_file_rows(ui, &listed, &rows) } else { kept_file_rows(ui, g, &rows) };
         action = asked.or(action);
         ui.add_space(4.0);
     }
@@ -1089,19 +1035,18 @@ pub fn file_button(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         ui.painter().rect_filled(r, 4.0, t.hover);
     }
     let icon = Rect::from_center_size(pos2(r.left() + 12.0, r.center().y), vec2(14.0, 14.0));
-    icons::paint(ui.painter(), icon, open_file_icon(&front), t.accent);
+    icons::paint(ui.painter(), icon, crate::file_tabs::file_icon(front.kind), t.accent);
     ui.painter().text(pos2(icon.right() + 5.0, r.center().y), Align2::LEFT_CENTER, &shown, font, t.text);
     let arrow = Rect::from_center_size(pos2(r.right() - 8.0, r.center().y), vec2(9.0, 9.0));
     icons::paint(ui.painter(), arrow, Icon::Chevron, t.text_dim);
     let resp = resp.on_hover_text(front.path.clone().unwrap_or_else(|| front.title.clone()));
-    let values: Vec<String> = files.iter().filter_map(|f| f.window).map(|w| w.to_string()).collect();
-    let titles: Vec<String> =
-        files.iter().filter(|f| f.window.is_some()).map(|f| if f.dirty { format!("{} ●", f.title) } else { f.title.clone() }).collect();
+    let values: Vec<String> = files.iter().map(|f| f.window.to_string()).collect();
+    let titles: Vec<String> = files.iter().map(|f| if f.dirty { format!("{} ●", f.title) } else { f.title.clone() }).collect();
     let rows: Vec<(&str, String)> = values.iter().map(String::as_str).zip(titles).collect();
-    let current = front.window.map(|w| w.to_string()).unwrap_or_default();
+    let current = front.window.to_string();
     if let crate::ribbon::ComboResult::Picked(v) = crate::ribbon::editable_combo(ui, &resp, "open_files", &current, &rows, false)
         && let Ok(w) = v.parse::<u64>()
-        && front.window != Some(w)
+        && front.window != w
     {
         app.run_or_alert("window.activate", json!({"window": w}));
     }

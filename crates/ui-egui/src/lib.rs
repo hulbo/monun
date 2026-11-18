@@ -490,9 +490,6 @@ pub struct SheetApp {
     /// The memos on the working root's files, kept in the root ([`memos::root_file`]): read for the
     /// root in use, `None` with no root.
     pub(crate) root_memos: Option<memos::root_file::Store>,
-    /// Files of the group in use that couldn't be opened on this PC, while a project of the root
-    /// is in use: they stay in its list for the PCs that have them ([`groups::sync`]).
-    pub(crate) unopened: Vec<String>,
     /// Where the file in front shows (a sheet's grid, a document, the start page), as drawn last:
     /// toasts show over it.
     pub(crate) files_rect: Option<egui::Rect>,

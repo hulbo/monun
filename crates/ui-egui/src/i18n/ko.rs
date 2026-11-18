@@ -1914,7 +1914,7 @@ const MORE: &[(&str, &str)] = &[
     ("New Excel Workbook", "새 엑셀 통합 문서"),
     ("New Markdown Document", "새 Markdown 문서"),
     ("Files you open show here.", "연 파일이 여기에 나옵니다."),
-    ("Open a file or make a new one. Each file opens as a tab at the bottom.", "파일을 열거나 새로 만드세요. 파일마다 아래쪽에 탭으로 열립니다."),
+    ("Open a file or make a new one. The group panel lists the files open.", "파일을 열거나 새로 만드세요. 열린 파일은 그룹 창에 나옵니다."),
     (
         "A workbook holds sheets only. Make a Markdown file with + › New Markdown Document.",
         "엑셀 통합 문서에는 시트만 넣을 수 있습니다. 문서는 + › 새 Markdown 문서로 따로 만드세요.",
@@ -1966,7 +1966,7 @@ const MORE: &[(&str, &str)] = &[
     ("Only PNG and JPEG pictures can be put in a document.", "문서에는 PNG와 JPEG 그림만 넣을 수 있습니다."),
     ("Insert Picture", "그림 넣기"),
     ("Default group", "기본 그룹"),
-    ("These files of the group could not be opened:", "그룹의 다음 파일을 열지 못했습니다:"),
+    ("These files of the group could not be opened, so they were taken out of it:", "그룹의 다음 파일을 열지 못해 그룹에서 뺐습니다:"),
     ("Type a name for the group.", "그룹 이름을 입력하세요."),
     ("A group name has at most 60 characters.", "그룹 이름은 60자까지 쓸 수 있습니다."),
     ("There is already a group with this name.", "같은 이름의 그룹이 이미 있습니다."),
@@ -2063,10 +2063,6 @@ const MORE: &[(&str, &str)] = &[
         "모눈 밖에서 바뀐 프로젝트 파일을 읽을 수 없어(git 충돌?) 그대로 두었습니다.",
     ),
     ("Make another project first: the project button's New Project…", "먼저 다른 프로젝트를 만드세요: 프로젝트 버튼 › 새 프로젝트…"),
-    (
-        "Couldn't be opened on this PC; it stays in the project for the others.",
-        "이 PC에서는 열 수 없습니다. 다른 PC를 위해 프로젝트에는 그대로 남습니다.",
-    ),
     ("Copied the group “{group}” to the project “{project}”.", "“{group}” 그룹을 “{project}” 프로젝트로 복사했습니다."),
     ("Save changes to these files before going to the project “{name}”?", "“{name}” 프로젝트로 가기 전에 이 파일들의 변경 내용을 저장할까요?"),
     ("The memos in the working root folder could not be read:", "작업 루트 폴더의 메모를 읽지 못했습니다:"),

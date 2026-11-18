@@ -97,7 +97,6 @@ impl SheetApp {
             groups_frozen: false,
             project_loaded: None,
             root_memos: None,
-            unopened: Vec::new(),
             files_rect: None,
             arrange_windows: None,
         }

@@ -283,23 +283,23 @@ fn a_project_file_that_cant_be_read_is_never_overwritten() {
 }
 
 #[test]
-fn a_projects_file_this_pc_cant_open_stays_in_it_for_the_others() {
+fn a_projects_file_this_pc_cant_open_is_taken_out_of_its_group() {
     let (base, root) = root("unopened");
     let mut h = harness(&[]);
     run(&mut h, "project.root", json!({"path": path(&root)}));
-    let file = "{\"monun\": 1, \"groups\": [{\"name\": \"G\", \"files\": [\"a/x.md\", \"a/not-pulled-yet.md\", \"a/y.md\"]}]}\n";
+    let file = "{\"monun\": 1, \"groups\": [{\"name\": \"G\", \"files\": [\"a/x.md\", \"a/not-there.md\", \"a/y.md\"]}]}\n";
     std::fs::create_dir_all(root.join(".monun")).unwrap();
     std::fs::write(root.join(".monun").join("P.json"), file).unwrap();
     h.state_mut().run("project.switch", json!({"name": "P"})).unwrap();
     h.run_steps(3);
     assert_eq!(open_paths(&h).len(), 2);
-    assert!(h.state().message.clone().is_some_and(|(_, t)| t.contains("not-pulled-yet.md")));
-    assert_eq!(project_file(&root, "P"), file, "opening the project changes nothing git sees");
-    // A tab opened here writes the list, the missing file still in it.
-    h.state_mut().run("file.open", json!({"path": path(&root.join("a").join("b.xlsx"))})).unwrap();
-    h.run_steps(3);
+    let (_, text) = h.state().message.clone().expect("said so");
+    assert!(text.contains("not-there.md") && text.contains("taken out of it"), "{text}");
+    // The group follows its tabs: the project's list no longer has it, nor the panel.
     let text = project_file(&root, "P");
-    assert!(text.contains("\"a/not-pulled-yet.md\"") && text.contains("\"a/b.xlsx\""), "{text}");
+    assert!(!text.contains("not-there.md") && text.contains("\"a/x.md\"") && text.contains("\"a/y.md\""), "{text}");
+    assert!(h.state().ui.groups.iter().all(|g| g.files.iter().all(|f| !f.contains("not-there"))));
+    assert!(monun_ui_egui::groups::open_files_listed(h.state()).iter().all(|f| !f.title.contains("not-there")));
     let _ = std::fs::remove_dir_all(&base);
 }
 

@@ -152,7 +152,7 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                 ui.label(egui::RichText::new(lang.tr("Monun")).font(theme::ui_bold(26.0)).color(t.text));
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new(lang.tr("Open a file or make a new one. Each file opens as a tab at the bottom."))
+                    egui::RichText::new(lang.tr("Open a file or make a new one. The group panel lists the files open."))
                         .font(theme::ui_font(13.0))
                         .color(t.text_dim),
                 );
