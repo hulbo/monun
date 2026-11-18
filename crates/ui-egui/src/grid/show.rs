@@ -366,13 +366,19 @@ fn paint_panes(input: PanesInput<'_>, cf: &mut CfCache) -> Vec<PaneQuad> {
 }
 
 /// The worksheet is painted virtually, so it needs its own scrollbar rather than a
-/// ScrollArea containing all million rows. Keep the scroll extent stable during a drag.
+/// ScrollArea containing all million rows. Keep the scroll extent stable during a drag. Under the
+/// tucked group panel's handle the track starts below it.
 fn vertical_scrollbar(app: &mut SheetApp, ui: &mut egui::Ui, sh: &Sheet, geo: &Geo, track_x: (f32, f32), limit: f32, t: &Tokens) {
-    let track = Rect::from_min_max(pos2(track_x.0, geo.cells.top() + geo.frozen_h), pos2(track_x.1, geo.cells.bottom()));
-    if track.height() <= 0.0 || track.width() <= 0.0 {
+    let beside = Rect::from_min_max(pos2(track_x.0, geo.cells.top() + geo.frozen_h), pos2(track_x.1, geo.cells.bottom()));
+    if beside.height() <= 0.0 || beside.width() <= 0.0 {
         return;
     }
-    let visible = track.height() / geo.z;
+    // The rows in view are those beside the whole track, however much of it the handle takes.
+    let visible = beside.height() / geo.z;
+    let track = crate::panes::below_handle(app.group_handle, beside, beside.width()).unwrap_or(beside);
+    if track.height() <= 0.0 {
+        return;
+    }
     let scroll = app.view().scroll.y;
     let last = sh.used_range().map(|r| r.end.row.saturating_add(10)).unwrap_or(100).clamp(100, MAX_ROWS - 1);
     let content = geo.scroll_top_of(sh, last);

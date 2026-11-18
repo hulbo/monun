@@ -11,6 +11,8 @@ use crate::SheetApp;
 use crate::theme::{self, Tokens};
 
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
+    // Set again below while the group panel is tucked, before the files are drawn.
+    app.group_handle = None;
     // The Comments pane is engine state (`review.showComments`, so agents can drive it); the other
     // panes are UI state. One pane shows at a time: opening another one closes Comments.
     // The group panel is the interface's, for every window (`UiState::group_panel`), with file tabs
@@ -67,6 +69,28 @@ const HANDLE: egui::Vec2 = egui::vec2(24.0, 84.0);
 const HANDLE_GAP: f32 = 4.0;
 const LINGER: f64 = 0.35;
 
+/// How wide a scroll area's vertical bar is at most, along its edge.
+const BAR_STRIP: f32 = 18.0;
+
+/// `bar` (a vertical scroll bar's track, or a rect whose right-hand `strip` the bar runs down)
+/// starting below the tucked group panel's handle (`handle`, [`SheetApp::group_handle`]) when the
+/// handle stands over it, so the handle covers none of the bar. `None` when it is clear of it.
+pub(crate) fn below_handle(handle: Option<egui::Rect>, bar: egui::Rect, strip: f32) -> Option<egui::Rect> {
+    let h = handle?;
+    let lane = egui::Rect::from_min_max(egui::pos2(bar.right() - strip, bar.top()), bar.max);
+    if !h.intersects(lane) {
+        return None;
+    }
+    let top = (h.bottom() + HANDLE_GAP).max(bar.top()).min(bar.bottom());
+    Some(egui::Rect::from_min_max(egui::pos2(bar.left(), top), bar.max))
+}
+
+/// Where a scroll area filling `outer` shows its bars ([`egui::ScrollArea::scroll_bar_rect`]) so its
+/// vertical bar starts below the tucked group panel's handle; `None` when the handle is clear of it.
+pub(crate) fn scroll_bars_below(handle: Option<egui::Rect>, outer: egui::Rect) -> Option<egui::Rect> {
+    below_handle(handle, outer, BAR_STRIP)
+}
+
 /// Whether the group panel tucks into the window's left edge: the side its column is on, or its
 /// layer's corner.
 fn tuck_left(app: &SheetApp) -> bool {
@@ -89,6 +113,8 @@ fn tucked(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     let name = app.ui.language.tr("Groups");
     let x = if left { files.left() + HANDLE_GAP } else { files.right() - HANDLE_GAP - HANDLE.x };
     let zone = Rect::from_min_size(pos2(x, top), HANDLE);
+    // The files' scroll bars start below it (also while the panel is out, so they don't jump).
+    app.group_handle = Some(zone);
     let Some(since) = app.group_peek else {
         if handle(&ctx, t, zone, name) {
             app.group_peek = Some(now);
@@ -810,4 +836,43 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             ui.data_mut(|d| d.remove::<(f32, f32)>(draft));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HANDLE, HANDLE_GAP, below_handle, scroll_bars_below};
+    use egui::{Rect, pos2};
+
+    /// A scroll area of 1000 × 700 at (100, 50), and the handle by its right edge, under its top.
+    fn area_and_handle() -> (Rect, Rect) {
+        let area = Rect::from_min_max(pos2(100.0, 50.0), pos2(1100.0, 750.0));
+        let handle = Rect::from_min_size(pos2(area.right() - HANDLE_GAP - HANDLE.x, area.top() + 10.0), HANDLE);
+        (area, handle)
+    }
+
+    #[test]
+    fn a_scroll_bar_under_the_handle_starts_below_it() {
+        let (area, handle) = area_and_handle();
+        let bars = scroll_bars_below(Some(handle), area).unwrap_or(area);
+        assert_eq!(bars.top(), handle.bottom() + HANDLE_GAP);
+        assert_eq!((bars.left(), bars.right(), bars.bottom()), (area.left(), area.right(), area.bottom()));
+        // A sheet's own track, as wide as itself.
+        let track = Rect::from_min_max(pos2(area.right() - 17.0, area.top()), area.max);
+        assert_eq!(below_handle(Some(handle), track, track.width()).map(|r| r.top()), Some(handle.bottom() + HANDLE_GAP));
+    }
+
+    #[test]
+    fn a_scroll_bar_clear_of_the_handle_stays_as_it_is() {
+        let (area, handle) = area_and_handle();
+        assert_eq!(scroll_bars_below(None, area), None, "no handle");
+        // The handle by the left edge: the bar runs down the right one.
+        let left = handle.translate(egui::vec2(area.left() + HANDLE_GAP - handle.left(), 0.0));
+        assert_eq!(scroll_bars_below(Some(left), area), None);
+        // A scroll area that ends before the handle (a side-by-side editor's left half).
+        let half = Rect::from_min_max(area.min, pos2(area.center().x, area.bottom()));
+        assert_eq!(scroll_bars_below(Some(handle), half), None);
+        // A handle below the area.
+        let below = handle.translate(egui::vec2(0.0, area.height() + 20.0));
+        assert_eq!(scroll_bars_below(Some(below), area), None);
+    }
 }

@@ -478,6 +478,9 @@ pub struct SheetApp {
     /// The tucked group panel is slid out over the files: when the pointer was last on it (egui's
     /// clock, seconds), so it goes back a moment after the pointer leaves.
     pub(crate) group_peek: Option<f64>,
+    /// Where the tucked group panel's handle stands this frame ([`panes::show`], before the files
+    /// are drawn): the files' vertical scroll bars start below it ([`panes::below_handle`]).
+    pub(crate) group_handle: Option<egui::Rect>,
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,

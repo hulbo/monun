@@ -619,6 +619,9 @@ fn pages(app: &mut SheetApp, ui: &mut Ui, doc: &mut Doc, ready: &Ready, key: (u6
         jump = Some(vec2(jump.map_or(doc.offset.x, |j: Vec2| j.x), y));
     }
     let mut area = egui::ScrollArea::both().id_salt(("monun.pdf_view", key)).auto_shrink([false, false]);
+    if let Some(bars) = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap()) {
+        area = area.scroll_bar_rect(bars);
+    }
     if let Some(j) = jump {
         area = area.horizontal_scroll_offset(j.x.max(0.0)).vertical_scroll_offset(j.y.max(0.0));
     }

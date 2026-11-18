@@ -186,7 +186,11 @@ fn draw(app: &mut SheetApp, ui: &mut Ui, key: (u64, usize), (zoom, fit): (u16, b
     let shown = vec2(w * scale, h * scale);
     let texture = picture.texture.id();
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
-    egui::ScrollArea::both().id_salt(("monun.image_view", key)).auto_shrink([false, false]).show(&mut child, |ui| {
+    let mut scroll = egui::ScrollArea::both().id_salt(("monun.image_view", key)).auto_shrink([false, false]);
+    if let Some(bars) = crate::panes::scroll_bars_below(app.group_handle, area) {
+        scroll = scroll.scroll_bar_rect(bars);
+    }
+    scroll.show(&mut child, |ui| {
         let room = vec2(area.width().max(shown.x + 2.0 * MARGIN), area.height().max(shown.y + 2.0 * MARGIN));
         let (rect, _) = ui.allocate_exact_size(room, Sense::hover());
         let at = Rect::from_center_size(rect.center(), shown);

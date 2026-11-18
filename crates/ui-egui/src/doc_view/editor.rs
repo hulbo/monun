@@ -662,6 +662,7 @@ const FIRST_SHOW_MS: f64 = 30.0;
 fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) {
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let kind = super::text_kind(app);
+    let bars = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap());
     let (draft, layouts) = (&app.doc_view.draft, &mut app.doc_view.layouts);
     let Some(dr) = draft.as_ref() else { return };
     let font = font_at(z);
@@ -682,7 +683,11 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
         wrap_at = Some(wrap);
         ui.fonts_mut(|f| f.layout_job(job_of(buf.as_str(), code, &font, &colors, wrap, &query)))
     };
-    egui::ScrollArea::vertical().id_salt("monun.doc_editor_first_screen").auto_shrink([false, false]).show(ui, |ui| {
+    let mut area = egui::ScrollArea::vertical().id_salt("monun.doc_editor_first_screen").auto_shrink([false, false]);
+    if let Some(bars) = bars {
+        area = area.scroll_bar_rect(bars);
+    }
+    area.show(ui, |ui| {
         egui::TextEdit::multiline(&mut head)
             .id(editor_id().with("first_screen"))
             .font(font.clone())
@@ -726,6 +731,7 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
         app.doc_view.focus_editor = false;
         ctx.memory_mut(|m| m.request_focus(editor_id()));
     }
+    let bars = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap());
     let dr = app.doc_view.draft.as_mut()?;
     let font = font_at(z);
     let focused = ctx.memory(|m| m.has_focus(editor_id()));
@@ -757,7 +763,11 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     let left = text_margin(ui, kind, &dr.text, &font);
     let rows = ((ui.available_height() / (font.size * 1.35)).floor() as usize).max(4);
     // Each document keeps its own place in its text.
-    let scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_editor_scroll", doc)).auto_shrink([false, false]).show(ui, |ui| {
+    let mut area = egui::ScrollArea::vertical().id_salt(("monun.doc_editor_scroll", doc)).auto_shrink([false, false]);
+    if let Some(bars) = bars {
+        area = area.scroll_bar_rect(bars);
+    }
+    let scroll = area.show(ui, |ui| {
         let out = egui::TextEdit::multiline(&mut dr.text)
             .id(editor_id())
             .font(font.clone())

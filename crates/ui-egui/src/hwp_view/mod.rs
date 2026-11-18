@@ -496,6 +496,9 @@ fn pages(app: &mut SheetApp, ui: &mut Ui, doc: &mut Doc, key: (u64, usize), (zoo
     let lay = layout::lay_out(&sizes, scale, doc.spread, width);
     let jump = jump(doc, &lay, scale, now);
     let mut area = egui::ScrollArea::both().id_salt(("monun.hwp_view", key)).auto_shrink([false, false]);
+    if let Some(bars) = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap()) {
+        area = area.scroll_bar_rect(bars);
+    }
     if let Some(j) = jump {
         area = area.horizontal_scroll_offset(j.x.max(0.0)).vertical_scroll_offset(j.y.max(0.0));
     }

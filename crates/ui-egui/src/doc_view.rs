@@ -1191,6 +1191,9 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let lead = 24.0 * z;
     // Each document keeps its own place.
     let mut scroll = egui::ScrollArea::vertical().id_salt(("monun.doc_view", key)).auto_shrink([false, false]);
+    if let Some(bars) = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap()) {
+        scroll = scroll.scroll_bar_rect(bars);
+    }
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
         scroll = scroll.vertical_scroll_offset((y + lead - 8.0 * z).max(0.0));
     }
@@ -1302,6 +1305,9 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     let lead = 16.0 * z;
     let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right.shrink2(vec2(20.0, 0.0))));
     let mut scroll = egui::ScrollArea::vertical().id_salt("monun.doc_preview").auto_shrink([false, false]);
+    if let Some(bars) = crate::panes::scroll_bars_below(app.group_handle, right_ui.max_rect()) {
+        scroll = scroll.scroll_bar_rect(bars);
+    }
     if let Some(y) = app.doc_view.scroll_to.take().and_then(|line| offset_of_line(&app.doc_view.positions, line)) {
         scroll = scroll.vertical_scroll_offset(if y > 0.0 { y + lead - 8.0 * z } else { 0.0 });
     }
