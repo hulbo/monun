@@ -101,6 +101,7 @@ pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Image) => Icon::ImageFile,
         Some(TextKind::Web) => Icon::WebFile,
         Some(TextKind::Slides) => Icon::SlidesFile,
+        Some(TextKind::Http) => Icon::ApiFile,
     }
 }
 

@@ -9,7 +9,7 @@ description = "Monun egui frontend (Excel-style UI); swappable — nothing below
 workspace = true
 
 [features]
-default = ["pdf", "word", "hwp", "slides"]
+default = ["pdf", "word", "hwp", "slides", "api"]
 # PDF files shown in their tab (desktop; the web build says it can't show them).
 pdf = ["dep:pdfcraft-render", "dep:hayro"]
 # Word files shown and edited in their tab (desktop; the web build says it can't show them).
@@ -19,6 +19,8 @@ hwp = ["dep:rhwp", "dep:resvg", "dep:lopdf"]
 # PowerPoint presentations shown in their tab, as a web page of their slides (desktop; the web build
 # says it can't show them).
 slides = ["dep:monun-pptx"]
+# API requests (.http files) sent from their tab (desktop; the web build says it needs the desktop app).
+api = ["dep:ureq"]
 # Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
 diagrams = ["monun-markdown/diagrams", "monun-engine/diagrams"]
 
@@ -51,6 +53,7 @@ rhwp = { workspace = true, optional = true }
 monun-pptx = { workspace = true, optional = true }
 resvg = { workspace = true, optional = true }
 lopdf = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
 
 # Linux only, where winit reports no system theme: the desktop portal's light/dark answer (see
 # `desktop_theme.rs`). Already in the tree, with these features, through egui's own

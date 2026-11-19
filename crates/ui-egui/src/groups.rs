@@ -564,6 +564,8 @@ enum PanelAction {
         id: u64,
         to: Option<u64>,
     },
+    /// A new API request in this folder of the group in use.
+    NewRequest(u64),
 }
 
 /// A file row's file: its window and document (a file of the group in use), its path (`None` for
@@ -703,13 +705,19 @@ fn folder_row(ui: &mut Ui, rows: &Rows, f: &crate::group_folders::Folder, depth:
     let at = Rect::from_center_size(pos2(x, r.center().y), vec2(14.0, 14.0));
     icons::paint(ui.painter(), at, if f.folded { Icon::Folder } else { Icon::OpenFolder }, t.text_dim);
     let small = theme::ui_font(11.5);
-    let count_w = if count > 0 {
+    let mut count_w = if count > 0 {
         let shown = count.to_string();
         ui.painter().text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, &shown, small.clone(), t.text_dim);
         ui.painter().layout_no_wrap(shown, small, t.text_dim).size().x + 8.0
     } else {
         0.0
     };
+    // A folder with variables or headers (for its API requests) says so.
+    if !f.vars.is_empty() || !f.headers.is_empty() || f.insecure {
+        let mark = Rect::from_center_size(pos2(r.right() - 8.0 - count_w - 8.0, r.center().y), vec2(12.0, 12.0));
+        icons::paint(ui.painter(), mark, Icon::Settings, t.text_dim);
+        count_w += 18.0;
+    }
     let font = theme::ui_font(12.5);
     let name = crate::file_tabs::fit(ui, &f.name, &font, (r.right() - at.right() - 14.0 - count_w).max(20.0));
     ui.painter().text(pos2(at.right() + 6.0, r.center().y), Align2::LEFT_CENTER, name, font, t.text);
@@ -808,6 +816,9 @@ fn level(tree: &mut Tree, ui: &mut Ui, parent: Option<u64>, depth: usize) {
         let mut asked = None;
         resp.context_menu(|ui| {
             ui.set_min_width(180.0);
+            if tree.on && ui.button(lang.tr("New API Request")).clicked() {
+                asked = Some(PanelAction::NewRequest(f.id));
+            }
             if ui.button(lang.tr("New Folder…")).clicked() {
                 asked = Some(PanelAction::Dialog("newFolder", json!({"group": g.name, "parent": f.id})));
             }
@@ -818,6 +829,9 @@ fn level(tree: &mut Tree, ui: &mut Ui, parent: Option<u64>, depth: usize) {
                 asked = Some(PanelAction::MoveFolder { group: g.name.clone(), id: f.id, to });
             }
             ui.separator();
+            if ui.button(lang.tr("Folder Settings…")).on_hover_text(lang.tr("Variables and headers of the API requests in it")).clicked() {
+                asked = Some(PanelAction::Dialog("folderSettings", json!({"group": g.name, "id": f.id})));
+            }
             if ui.button(lang.tr("Delete Folder…")).clicked() {
                 asked = Some(PanelAction::Dialog("deleteFolder", json!({"group": g.name, "id": f.id})));
             }
@@ -1282,6 +1296,7 @@ fn act(app: &mut SheetApp, ui: &Ui, action: PanelAction, current: &str) {
             }
             persist(app);
         }
+        PanelAction::NewRequest(folder) => crate::api_view::new_request(app, Some(folder)),
         PanelAction::Open { group, path } => {
             // Its group's files open with it in front.
             if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
@@ -1358,6 +1373,9 @@ pub(crate) fn new_menu(app: &mut SheetApp, ui: &mut Ui) {
     }
     if ui.button(lang.tr("New Site Link…")).clicked() {
         crate::web_view::new_link(app);
+    }
+    if ui.button(lang.tr("New API Request")).clicked() {
+        crate::api_view::new_request(app, None);
     }
     ui.separator();
     if ui.button(lang.tr("Open…")).clicked() {

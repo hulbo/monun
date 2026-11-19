@@ -42,6 +42,10 @@ pub struct Folder {
     /// Headers every API request in it sends (a request's own header of that name wins).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<Setting>,
+    /// Its API requests (and those of the folders within it) leave certificates unchecked: a
+    /// development server's own.
+    #[serde(skip_serializing_if = "is_false")]
+    pub insecure: bool,
 }
 
 /// A folder's variable or header: a name and a value; a secret one shows as dots.

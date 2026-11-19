@@ -61,7 +61,7 @@ impl FileKind {
             "ods" => FileKind::Ods,
             "csv" => FileKind::Csv,
             "tsv" | "tab" => FileKind::Tsv,
-            "txt" | "sql" => FileKind::Text,
+            "txt" | "sql" | "http" | "rest" => FileKind::Text,
             "json" | "scjson" => FileKind::Json,
             "html" | "htm" => FileKind::Html,
             "md" | "markdown" => FileKind::Markdown,

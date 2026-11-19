@@ -77,6 +77,9 @@ wordcraft-fonts = { git = "https://github.com/storytold/wordcraft.git", rev = "0
 # `wasm-api` is its facade (`wasm_api::HwpDocument`), which holds some caret and selection
 # queries the core doesn't make public.
 rhwp = { version = "=0.9.0", default-features = false, features = ["wasm-api"] }
+# API requests of .http tabs: rustls checking certificates by the system's store (a company's root
+# certificate trusted as the browser trusts it). The same version Word's font store already builds.
+ureq = { version = "=3.5.1", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 # Joins the print PDF a 한글 tab makes in parts on several threads (the PdfCraft-patched lopdf).
 lopdf = { version = "0.45", default-features = false }
 

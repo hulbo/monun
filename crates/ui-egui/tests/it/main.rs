@@ -8,6 +8,7 @@ mod common;
 
 mod accounting_fill;
 mod advanced_filter;
+mod api_requests;
 mod argument_names;
 mod autosave_persist;
 mod borders;

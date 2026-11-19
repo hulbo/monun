@@ -7,7 +7,7 @@ use crate::DocState;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\"|\"word\"|\"hwp\", prefix?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql`, plain text `Text1.txt`, a Word document `Document1.docx` or a 한글 document `Document1.hwpx`, or `{prefix}1.md` and so on)", always, new_workbook),
+        cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"purchases\" (구매목록, the File › New template)|\"budget\"|\"sales\"|\"grades\"} | {document: true, kind?: \"markdown\"|\"sql\"|\"text\"|\"word\"|\"hwp\"|\"http\", prefix?, text?} (a new text file: Markdown `Doc1.md`, SQL `Query1.sql`, plain text `Text1.txt`, a Word document `Document1.docx`, a 한글 document `Document1.hwpx` or an API request `Request1.http`, or `{prefix}1.md` and so on; `text`: what a Markdown, SQL, text or request file starts with)", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", writable, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", writable, save_as),
@@ -43,12 +43,11 @@ pub fn specs() -> Vec<CommandSpec> {
 fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "document").unwrap_or(false) {
         let kind = match str_param(p, "kind") {
-            Some(k) => {
-                crate::docs::TextKind::parse(k).ok_or_else(|| bad("file.new", format!("`kind` must be markdown, sql, text or word, not `{k}`")))?
-            }
+            Some(k) => crate::docs::TextKind::parse(k)
+                .ok_or_else(|| bad("file.new", format!("`kind` must be markdown, sql, text, word, hwp or http, not `{k}`")))?,
             None => crate::docs::TextKind::Markdown,
         };
-        let i = s.new_text_file(kind, str_param(p, "prefix").unwrap_or(""));
+        let i = s.new_text_file_with(kind, str_param(p, "prefix").unwrap_or(""), str_param(p, "text").unwrap_or(""));
         return Ok(json!({"index": i, "title": s.doc()?.display_title()}));
     }
     let i = match str_param(p, "sample") {

@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 monun-engine = { workspace = true }
-monun-ui-egui = { workspace = true, features = ["diagrams", "pdf", "word", "hwp", "slides"] }
+monun-ui-egui = { workspace = true, features = ["diagrams", "pdf", "word", "hwp", "slides", "api"] }
 eframe = { workspace = true, features = ["default_fonts", "glow", "accesskit", "wayland", "x11", "clipboard"] }
 egui = { workspace = true }
 serde_json = { workspace = true }

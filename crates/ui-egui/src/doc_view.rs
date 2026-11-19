@@ -148,6 +148,13 @@ impl Draft {
     pub fn is_dirty(&self) -> bool {
         self.text != self.base
     }
+    /// Puts `text` in the draft as typing does: it goes to the workbook once typing pauses.
+    pub(crate) fn set(&mut self, text: String) {
+        if text != self.text {
+            self.text = text;
+            self.changed_at = Some(now_ms());
+        }
+    }
 }
 
 impl State {
@@ -583,6 +590,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let zoom = app.session.active().and_then(|d| d.wb.active()).map_or(100, |sh| sh.zoom);
     let z = f32::from(zoom.clamp(10, 400)) / 100.0;
     let started = sync_draft(app, ui.ctx(), uid, sheet, &text);
+    // An API request shows as one to send, its file's text (to edit by hand) when asked.
+    if text_kind(app) == TextKind::Http && !crate::api_view::raw(app, uid) {
+        keyboard(app, ui, Mode::Edit, TextKind::Http);
+        crate::api_view::show(app, ui, (uid, sheet));
+        idle_commit(app, ui.ctx());
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     // The page follows the theme (the grid's stays white): the document's ink is the theme's.
     ui.painter().rect_filled(ui.max_rect(), 0.0, if t.dark { t.window } else { t.grid_bg });
@@ -1017,6 +1031,11 @@ fn toolbar_items(app: &mut SheetApp, ui: &mut Ui, (uid, sheet): (u64, usize), mu
         text_file_items(app, ui, kind, t);
         separator(ui, t);
         find_button(app, ui);
+        if kind == TextKind::Http {
+            // Back to the request, from its file's text.
+            separator(ui, t);
+            crate::api_view::raw_button(app, ui, uid);
+        }
         return Mode::Edit;
     }
     let modes = [
@@ -1128,7 +1147,11 @@ fn text_file_items(app: &SheetApp, ui: &mut Ui, kind: TextKind, t: &Tokens) {
         Some(monun_engine::model::TextEncoding::Cp949) => "EUC-KR (CP949)",
     };
     let breaks = if file.is_some_and(|f| f.crlf) { "CRLF" } else { "LF" };
-    let name = if kind == TextKind::Sql { "SQL" } else { lang.tr("Plain Text") };
+    let name = match kind {
+        TextKind::Sql => "SQL",
+        TextKind::Http => "HTTP",
+        _ => lang.tr("Plain Text"),
+    };
     let label = |ui: &mut Ui, text: &str, tip: &str, ink| {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(text).font(theme::ui_font(13.0)).color(ink)).on_hover_text(lang.tr(tip));

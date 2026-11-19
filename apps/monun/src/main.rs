@@ -269,7 +269,7 @@ fn services() -> Services {
                     "Spreadsheets and documents",
                     &[
                         "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp",
-                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url", "pptx", "ppsx", "potx", "pptm",
+                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url", "pptx", "ppsx", "potx", "pptm", "http", "rest",
                     ],
                 )
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
@@ -280,6 +280,7 @@ fn services() -> Services {
                 .add_filter("Markdown document", &["md", "markdown"])
                 .add_filter("SQL file", &["sql"])
                 .add_filter("Text document", &["txt"])
+                .add_filter("API request", &["http", "rest"])
                 .add_filter("Word document", &["docx", "dotx", "doc", "rtf", "odt"])
                 .add_filter("Hangul document", &["hwp", "hwpx"])
                 .add_filter("Pictures (view only)", &["png", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "ico", "tif", "tiff"])
@@ -300,7 +301,7 @@ fn services() -> Services {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
             // The suggested name's type (an export asks for .pdf, .csv or .html) comes first.
-            const TYPES: [(&str, &str); 11] = [
+            const TYPES: [(&str, &str); 12] = [
                 ("Excel Workbook (.xlsx)", "xlsx"),
                 ("Word Document (.docx)", "docx"),
                 ("Hangul Document (.hwpx)", "hwpx"),
@@ -312,6 +313,7 @@ fn services() -> Services {
                 ("SQL (.sql)", "sql"),
                 ("Text (.txt)", "txt"),
                 ("Site Link (.url)", "url"),
+                ("API Request (.http)", "http"),
             ];
             let ext = path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).filter(|e| TYPES.iter().any(|(_, x)| x == e));
             let ext = ext.unwrap_or_else(|| "xlsx".to_string());

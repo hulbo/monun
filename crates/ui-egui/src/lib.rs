@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access_menu;
+pub mod api_view;
 pub mod backstage;
 mod border_preview;
 mod cell_pictures;
@@ -493,6 +494,8 @@ pub struct SheetApp {
     pub(crate) folder_pending: std::collections::HashMap<u64, u64>,
     /// Each open document's path as last seen, so a file saved under a new name keeps its folder.
     pub(crate) doc_paths: std::collections::HashMap<u64, Option<String>>,
+    /// The API request tabs: what each shows and the request each has on its way ([`api_view`]).
+    pub(crate) api: api_view::State,
     /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
     /// before it is read (a run that doesn't restore the user's files never writes to it).
     pub(crate) project_loaded: Option<projects::Loaded>,

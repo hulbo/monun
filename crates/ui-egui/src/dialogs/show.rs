@@ -138,6 +138,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         "zoom" => 220.0,
         "pasteSpecial" => 480.0,
+        "folderSettings" => 600.0,
         _ => 380.0,
     };
     // In the middle of the window each time it opens (egui would bring it back where it was last,
@@ -345,6 +346,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 }
                 "newGroup" | "renameGroup" | "deleteGroup" | "switchGroup" => crate::groups::dialog(app, ui, &mut d, &mut open),
                 "newFolder" | "renameFolder" | "deleteFolder" => crate::group_folders::dialog(app, ui, &mut d, &mut open),
+                "folderSettings" => crate::api_view::settings_dialog(app, ui, &mut d, &mut open),
                 "newProject" | "renameProject" | "deleteProject" => crate::projects::dialog(app, ui, &mut d, &mut open),
                 "siteLink" => crate::web_view::dialog(app, ui, &mut d, &mut open),
                 "saveChanges" => {

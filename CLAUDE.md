@@ -65,6 +65,14 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Picture tabs: `crates/ui-egui/src/image_view.rs`. The engine knows a picture only as an empty
   read-only tab (`TextKind::Image`, `docs::image_workbook`); the tab decodes the file off the UI
   thread with the `image` crate and shows it fitted, at 100% or at the tab's zoom.
+- API request tabs: `crates/ui-egui/src/api_view/` (feature `api`, desktop). A `.http` file is a text
+  file to the engine (`TextKind::Http`); the tab parses it (`http_file`: VS Code REST Client and
+  IntelliJ format, a request edited is written back alone) and edits it through the document draft
+  (`Draft::set`), so Save, Undo and AutoRecover are a text file's. `{{Name}}` reads the group folders'
+  variables (`group_folders::Folder::vars`, the innermost first), the file's and the request's own
+  `@Name = value`; the folders' headers go too. `send.rs` sends on a thread with `ureq` (rustls,
+  certificates by Windows' store through the platform verifier; `=3.5.1`, the version WordCraft's
+  font store builds).
 - Web tabs: `crates/ui-egui/src/web_view.rs` and `apps/monun/src/web.rs` (Windows). An HTML file or
   a site link (`.url`, which New › Site Link writes) is an empty read-only tab to the engine
   (`TextKind::Web`, `docs::web_workbook`). Each frame the tab lists which page shows where

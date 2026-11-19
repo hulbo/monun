@@ -98,6 +98,7 @@ impl SheetApp {
             groups_frozen: false,
             folder_pending: Default::default(),
             doc_paths: Default::default(),
+            api: Default::default(),
             project_loaded: None,
             root_memos: None,
             files_rect: None,

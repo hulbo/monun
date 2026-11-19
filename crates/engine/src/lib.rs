@@ -704,6 +704,11 @@ impl Session {
     /// A new empty text file of `kind` titled `{prefix}N.{ext}` (`Doc1.md`, `Query1.sql`,
     /// `Text1.txt`): what such a file opened is, before it has a file.
     pub fn new_text_file(&mut self, kind: docs::TextKind, prefix: &str) -> usize {
+        self.new_text_file_with(kind, prefix, "")
+    }
+    /// A new text file of `kind` as [`Session::new_text_file`] makes it, holding `text` (a new
+    /// request's skeleton).
+    pub fn new_text_file_with(&mut self, kind: docs::TextKind, prefix: &str, text: &str) -> usize {
         let fallback = match kind {
             docs::TextKind::Markdown => "Doc",
             docs::TextKind::Sql => "Query",
@@ -712,6 +717,7 @@ impl Session {
             docs::TextKind::Image => "Picture",
             docs::TextKind::Web => "Page",
             docs::TextKind::Slides => "Presentation",
+            docs::TextKind::Http => "Request",
             docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();
@@ -722,7 +728,7 @@ impl Session {
         let wb = match kind {
             docs::TextKind::Word => docs::word_workbook(&title),
             docs::TextKind::Hwp => docs::hwp_workbook(&title),
-            _ => docs::markdown_workbook(&title, b""),
+            _ => docs::markdown_workbook(&title, text.as_bytes()),
         };
         self.add_document(DocState::new(wb, None, title, Trust::Local))
     }

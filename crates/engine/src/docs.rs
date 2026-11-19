@@ -69,6 +69,9 @@ pub enum TextKind {
     /// A PowerPoint presentation, its slides shown by the interface to look at: its document tab
     /// holds no text.
     Slides,
+    /// API requests (`.http`, `.rest`), as VS Code's REST Client and IntelliJ's HTTP Client write
+    /// them: a text file the interface shows as a request to send.
+    Http,
 }
 
 impl TextKind {
@@ -85,6 +88,7 @@ impl TextKind {
             Some("png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff") => TextKind::Image,
             Some("html" | "htm" | "url") => TextKind::Web,
             Some("pptx" | "ppsx" | "potx" | "pptm" | "ppsm" | "potm") => TextKind::Slides,
+            Some("http" | "rest") => TextKind::Http,
             _ => TextKind::Plain,
         }
     }
@@ -101,6 +105,7 @@ impl TextKind {
             TextKind::Image => "png",
             TextKind::Web => "url",
             TextKind::Slides => "pptx",
+            TextKind::Http => "http",
         }
     }
 
@@ -112,6 +117,7 @@ impl TextKind {
             "text" | "txt" | "plain" => Some(TextKind::Plain),
             "word" | "docx" => Some(TextKind::Word),
             "hwp" | "hwpx" | "hangul" => Some(TextKind::Hwp),
+            "http" | "api" | "request" => Some(TextKind::Http),
             _ => None,
         }
     }
