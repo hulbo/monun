@@ -1848,7 +1848,7 @@ const MORE: &[(&str, &str)] = &[
     ("Timeline", "타임라인"),
     ("Diagram", "다이어그램"),
     ("Click to enlarge", "눌러서 크게 보기"),
-    ("Click to open in its own window", "눌러서 새 창으로 크게 보기"),
+    ("Open in its own window", "새 창으로 크게 보기"),
     ("Fit to Window", "창에 맞춤"),
     ("Reload", "다시 불러오기"),
     ("Reload from File", "파일에서 다시 불러오기"),

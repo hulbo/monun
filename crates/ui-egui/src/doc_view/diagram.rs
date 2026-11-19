@@ -1,7 +1,7 @@
 //! Mermaid blocks in the rendered document. Each is drawn on a worker thread
 //! (`monun_markdown::diagram`) at the pixel size it shows at, so its lines and labels stay sharp,
-//! and kept as a texture by its source, scale and theme; a click opens it in a window of its own
-//! ([`zoom_window`]). Without the `diagrams` feature (the web build) a Mermaid block shows as code.
+//! and kept as a texture by its source, scale and theme; the button above it at its right opens it
+//! in a window of its own ([`zoom_window`]). Without the `diagrams` feature (the web build) a Mermaid block shows as code.
 
 use std::collections::HashMap;
 
@@ -136,22 +136,29 @@ pub fn show(ui: &mut Ui, cache: &mut Cache, source: &str, z: f32, t: &Tokens, la
                 size *= w / size.x.max(1.0);
             }
             size *= (room / size.x).min(1.0);
-            let resp = ui
+            let left = if fill { ((room - size.x) / 2.0).max(0.0) } else { 0.0 };
+            // Above it at its right, as a code block's Copy: Open in Its Own Window. (A click on the
+            // diagram itself is the document's: a double-click goes to its line, a right click
+            // offers Add Memo.)
+            let button = egui::vec2(24.0, 22.0) * z;
+            let open = ui
                 .horizontal(|ui| {
-                    if fill {
-                        ui.add_space(((room - size.x) / 2.0).max(0.0));
-                    }
-                    ui.add(egui::Image::new((texture.id(), size)).alt_text(lang.tr("Diagram")).sense(egui::Sense::click()))
+                    ui.add_space((left + size.x - button.x).max(0.0));
+                    let tip = "Open in its own window";
+                    let b = crate::widgets::icon_button(ui, crate::icons::Icon::OpenWindow, t.text_dim, tip, button);
+                    let name = lang.tr(tip);
+                    b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+                    b
                 })
                 .inner;
-            if resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
-            }
-            let resp = resp.on_hover_text(lang.tr("Click to open in its own window"));
-            if resp.clicked() {
+            if open.clicked() {
                 cache.open(&ctx, hash, dark, source);
             }
-            resp
+            ui.horizontal(|ui| {
+                ui.add_space(left);
+                ui.add(egui::Image::new((texture.id(), size)).alt_text(lang.tr("Diagram")).sense(egui::Sense::click()))
+            })
+            .inner
         }
         State::Failed(e) => egui::Frame::new()
             .stroke(egui::Stroke::new(1.0, t.danger))

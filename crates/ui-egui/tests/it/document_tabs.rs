@@ -103,8 +103,14 @@ fn wait_for(h: &mut Harness, label: &str) -> bool {
 fn mermaid_blocks_show_as_diagrams_and_errors_as_messages() {
     let mut h = with_document("```mermaid\nflowchart TD\n  A[start] --> B[end]\n```\n");
     assert!(wait_for(&mut h, "Diagram"), "the flowchart is drawn");
-    // A click opens its own window, the whole diagram fitted in it.
+    // A click on the diagram opens nothing: the button above it at its right opens its own window,
+    // the whole diagram fitted in it.
     h.get_by_label("Diagram").click();
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("Diagram").count(), 1, "a click on the diagram opens nothing");
+    let (diagram, button) = (h.get_by_label("Diagram").rect(), h.get_by_label("Open in its own window").rect());
+    assert!(button.bottom() <= diagram.top() + 0.5 && (button.right() - diagram.right()).abs() < 1.0, "{button:?} above {diagram:?} at its right");
+    h.get_by_label("Open in its own window").click();
     h.run_steps(3);
     assert!(h.query_all_by_label("Diagram").count() >= 2, "the diagram's window opened");
     use egui_kittest::kittest::NodeT as _;

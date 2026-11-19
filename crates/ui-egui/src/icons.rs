@@ -146,6 +146,8 @@ pub enum Icon {
     /// A reference box's button: shrink the window to the box (Collapse) or restore it (Expand).
     Collapse,
     Expand,
+    /// Open in a window of its own: a box with an arrow out of its top right corner.
+    OpenWindow,
     /// The macro debugger's Run: a play triangle.
     Play,
     /// Step: an arrow down onto a line.
@@ -962,6 +964,11 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
             } else {
                 g.poly(&[(8.0, 5.5), (11.5, 2.0), (4.5, 2.0)], c);
             }
+        }
+        Icon::OpenWindow => {
+            g.line(&[(7.0, 3.0), (3.0, 3.0), (3.0, 13.0), (13.0, 13.0), (13.0, 9.0)], c, 1.3);
+            g.line(&[(7.5, 8.5), (13.0, 3.0)], c, 1.3);
+            g.line(&[(9.0, 2.5), (13.5, 2.5), (13.5, 7.0)], c, 1.3);
         }
         Icon::Play => g.poly(&[(4.0, 2.5), (13.0, 8.0), (4.0, 13.5)], green),
         Icon::Step => {

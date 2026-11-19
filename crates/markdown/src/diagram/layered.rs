@@ -2,7 +2,9 @@
 //! flow, nodes ordered within their rank to cross few arrows and lined up with the nodes they link
 //! to, and room between ranks for the arrows' labels. An arrow leaves the side of its node, bends
 //! once, and carries its label on a straight stretch; an arrow back against the flow goes round
-//! below (or beside) the nodes it passes; an arrow to its own node loops out of its side.
+//! below (or beside) the nodes it passes; an arrow to its own node loops out of its side, its
+//! label on the loop's far stretch as other labels sit on their arrows, and an arrow going back
+//! into (or out of) that side keeps clear of the loop.
 //!
 //! Subgroups (`subgraph … end`, nested too) are laid out with the rest: the whole flowchart takes
 //! ranks together, a group in as few as it can (a node of it nothing leads to comes no later than
@@ -60,8 +62,10 @@ const LOOP_OUT: f32 = 22.0;
 const LOOP_HALF: f32 = 20.0;
 /// The most an arrow crossing ranks is moved across the flow to run on straight.
 const STRAIGHTEN: f32 = 48.0;
-/// Between an arrow to its own node and its label, beside it.
-const LOOP_LABEL_GAP: f32 = 4.0;
+/// Between a node and the label of its arrow to itself, which sits on the loop's far stretch.
+const LOOP_LABEL_GAP: f32 = 8.0;
+/// Between an arrow to its own node and another arrow going into or out of the same side.
+const LOOP_CLEAR: f32 = 8.0;
 /// Round a label, kept clear of other arrows.
 const LABEL_CLEAR: f32 = 3.0;
 
@@ -296,7 +300,7 @@ fn build(graph: &Graph, layout: &Layout, ids: &[String], horizontal: bool) -> Op
         let label = layout.edges.get(i).and_then(|e| e.label.as_ref()).map(|t| oriented(t.width, t.height, horizontal));
         if from == to {
             if let Some(item) = items.get_mut(from) {
-                item.room = item.room.max(LOOP_OUT + label.map_or(0.0, |l| LOOP_LABEL_GAP + l.cross));
+                item.room = item.room.max(loop_out(label) + label.map_or(0.0, |l| l.cross / 2.0 + LABEL_CLEAR));
             }
             arrows.push(Arrow { path: vec![from, from], label, label_at: None, back: false, looped: true, cut: [None; 2] });
             continue;
@@ -1125,16 +1129,46 @@ fn slide_labels(layers: &Layers, routes: &mut [Route]) {
 }
 
 /// An arrow from a node to itself: out of its side across the flow, round, and back in, its label
-/// on the far stretch.
+/// on the far stretch (as other labels sit on their arrows), the loop far enough out for the label
+/// to clear the node.
 fn loop_route(layers: &Layers, mains: &[f32], arrow: &Arrow) -> Route {
     let Some(item) = arrow.path.first().and_then(|&i| layers.items.get(i)) else { return Route { points: Vec::new(), label: None, slide: None } };
     let main = mains.get(item.rank).copied().unwrap_or(0.0);
     let side = item.cross + item.size.cross / 2.0;
-    let half = LOOP_HALF.min(item.size.main / 2.0 - 6.0).max(4.0);
-    let out = side + LOOP_OUT;
+    let half = loop_half(item);
+    let out = side + loop_out(arrow.label);
     let points = vec![at(main - half, side), at(main - half, out), at(main + half, out), at(main + half, side)];
-    // The label beside the loop, where it shows whole.
-    Route { points, label: arrow.label.map(|l| at(main, out + LOOP_LABEL_GAP + l.cross / 2.0)), slide: None }
+    Route { points, label: arrow.label.map(|_| at(main, out)), slide: None }
+}
+
+/// How far apart an arrow to its own node leaves and comes back, either side of the node's middle.
+fn loop_half(item: &Item) -> f32 {
+    LOOP_HALF.min(item.size.main / 2.0 - 6.0).max(4.0)
+}
+
+/// How far an arrow to its own node goes out of it: with a label, far enough for the label to sit
+/// on the far stretch clear of the node.
+fn loop_out(label: Option<At>) -> f32 {
+    label.map_or(LOOP_OUT, |l| LOOP_OUT.max(l.cross / 2.0 + LOOP_LABEL_GAP))
+}
+
+/// How far either side of an item's middle the arrow looping out of its far side (and the label on
+/// it) reaches along the flow, if one does.
+fn looped_reach(layers: &Layers, item: usize) -> Option<f32> {
+    let it = layers.items.get(item)?;
+    let arrow = layers.arrows.iter().find(|a| a.looped && a.path.first() == Some(&item))?;
+    Some(loop_half(it).max(arrow.label.map_or(0.0, |l| l.main / 2.0 + LABEL_CLEAR)))
+}
+
+/// Where along the flow an arrow goes into (or out of) the far side of `item`, whose middle is at
+/// `main`, clear of an arrow looping out of that side: past the loop on the side `after` names
+/// (below it, along the flow), else before it; `None` when the side has no room beside the loop.
+fn beside_loop(layers: &Layers, item: usize, main: f32, after: bool) -> Option<f32> {
+    let Some(reach) = looped_reach(layers, item) else { return Some(main) };
+    let it = layers.items.get(item)?;
+    let edge = it.size.main / 2.0 - 4.0;
+    let off = reach + LOOP_CLEAR;
+    (off <= edge).then_some(if after { main + off } else { main - off })
 }
 
 /// An arrow from or to a group cut where it leaves the frame of the one and enters that of the other.
@@ -1315,27 +1349,35 @@ fn back_route(layers: &Layers, mains: &[f32], arrow: &Arrow, lanes: &mut usize) 
     let up = a.rank > b.rank;
     let port = |it: &Item| it.cross + if it.spreads { it.size.cross * 0.3 } else { 0.0 };
     let mut points = Vec::with_capacity(6);
-    let from = match arrow.path.first() {
-        Some(&i) if up && walled(layers, mains, i) => {
+    // Out of and into the far side clear of an arrow looping out of it (past the loop towards the
+    // other end); with no room beside the loop, as with something beyond.
+    let (side_a, side_b) = match (arrow.path.first(), arrow.path.last()) {
+        (Some(&i), Some(&j)) => (beside_loop(layers, i, ma, !up), beside_loop(layers, j, mb, up)),
+        _ => (Some(ma), Some(mb)),
+    };
+    let from = match (arrow.path.first(), side_a) {
+        (Some(&i), side) if up && (side.is_none() || walled(layers, mains, i)) => {
             let below = ma + a.size.main / 2.0;
             points.extend([at(below, port(a)), at(below + JOG, port(a))]);
             below + JOG
         }
-        _ => {
-            points.push(at(ma, a.cross + a.size.cross / 2.0));
-            ma
+        (_, side) => {
+            let main = side.unwrap_or(ma);
+            points.push(at(main, a.cross + a.size.cross / 2.0));
+            main
         }
     };
     points.push(at(from, lane));
-    let to = match arrow.path.last() {
-        Some(&i) if up && walled(layers, mains, i) => {
+    let to = match (arrow.path.last(), side_b) {
+        (Some(&i), side) if up && (side.is_none() || walled(layers, mains, i)) => {
             let above = mb - b.size.main / 2.0;
             points.extend([at(above - JOG, lane), at(above - JOG, port(b)), at(above, port(b))]);
             above - JOG
         }
-        _ => {
-            points.extend([at(mb, lane), at(mb, b.cross + b.size.cross / 2.0)]);
-            mb
+        (_, side) => {
+            let main = side.unwrap_or(mb);
+            points.extend([at(main, lane), at(main, b.cross + b.size.cross / 2.0)]);
+            main
         }
     };
     Route { points, label: arrow.label.map(|_| at((from + to) / 2.0, lane)), slide: None }
@@ -1457,7 +1499,7 @@ mod tests {
         (layout, ours)
     }
 
-    const SAMPLES: [&str; 14] = [
+    const SAMPLES: [&str; 15] = [
         "flowchart LR\n    U[\"업로드<br>로컬 NAS /share/files\"] -->|\"sendFile 배치<br>ECM 등록 · 로컬 삭제\"| E[\"ECM 문서\"]\n    E -->|\"ECM 자동 변환\"| P[\"PDF 변환본\"]\n    E -->|\"OCR 마스킹 배치<br>editDocument 버전업\"| M[\"마스킹본<br>ECM 최신 버전\"]\n    P -->|\"뷰어 주석 저장<br>changePdf\"| P2[\"주석 PDF\"]\n    M --> D1[\"downloadFile<br>/api/cmmn/file/{fileId}\"]\n    P2 --> D2[\"downloadPdfFile<br>/api/cmmn/file/{fileId}/pdf\"]",
         "flowchart LR\n    A[\"운영 레거시 DB\"] -->|\"1 시험 이관<br>공고 1개 사람 + 첨부 메타\"| B[\"개발 DB\"]\n    N[\"운영 레거시 NAS\"] -->|\"2 그 파일만 임시 복사\"| L[\"로컬 폴더\"]\n    B --> APP[\"3 로컬 isbm\"]\n    L --> APP\n    APP -->|\"4 해시 대조 · 이력 확인\"| X[\"5 같은 날 삭제\"]",
         "flowchart TD\n    A[시작] --> B{확인}\n    B -->|예| C[처리]\n    B -->|아니오| D[다시 보기]\n    D --> B",
@@ -1482,6 +1524,8 @@ mod tests {
         "flowchart LR\n    subgraph APPS[\"번호가 적힌 신청서\"]\n        E[\"교육<br>신청 · 수강 · 취소\"]\n        F[\"수당\"]\n        C[\"상담\"]\n    end\n    R[요청] --> Q{판단}\n    Q -->|\"아니오\"| N[비회원]\n    Q -->|\"예\"| M[회원]\n    E --> M",
         // The same written the other way round: the decision first, the group after it.
         "flowchart LR\n    R[\"번호 없는 신청<br>확인값만\"] --> Q{\"확인값이 회원과<br>같은가\"}\n    Q -->|\"같다\"| M[\"회원 · 키 = 번호\"]\n    Q -->|\"없다\"| N[\"비회원 · 키 = 같은 확인값의<br>최근 접수번호\"]\n    subgraph APPS[\"번호가 적힌 신청서\"]\n        E[\"교육<br>신청 · 수강 · 취소\"]\n        F[\"수당\"]\n        C[\"상담\"]\n        L[\"자문\"]\n        B[\"창업\"]\n        G[\"연계\"]\n    end\n    APPS -->|\"번호\"| M",
+        // A node with an arrow to itself that arrows also come back into, from below, by its side.
+        "flowchart TD\n    C[\"전체 조회<br>저장 없음\"] --> E[\"검토 · 수정 화면<br>빈칸 · 다시 지정\"]\n    E -->|선택 삭제 · 행마다 수정| E\n    E -->|저장| F{\"검증<br>필수값 · 일자 · 겹침\"}\n    F -->|실패| G[\"사유 안내<br>화면 유지\"]\n    G --> E\n    F -->|통과| H[\"서버 저장\"]",
     ];
 
     const GROUP_AND_DECISION: usize = 9;
@@ -1569,10 +1613,9 @@ mod tests {
             let (layout, _) = laid(source);
             for e in &layout.edges {
                 assert!(e.points.len() >= 2, "{source}: {} -> {} has a route", e.from, e.to);
-                if let (Some(anchor), Some(t)) = (e.label_anchor, e.label.as_ref()) {
-                    // An arrow to its own node has its label beside it.
-                    let near = if e.from == e.to { t.width.max(t.height) / 2.0 + LOOP_LABEL_GAP + 0.5 } else { 0.5 };
-                    assert!(off_line(anchor, &e.points) < near, "{source}: the label of {} -> {} is on it", e.from, e.to);
+                // An arrow to its own node too, on its far stretch.
+                if let (Some(anchor), Some(_)) = (e.label_anchor, e.label.as_ref()) {
+                    assert!(off_line(anchor, &e.points) < 0.5, "{source}: the label of {} -> {} is on it", e.from, e.to);
                 }
                 for (end, id) in [(e.points.first(), &e.from), (e.points.last(), &e.to)] {
                     let (Some(&(x, y)), Some(n)) = (end, layout.nodes.get(id)) else { continue };
