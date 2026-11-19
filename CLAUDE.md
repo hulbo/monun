@@ -1,8 +1,9 @@
 # 모눈 (Monun) — instructions for agents
 
 Monun is a personal, Rust-native spreadsheet for one Korean freelancer (Windows desktop). It reads
-and writes XLSX and aims to behave like Excel for Windows. The repository is github.com/hulbo/monun.
-Its tests and samples use made-up names, never those of the user's clients or work.
+and writes XLSX and aims to behave like Excel for Windows. The repository is public
+(github.com/hulbo/monun): tests, samples, docs and commit messages use made-up names, never those
+of the user's clients or work, nor paths, people or systems from the user's documents.
 
 ## Working here
 - Talk to the user in Korean.
