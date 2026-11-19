@@ -744,8 +744,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 The 한글 view (crates/ui-egui/src/hwp_view) reads, lays out, draws, edits and saves .hwp and .hwpx
 documents with rhwp 0.9.0 (https://crates.io/crates/rhwp, https://github.com/edwardkim/rhwp). rhwp was
-developed from Hancom's published HWP file format documents; "한글", "HWP" and "HWPX" are trademarks of
-Hancom Inc., with which neither rhwp nor Monun is affiliated. Its licence:
+developed from Hancom's published HWP file format documents, which ask works made with them to say:
+
+본 제품은 한글과컴퓨터의 한글 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+
+"한글", "한컴", "HWP" and "HWPX" are registered trademarks of Hancom Inc., with which neither rhwp nor
+Monun is affiliated, sponsored or endorsed. rhwp's licence:
 
 MIT License
 

@@ -338,3 +338,7 @@ MIT 또는 Apache-2.0 중 하나를 선택해 따릅니다. 전문과 저작권 
 [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE)에 있고, 번들 자산의 출처는
 [ATTRIBUTION.md](ATTRIBUTION.md)에 있습니다. 함께 빌드되는 오픈소스 크레이트의 목록과 라이선스 전문은
 `cargo xtask third-party THIRD-PARTY-LICENSES.txt`로 만들 수 있고, 설치 파일에 들어 있습니다.
+
+한글 문서는 [rhwp](https://github.com/edwardkim/rhwp)로 다룹니다. 본 제품은 한글과컴퓨터의 한글 문서 파일(.hwp)
+공개 문서를 참고하여 개발하였습니다. "한글", "한컴", "HWP", "HWPX"는 주식회사 한글과컴퓨터의 등록 상표이며, 모눈은
+한글과컴퓨터와 제휴, 후원, 승인 관계가 없습니다.
