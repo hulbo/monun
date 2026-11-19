@@ -96,6 +96,8 @@ impl SheetApp {
             group_handle: None,
             history: Default::default(),
             groups_frozen: false,
+            folder_pending: Default::default(),
+            doc_paths: Default::default(),
             project_loaded: None,
             root_memos: None,
             files_rect: None,

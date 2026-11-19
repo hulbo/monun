@@ -30,6 +30,12 @@ pub struct FileGroup {
     /// When it last became the group in use (milliseconds since 1970), for Most Recently Used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub used: Option<u64>,
+    /// Its folders ([`crate::group_folders`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<crate::group_folders::Folder>,
+    /// The folder each of its files sits in (path → folder id); a file not here sits at the top.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub placed: std::collections::BTreeMap<String, u64>,
 }
 
 /// The order the group panel and the group menu list the groups in (the panel's Sort button).
@@ -212,12 +218,16 @@ pub(crate) fn sync(app: &mut SheetApp) {
     }
     let (files, active) = open_files(app);
     let i = ensure(app);
-    let mut changed = false;
+    // A file saved under a new name keeps its folder; one never saved goes to its folder now.
+    let mut changed = crate::group_folders::follow_documents(app, i);
     if let Some(g) = app.ui.groups.get_mut(i)
         && (g.files != files || g.active != active)
     {
-        changed = g.files != files;
-        g.files = files;
+        if g.files != files {
+            changed = true;
+            g.files = files;
+            g.tidy_folders();
+        }
         g.active = active;
     }
     // A project of the root keeps its groups' files in its own file (which is in front stays here).
@@ -270,7 +280,7 @@ fn open_group(app: &mut SheetApp, g: &FileGroup) {
 
 /// Writes the groups now (the desktop's `ui.json`, and a project of the root's own file), so a
 /// change outlasts a crash.
-fn persist(app: &mut SheetApp) {
+pub(crate) fn persist(app: &mut SheetApp) {
     crate::projects::save_current(app);
     if let Some(save) = &app.services.save_ui {
         save(&app.ui);
@@ -358,6 +368,7 @@ fn remove_file(app: &mut SheetApp, group: &str, path: &str) {
     }
     if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
         g.files.retain(|f| f != path);
+        g.placed.remove(path);
         if g.active.as_deref() == Some(path) {
             g.active = None;
         }
@@ -517,14 +528,6 @@ enum PanelAction {
     Close(u64),
     CloseOthers(u64),
     CloseAll,
-    /// Move a file of the group in use (its window) to this place among the others.
-    MoveWindow(u64, usize),
-    /// Move a file of another group to this place among its files.
-    MoveFile {
-        group: String,
-        path: String,
-        to: usize,
-    },
     /// Open a group dialog (New, Rename, Delete).
     Dialog(&'static str, Json),
     /// Move a group to this place in Your Own Order.
@@ -542,6 +545,34 @@ enum PanelAction {
         group: String,
         project: Option<String>,
     },
+    /// Put a file of a group in a folder (`Some(None)`: at the group's top), and/or next to another
+    /// of its files (`true`: before it) in the group's order.
+    Arrange {
+        group: String,
+        file: FileRef,
+        folder: Option<Option<u64>>,
+        next_to: Option<(FileRef, bool)>,
+    },
+    /// Fold or unfold a folder.
+    FoldFolder {
+        group: String,
+        id: u64,
+    },
+    /// Move a folder into another (`None`: to the group's top).
+    MoveFolder {
+        group: String,
+        id: u64,
+        to: Option<u64>,
+    },
+}
+
+/// A file row's file: its window and document (a file of the group in use), its path (`None` for
+/// one never saved).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileRef {
+    window: Option<u64>,
+    doc: Option<u64>,
+    path: Option<String>,
 }
 
 /// Where the group panel keeps whether a group was unfolded or folded by hand.
@@ -579,6 +610,8 @@ pub(crate) fn sort_menu(app: &mut SheetApp, ui: &mut Ui) {
 pub struct OpenFile {
     /// The window it shows in.
     pub window: u64,
+    /// Its document.
+    pub doc: u64,
     pub path: Option<String>,
     /// Its window's title (`Book1`, `Book1:2` for a workbook's second window, `Doc1.md`).
     pub title: String,
@@ -599,6 +632,7 @@ pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
             let d = app.session.documents().iter().find(|d| d.uid == w.doc_uid)?;
             Some(OpenFile {
                 window: w.id,
+                doc: d.uid,
                 path: d.path.clone(),
                 title: app.session.window_title(w.id)?,
                 kind: d.text_kind(),
@@ -618,27 +652,35 @@ pub fn open_files_listed(app: &SheetApp) -> Vec<OpenFile> {
     rows
 }
 
-/// How the panel's file rows are drawn: the panel's width, and whether they drag (Your Own Order).
+/// How the panel's file rows are drawn: the panel's width, and the order its files are listed in
+/// (in Your Own Order a file drags to another place; in any order, onto a folder).
 struct Rows<'a> {
     t: &'a Tokens,
     lang: crate::i18n::Language,
     width: f32,
     order: FileOrder,
-    drag: bool,
 }
 
+/// How far a folder's rows stand in from those of the folder (or group) it sits in.
+const INDENT: f32 = 16.0;
+
 /// A file's row: its icon and name (cut to fit before `end` pixels from the right), in `ink`, the
-/// row shaded while it is the file in front or under the pointer; `label` names it for assistive
-/// technology.
-fn file_row(ui: &mut Ui, rows: &Rows, (icon, name, label): (Icon, &str, &str), front: bool, ink: egui::Color32, end: f32) -> (Rect, egui::Response) {
+/// row shaded while it is the file in front or under the pointer, `depth` folders in; `label` names
+/// it for assistive technology.
+fn file_row(
+    ui: &mut Ui,
+    rows: &Rows,
+    (icon, name, label): (Icon, &str, &str),
+    (front, ink): (bool, egui::Color32),
+    (end, depth): (f32, usize),
+) -> (Rect, egui::Response) {
     let t = rows.t;
-    let sense = if rows.drag { Sense::click_and_drag() } else { Sense::click() };
-    let (r, resp) = ui.allocate_exact_size(vec2(rows.width, 24.0), sense);
+    let (r, resp) = ui.allocate_exact_size(vec2(rows.width, 24.0), Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, label));
     if front || resp.hovered() {
         ui.painter().rect_filled(r, 4.0, t.hover);
     }
-    let at = Rect::from_center_size(pos2(r.left() + 46.0, r.center().y), vec2(14.0, 14.0));
+    let at = Rect::from_center_size(pos2(r.left() + 46.0 + INDENT * depth as f32, r.center().y), vec2(14.0, 14.0));
     icons::paint(ui.painter(), at, icon, if front { t.accent } else { t.text_dim });
     let font = theme::ui_font(12.5);
     let shown = crate::file_tabs::fit(ui, name, &font, (r.right() - at.right() - 6.0 - end).max(20.0));
@@ -646,39 +688,185 @@ fn file_row(ui: &mut Ui, rows: &Rows, (icon, name, label): (Icon, &str, &str), f
     (r, resp)
 }
 
-/// A row being dragged among `rects` (the rows of one group, `index` the one dragged): a line marks
-/// where it would go, and once let go the place among the others it goes to.
-fn dragged_to(ui: &Ui, rects: &[Rect], index: usize, dropped: bool, t: &Tokens) -> Option<usize> {
-    let y = ui.ctx().pointer_interact_pos()?.y;
-    let others: Vec<Rect> = rects.iter().enumerate().filter(|(k, _)| *k != index).map(|(_, r)| *r).collect();
-    let to = others.iter().filter(|r| r.center().y < y).count();
-    if dropped {
-        return (to != index).then_some(to);
+/// A folder's row, `depth` folders in: its arrow, icon and name, and how many files it holds (those
+/// of the folders within it too). A click folds or unfolds it.
+fn folder_row(ui: &mut Ui, rows: &Rows, f: &crate::group_folders::Folder, depth: usize, count: usize) -> (Rect, egui::Response) {
+    let t = rows.t;
+    let (r, resp) = ui.allocate_exact_size(vec2(rows.width, 24.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &f.name));
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
     }
-    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-    let line = others.get(to).map_or_else(|| others.last().map_or(y, |r| r.bottom()), |r| r.top());
-    let x = rects.first().map_or(ui.min_rect().x_range(), |r| r.x_range());
-    ui.painter().hline(egui::Rangef::new(x.min + 36.0, x.max), line, egui::Stroke::new(2.0, t.accent));
-    None
+    let x = r.left() + 46.0 + INDENT * depth as f32;
+    let arrow = Rect::from_center_size(pos2(x - 14.0, r.center().y), vec2(9.0, 9.0));
+    icons::paint(ui.painter(), arrow, if f.folded { Icon::Right } else { Icon::Chevron }, t.text_dim);
+    let at = Rect::from_center_size(pos2(x, r.center().y), vec2(14.0, 14.0));
+    icons::paint(ui.painter(), at, if f.folded { Icon::Folder } else { Icon::OpenFolder }, t.text_dim);
+    let small = theme::ui_font(11.5);
+    let count_w = if count > 0 {
+        let shown = count.to_string();
+        ui.painter().text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, &shown, small.clone(), t.text_dim);
+        ui.painter().layout_no_wrap(shown, small, t.text_dim).size().x + 8.0
+    } else {
+        0.0
+    };
+    let font = theme::ui_font(12.5);
+    let name = crate::file_tabs::fit(ui, &f.name, &font, (r.right() - at.right() - 14.0 - count_w).max(20.0));
+    ui.painter().text(pos2(at.right() + 6.0, r.center().y), Align2::LEFT_CENTER, name, font, t.text);
+    (r, resp)
 }
 
-/// The files of the group in use: a click shows one, its ✕ (or the middle button) closes it, the
-/// right button offers Close, Close Others, Close All and Copy Full Path, and in Your Own Order a
-/// file drags to another place. A file with unsaved changes has a dot in its ✕'s place.
-fn open_file_rows(ui: &mut Ui, files: &[OpenFile], rows: &Rows) -> Option<PanelAction> {
-    let (t, lang) = (rows.t, rows.lang);
-    let mut action = None;
-    let mut rects: Vec<(u64, Rect)> = Vec::new();
-    let mut moving = None;
-    for f in files {
-        let ink = if f.front { t.accent_text } else { t.text };
-        let label = if f.dirty { format!("{} ({})", f.title, lang.tr("unsaved changes")) } else { f.title.clone() };
-        let (r, resp) = file_row(ui, rows, (crate::file_tabs::file_icon(f.kind), &f.title, &label), f.front, ink, 24.0);
-        let window = f.window;
-        rects.push((window, r));
-        if resp.dragged() || resp.drag_stopped() {
-            moving = Some((window, resp.drag_stopped()));
+/// A file listed under a group: a window of the group in use, or a file another group keeps.
+struct Item {
+    file: FileRef,
+    title: String,
+    icon: Icon,
+    front: bool,
+    dirty: bool,
+    /// The folder it sits in; `None` at the group's top.
+    folder: Option<u64>,
+}
+
+/// The files of the group in use (`g`), from its windows as listed.
+fn items_in_use(app: &SheetApp, g: &FileGroup, listed: &[OpenFile]) -> Vec<Item> {
+    listed
+        .iter()
+        .map(|f| Item {
+            file: FileRef { window: Some(f.window), doc: Some(f.doc), path: f.path.clone() },
+            title: f.title.clone(),
+            icon: crate::file_tabs::file_icon(f.kind),
+            front: f.front,
+            dirty: f.dirty,
+            folder: match &f.path {
+                Some(p) => g.folder_of(p),
+                None => app.folder_pending.get(&f.doc).copied().filter(|id| g.folder(*id).is_some()),
+            },
+        })
+        .collect()
+}
+
+/// The files another group keeps, in the order the panel lists them.
+fn items_kept(g: &FileGroup, order: FileOrder) -> Vec<Item> {
+    ordered_files(&g.files, order)
+        .into_iter()
+        .map(|path| Item {
+            title: file_name(&path).to_string(),
+            icon: crate::file_tabs::path_icon(&path),
+            front: false,
+            dirty: false,
+            folder: g.folder_of(&path),
+            file: FileRef { window: None, doc: None, path: Some(path) },
+        })
+        .collect()
+}
+
+/// What a row of a group's tree stands for.
+#[derive(Clone, Copy)]
+enum Spot {
+    Folder(u64),
+    /// The file at this index of the tree's items.
+    File(usize),
+}
+
+/// A group's files and folders being drawn, and what was asked of them.
+struct Tree<'a> {
+    g: &'a FileGroup,
+    items: &'a [Item],
+    rows: &'a Rows<'a>,
+    /// The group in use (its files are windows).
+    on: bool,
+    drawn: Vec<(Rect, Spot)>,
+    /// The file being dragged (its index), and whether it was let go this frame.
+    moving: Option<(usize, bool)>,
+    action: Option<PanelAction>,
+}
+
+/// The files and folders of a group under its row `head`: folders first (by name, each with what
+/// it holds unless folded), then the files at that level. A file drags onto a folder (or the
+/// group's row, for its top) to go in it, and in Your Own Order between files to move there.
+fn group_files(ui: &mut Ui, g: &FileGroup, items: &[Item], (rows, on): (&Rows, bool), head: Rect) -> Option<PanelAction> {
+    let mut tree = Tree { g, items, rows, on, drawn: Vec::new(), moving: None, action: None };
+    level(&mut tree, ui, None, 0);
+    drop_on(&mut tree, ui, head);
+    tree.action
+}
+
+/// The folders in `parent` and their contents, then the files in `parent`, `depth` folders in.
+fn level(tree: &mut Tree, ui: &mut Ui, parent: Option<u64>, depth: usize) {
+    let (g, items, rows) = (tree.g, tree.items, tree.rows);
+    if depth >= crate::group_folders::DEPTH_MAX {
+        return;
+    }
+    for f in g.subfolders(parent) {
+        let count = items.iter().filter(|it| it.folder.is_some_and(|id| g.is_within(id, f.id))).count();
+        let (r, resp) = folder_row(ui, rows, f, depth, count);
+        tree.drawn.push((r, Spot::Folder(f.id)));
+        if resp.clicked() {
+            tree.action = Some(PanelAction::FoldFolder { group: g.name.clone(), id: f.id });
         }
+        let lang = rows.lang;
+        let mut asked = None;
+        resp.context_menu(|ui| {
+            ui.set_min_width(180.0);
+            if ui.button(lang.tr("New Folder…")).clicked() {
+                asked = Some(PanelAction::Dialog("newFolder", json!({"group": g.name, "parent": f.id})));
+            }
+            if ui.button(lang.tr("Rename Folder…")).clicked() {
+                asked = Some(PanelAction::Dialog("renameFolder", json!({"group": g.name, "id": f.id, "name": f.name})));
+            }
+            if let Some(crate::group_folders::MoveTo::Folder(to)) = crate::group_folders::move_menu(ui, g, lang, f.parent, Some(f.id)) {
+                asked = Some(PanelAction::MoveFolder { group: g.name.clone(), id: f.id, to });
+            }
+            ui.separator();
+            if ui.button(lang.tr("Delete Folder…")).clicked() {
+                asked = Some(PanelAction::Dialog("deleteFolder", json!({"group": g.name, "id": f.id})));
+            }
+        });
+        if asked.is_some() {
+            tree.action = asked;
+        }
+        if !f.folded {
+            level(tree, ui, Some(f.id), depth + 1);
+        }
+    }
+    for (k, item) in items.iter().enumerate() {
+        if item.folder == parent {
+            item_row(tree, ui, k, item, depth);
+        }
+    }
+}
+
+/// A file's row in a group's tree: of the group in use, a click shows it, its ✕ (or the middle
+/// button) closes it, and the right button offers Close, Close Others, Close All, Copy Full Path
+/// and Move to Folder; of another group, a click goes to that group with it in front, and the right
+/// button takes it out of the group or moves it to a folder. A file with unsaved changes has a dot
+/// in its ✕'s place.
+fn item_row(tree: &mut Tree, ui: &mut Ui, k: usize, item: &Item, depth: usize) {
+    let (g, rows, on) = (tree.g, tree.rows, tree.on);
+    let (t, lang) = (rows.t, rows.lang);
+    let ink = if item.front {
+        t.accent_text
+    } else if on {
+        t.text
+    } else {
+        t.text_dim
+    };
+    let label = if item.dirty { format!("{} ({})", item.title, lang.tr("unsaved changes")) } else { item.title.clone() };
+    let end = if on { 24.0 } else { 6.0 };
+    let (r, resp) = file_row(ui, rows, (item.icon, &item.title, &label), (item.front, ink), (end, depth));
+    tree.drawn.push((r, Spot::File(k)));
+    if resp.dragged() || resp.drag_stopped() {
+        tree.moving = Some((k, resp.drag_stopped()));
+    }
+    let mut action = None;
+    let file = item.file.clone();
+    let move_to = |to: crate::group_folders::MoveTo| match to {
+        crate::group_folders::MoveTo::Folder(to) => {
+            PanelAction::Arrange { group: g.name.clone(), file: file.clone(), folder: Some(to), next_to: None }
+        }
+        crate::group_folders::MoveTo::NewFolder => PanelAction::Dialog("newFolder", json!({"group": g.name, "path": file.path, "doc": file.doc})),
+    };
+    if let Some(window) = item.file.window {
         // The close button, or the unsaved dot in its place while the pointer is elsewhere.
         let x = Rect::from_center_size(pos2(r.right() - 12.0, r.center().y), vec2(18.0, 18.0));
         let close = ui.interact(x, ui.scope_id().with(("monun.group_file_close", window)), Sense::click());
@@ -692,13 +880,13 @@ fn open_file_rows(ui: &mut Ui, files: &[OpenFile], rows: &Rows) -> Option<PanelA
             if close.on_hover_text(close_label).clicked() {
                 action = Some(PanelAction::Close(window));
             }
-        } else if f.dirty {
+        } else if item.dirty {
             ui.painter().circle_filled(x.center(), 3.0, t.text_dim);
         }
-        let resp = resp.on_hover_text(f.path.clone().unwrap_or_else(|| f.title.clone()));
+        let resp = resp.on_hover_text(item.file.path.clone().unwrap_or_else(|| item.title.clone()));
         if resp.middle_clicked() {
             action = Some(PanelAction::Close(window));
-        } else if resp.clicked() && action.is_none() && !f.front {
+        } else if resp.clicked() && action.is_none() && !item.front {
             action = Some(PanelAction::Activate(window));
         }
         resp.context_menu(|ui| {
@@ -712,7 +900,7 @@ fn open_file_rows(ui: &mut Ui, files: &[OpenFile], rows: &Rows) -> Option<PanelA
             if ui.button(lang.tr("Close All")).clicked() {
                 action = Some(PanelAction::CloseAll);
             }
-            if let Some(path) = &f.path {
+            if let Some(path) = &item.file.path {
                 ui.separator();
                 if ui.button(lang.tr("Copy Full Path")).clicked() {
                     ui.ctx().copy_text(path.clone());
@@ -721,32 +909,12 @@ fn open_file_rows(ui: &mut Ui, files: &[OpenFile], rows: &Rows) -> Option<PanelA
                     show_in_folder(path);
                 }
             }
+            ui.separator();
+            if let Some(to) = crate::group_folders::move_menu(ui, g, lang, item.folder, None) {
+                action = Some(move_to(to));
+            }
         });
-    }
-    if let Some((window, dropped)) = moving
-        && let Some(index) = rects.iter().position(|(w, _)| *w == window)
-        && let Some(to) = dragged_to(ui, &rects.iter().map(|(_, r)| *r).collect::<Vec<_>>(), index, dropped, t)
-    {
-        action = Some(PanelAction::MoveWindow(window, to));
-    }
-    action
-}
-
-/// The files of a group not in use: a click goes to the group with that file in front, the right
-/// button takes it out of the group, and in Your Own Order a file drags to another place.
-fn kept_file_rows(ui: &mut Ui, g: &FileGroup, rows: &Rows) -> Option<PanelAction> {
-    let (t, lang) = (rows.t, rows.lang);
-    let mut action = None;
-    let mut rects: Vec<Rect> = Vec::new();
-    let mut moving = None;
-    let files = ordered_files(&g.files, rows.order);
-    for (k, path) in files.iter().enumerate() {
-        let name = file_name(path).to_string();
-        let (r, resp) = file_row(ui, rows, (crate::file_tabs::path_icon(path), &name, &name), false, t.text_dim, 6.0);
-        rects.push(r);
-        if resp.dragged() || resp.drag_stopped() {
-            moving = Some((k, resp.drag_stopped()));
-        }
+    } else if let Some(path) = &item.file.path {
         let resp = resp.on_hover_text(path);
         if resp.clicked() {
             action = Some(PanelAction::Open { group: g.name.clone(), path: path.clone() });
@@ -755,15 +923,75 @@ fn kept_file_rows(ui: &mut Ui, g: &FileGroup, rows: &Rows) -> Option<PanelAction
             if ui.button(lang.tr("Remove from Group")).on_hover_text(lang.tr("The file itself stays where it is.")).clicked() {
                 action = Some(PanelAction::Remove { group: g.name.clone(), path: path.clone() });
             }
+            if let Some(to) = crate::group_folders::move_menu(ui, g, lang, item.folder, None) {
+                action = Some(move_to(to));
+            }
         });
     }
-    if let Some((k, dropped)) = moving
-        && let Some(path) = files.get(k)
-        && let Some(to) = dragged_to(ui, &rects, k, dropped, t)
-    {
-        action = Some(PanelAction::MoveFile { group: g.name.clone(), path: path.clone(), to });
+    if action.is_some() {
+        tree.action = action;
     }
-    action
+}
+
+/// A file of the tree being dragged: over a folder (or the group's row `head`, for its top) the
+/// folder is outlined and letting go puts the file in it; elsewhere among the files, in Your Own
+/// Order, a line marks where it would go, and letting go moves it there (into the folder of the
+/// file it lands next to).
+fn drop_on(tree: &mut Tree, ui: &Ui, head: Rect) {
+    let Some((k, dropped)) = tree.moving else { return };
+    let (items, t) = (tree.items, tree.rows.t);
+    let Some(item) = items.get(k) else { return };
+    let Some(p) = ui.ctx().pointer_interact_pos() else { return };
+    let span = tree.drawn.iter().fold(head, |a, (r, _)| a.union(*r));
+    if !span.expand2(vec2(24.0, 8.0)).contains(p) {
+        return;
+    }
+    if !dropped {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    let into = if head.contains(p) {
+        Some((head, None))
+    } else {
+        tree.drawn.iter().find_map(|(r, s)| match s {
+            Spot::Folder(id) if r.contains(p) => Some((*r, Some(*id))),
+            _ => None,
+        })
+    };
+    let group = tree.g.name.clone();
+    if let Some((r, folder)) = into {
+        if !dropped {
+            ui.painter().rect_stroke(r.shrink(1.0), 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+        } else if folder != item.folder {
+            tree.action = Some(PanelAction::Arrange { group, file: item.file.clone(), folder: Some(folder), next_to: None });
+        }
+        return;
+    }
+    if tree.rows.order != FileOrder::Tabs {
+        return;
+    }
+    let files: Vec<(Rect, usize)> = tree
+        .drawn
+        .iter()
+        .filter_map(|(r, s)| match s {
+            Spot::File(j) if *j != k => Some((*r, *j)),
+            _ => None,
+        })
+        .collect();
+    let to = files.iter().filter(|(r, _)| r.center().y < p.y).count();
+    if !dropped {
+        let Some(y) = files.get(to).map(|(r, _)| r.top()).or_else(|| files.last().map(|(r, _)| r.bottom())) else { return };
+        ui.painter().hline(egui::Rangef::new(head.left() + 36.0, head.right()), y, egui::Stroke::new(2.0, t.accent));
+        return;
+    }
+    // Before the file below the line, else after the one above it.
+    let next_to = match (files.get(to), to.checked_sub(1).and_then(|i| files.get(i))) {
+        (Some((_, below)), _) => items.get(*below).map(|n| (n, true)),
+        (None, Some((_, above))) => items.get(*above).map(|n| (n, false)),
+        (None, None) => None,
+    };
+    let Some((near, before)) = next_to else { return };
+    let folder = (near.folder != item.folder).then_some(near.folder);
+    tree.action = Some(PanelAction::Arrange { group, file: item.file.clone(), folder, next_to: Some((near.file.clone(), before)) });
 }
 
 /// Opens Explorer at the folder holding `path`, with the file selected.
@@ -799,13 +1027,47 @@ fn close_each(app: &mut SheetApp, keep: Option<u64>) {
     }
 }
 
-/// Moves the file `path` of the group `group` to place `to` among its files.
-fn move_file(app: &mut SheetApp, group: &str, path: &str, to: usize) {
-    let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) else { return };
-    let Some(from) = g.files.iter().position(|f| f == path) else { return };
-    let file = g.files.remove(from);
-    let to = to.min(g.files.len());
-    g.files.insert(to, file);
+/// Puts a file of the group `group` in `folder` (`Some(None)`: at the group's top) and/or next to
+/// another of its files (`true`: before it): a window among the windows (the group in use), a path
+/// among the group's files (another group). A file never saved goes in its folder once it is.
+fn arrange(app: &mut SheetApp, group: &str, file: &FileRef, folder: Option<Option<u64>>, next_to: Option<(FileRef, bool)>) {
+    if let Some(folder) = folder
+        && let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group)
+    {
+        match (&file.path, file.doc) {
+            (Some(path), _) => g.place(path, folder),
+            (None, Some(doc)) => match folder.filter(|f| g.folder(*f).is_some()) {
+                Some(f) => {
+                    app.folder_pending.insert(doc, f);
+                }
+                None => {
+                    app.folder_pending.remove(&doc);
+                }
+            },
+            (None, None) => {}
+        }
+    }
+    if let Some((other, before)) = next_to {
+        let at = |i: usize| if before { i } else { i + 1 };
+        match (file.window, other.window, &file.path, &other.path) {
+            (Some(w), Some(o), _, _) => {
+                let others: Vec<u64> = app.session.windows().iter().map(|x| x.id).filter(|x| *x != w).collect();
+                if let Some(i) = others.iter().position(|x| *x == o) {
+                    app.session.move_window(w, at(i));
+                }
+            }
+            (None, None, Some(path), Some(o)) => {
+                if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group)
+                    && let Some(from) = g.files.iter().position(|f| f == path)
+                {
+                    let moved = g.files.remove(from);
+                    let i = g.files.iter().position(|f| f == o).map_or(g.files.len(), at);
+                    g.files.insert(i.min(g.files.len()), moved);
+                }
+            }
+            _ => {}
+        }
+    }
     persist(app);
 }
 
@@ -853,6 +1115,9 @@ fn group_row(
         }
         if ui.button(lang.tr("Rename Group…")).clicked() {
             action = Some(PanelAction::Dialog("renameGroup", json!({"name": g.name})));
+        }
+        if ui.button(lang.tr("New Folder…")).clicked() {
+            action = Some(PanelAction::Dialog("newFolder", json!({"group": g.name})));
         }
         // Any group but the only one; the group in use goes to its neighbour first.
         let delete = ui.add_enabled(last > 0, egui::Button::new(lang.tr("Delete Group…")));
@@ -924,7 +1189,7 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
     }
     let listed = open_files_listed(app);
     let order = app.ui.file_order;
-    let rows = Rows { t: &t, lang, width: ui.available_width(), order, drag: order == FileOrder::Tabs };
+    let rows = Rows { t: &t, lang, width: ui.available_width(), order };
     let mut action = None;
     // The groups' rows as drawn, and the one being dragged or let go (Your Own Order).
     let mut group_rects: Vec<(String, Rect)> = Vec::new();
@@ -947,14 +1212,14 @@ pub(crate) fn panel(app: &mut SheetApp, ui: &mut Ui) {
         if !open {
             continue;
         }
-        let empty = if on { listed.is_empty() } else { g.files.is_empty() };
-        if empty {
+        let items = if on { items_in_use(app, g, &listed) } else { items_kept(g, order) };
+        if items.is_empty() && g.folders.is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(40.0);
                 ui.label(egui::RichText::new(lang.tr("No files")).font(theme::ui_font(12.0)).color(t.text_dim).italics());
             });
         }
-        let asked = if on { open_file_rows(ui, &listed, &rows) } else { kept_file_rows(ui, g, &rows) };
+        let asked = group_files(ui, g, &items, (&rows, on), r);
         action = asked.or(action);
         ui.add_space(4.0);
     }
@@ -1004,8 +1269,19 @@ fn act(app: &mut SheetApp, ui: &Ui, action: PanelAction, current: &str) {
         PanelAction::Close(w) => app.run_or_alert("window.close", json!({"window": w})),
         PanelAction::CloseOthers(w) => close_each(app, Some(w)),
         PanelAction::CloseAll => close_each(app, None),
-        PanelAction::MoveWindow(w, to) => app.session.move_window(w, to),
-        PanelAction::MoveFile { group, path, to } => move_file(app, &group, &path, to),
+        PanelAction::Arrange { group, file, folder, next_to } => arrange(app, &group, &file, folder, next_to),
+        PanelAction::FoldFolder { group, id } => {
+            if let Some(f) = app.ui.groups.iter_mut().find(|g| g.name == group).and_then(|g| g.folders.iter_mut().find(|f| f.id == id)) {
+                f.folded = !f.folded;
+            }
+            persist(app);
+        }
+        PanelAction::MoveFolder { group, id, to } => {
+            if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
+                g.move_folder(id, to);
+            }
+            persist(app);
+        }
         PanelAction::Open { group, path } => {
             // Its group's files open with it in front.
             if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
@@ -1088,6 +1364,10 @@ pub(crate) fn new_menu(app: &mut SheetApp, ui: &mut Ui) {
         app.run_or_alert("file.open", json!({}));
     }
     ui.separator();
+    if ui.button(lang.tr("New Folder…")).clicked() {
+        let group = current(app);
+        app.open_dialog("newFolder", json!({"group": group}));
+    }
     if ui.button(lang.tr("New Group…")).clicked() {
         app.open_dialog("newGroup", json!({}));
     }

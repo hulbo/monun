@@ -1012,6 +1012,13 @@ impl Dialog {
             "newGroup" => Dialog::custom("newGroup", "New Group", json!({"name": "", "take": false})),
             "renameGroup" => Dialog::custom("renameGroup", "Rename Group", json!({"name": p("name"), "was": p("name")})),
             "deleteGroup" => Dialog::custom("deleteGroup", "Delete Group", json!({"name": p("name")})),
+            "newFolder" => Dialog::custom(
+                "newFolder",
+                "New Folder",
+                json!({"group": p("group"), "parent": p("parent"), "path": p("path"), "doc": p("doc"), "name": ""}),
+            ),
+            "renameFolder" => Dialog::custom("renameFolder", "Rename Folder", json!({"group": p("group"), "id": p("id"), "name": p("name")})),
+            "deleteFolder" => Dialog::custom("deleteFolder", "Delete Folder", json!({"group": p("group"), "id": p("id")})),
             "switchGroup" => Dialog::custom(
                 "switchGroup",
                 "Switch Group",

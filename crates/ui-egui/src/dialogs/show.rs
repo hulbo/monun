@@ -344,6 +344,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     }
                 }
                 "newGroup" | "renameGroup" | "deleteGroup" | "switchGroup" => crate::groups::dialog(app, ui, &mut d, &mut open),
+                "newFolder" | "renameFolder" | "deleteFolder" => crate::group_folders::dialog(app, ui, &mut d, &mut open),
                 "newProject" | "renameProject" | "deleteProject" => crate::projects::dialog(app, ui, &mut d, &mut open),
                 "siteLink" => crate::web_view::dialog(app, ui, &mut d, &mut open),
                 "saveChanges" => {

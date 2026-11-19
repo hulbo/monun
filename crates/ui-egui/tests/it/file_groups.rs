@@ -702,3 +702,120 @@ fn a_file_is_removed_from_its_group_by_its_menu() {
     assert!(dir.join("a.xlsx").exists() && dir.join("b.md").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The top of the group panel's row `label` (the one furthest right: the panel's).
+fn row_top(h: &egui_kittest::Harness<'static, SheetApp>, label: &str) -> f32 {
+    h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().top()
+}
+
+/// Types `name` into the open folder dialog and presses OK.
+fn name_folder(h: &mut egui_kittest::Harness<'static, SheetApp>, name: &str) {
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Folder name:").type_text(name);
+    h.run_steps(2);
+    press(h, "OK");
+    h.run_steps(3);
+}
+
+/// Right-clicks the panel's row `label`, opens its Move to Folder menu and picks `to` there.
+fn move_to_folder(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, to: &str) {
+    let at = h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
+    h.get_all_by_label(label).find(|n| n.rect().center() == at).unwrap().click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Move to Folder").click();
+    h.run_steps(2);
+    h.get_all_by_label(to).max_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().click();
+    h.run_steps(3);
+}
+
+#[test]
+fn files_sort_into_folders_in_the_group_panel() {
+    let dir = folder("folders");
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // A folder made from the group's menu, listed before the group's files.
+    panel_menu(&mut h, "Default group", "New Folder…");
+    name_folder(&mut h, "API");
+    let g = &h.state().ui.groups[0];
+    assert_eq!(g.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["API"]);
+    assert!(row_top(&h, "API") < row_top(&h, "a.xlsx"));
+    assert!(row_top(&h, "a.xlsx") < row_top(&h, "b.md"), "the files as their tabs are");
+    // Another of that name beside it is refused.
+    panel_menu(&mut h, "Default group", "New Folder…");
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Folder name:").type_text("api");
+    h.run_steps(2);
+    press(&mut h, "OK");
+    h.run_steps(3);
+    assert!(h.query_by_label("There is already a folder with this name here.").is_some());
+    press(&mut h, "Cancel");
+    h.run_steps(2);
+
+    // A file moved into it by its menu: listed under it, before the files at the top.
+    move_to_folder(&mut h, "b.md", "API");
+    let id = h.state().ui.groups[0].folders[0].id;
+    assert_eq!(h.state().ui.groups[0].placed.get(&path(&dir, "b.md")), Some(&id));
+    assert!(row_top(&h, "API") < row_top(&h, "b.md") && row_top(&h, "b.md") < row_top(&h, "a.xlsx"));
+    // And one dragged onto it.
+    let from = h.get_all_by_label("a.xlsx").map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
+    let onto = h.get_by_role_and_label(egui::accesskit::Role::Button, "API").rect().center();
+    drag(&mut h, from, onto);
+    assert_eq!(h.state().ui.groups[0].placed.get(&path(&dir, "a.xlsx")), Some(&id), "dragged in");
+    assert_eq!(open_names(&h), ["a.xlsx", "b.md"], "the tabs as they were");
+
+    // A subfolder, and a click folds a folder with all it holds.
+    panel_menu(&mut h, "API", "New Folder…");
+    name_folder(&mut h, "Live");
+    let live = h.state().ui.groups[0].folders.iter().find(|f| f.name == "Live").map(|f| (f.id, f.parent)).unwrap();
+    assert_eq!(live.1, Some(id));
+    let rows = |h: &egui_kittest::Harness<'static, SheetApp>, name: &str| h.query_all_by_label(name).count();
+    let (b_shown, live_shown) = (rows(&h, "b.md"), rows(&h, "Live"));
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "API").click();
+    h.run_steps(3);
+    assert!(h.state().ui.groups[0].folders[0].folded);
+    assert_eq!((rows(&h, "b.md"), rows(&h, "Live")), (b_shown - 1, live_shown - 1), "its files and folders hidden");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "API").click();
+    h.run_steps(3);
+
+    // Deleted: what it held moves up a level; the files stay where they are.
+    panel_menu(&mut h, "API", "Delete Folder…");
+    press(&mut h, "Delete");
+    h.run_steps(3);
+    let g = &h.state().ui.groups[0];
+    assert_eq!(g.folders.iter().map(|f| (f.name.as_str(), f.parent)).collect::<Vec<_>>(), [("Live", None)]);
+    assert!(g.placed.is_empty(), "{:?}", g.placed);
+    assert_eq!(open_names(&h), ["a.xlsx", "b.md"]);
+    assert!(dir.join("a.xlsx").exists() && dir.join("b.md").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_file_keeps_its_folder_when_saved_under_a_new_name_and_a_new_one_goes_in_once_saved() {
+    let dir = folder("folder-save");
+    let mut h = harness(&[path(&dir, "b.md")]);
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    panel_menu(&mut h, "Default group", "New Folder…");
+    name_folder(&mut h, "Docs");
+    let id = h.state().ui.groups[0].folders[0].id;
+    move_to_folder(&mut h, "b.md", "Docs");
+    // Saved as c.md: c.md is in the folder.
+    h.state_mut().run("file.saveAs", json!({"path": path(&dir, "c.md")})).unwrap();
+    h.run_steps(3);
+    let g = &h.state().ui.groups[0];
+    assert_eq!(g.placed.get(&path(&dir, "c.md")), Some(&id), "{:?}", g.placed);
+    assert!(!g.placed.contains_key(&path(&dir, "b.md")));
+    // A new file, never saved, moved into the folder: there once saved.
+    h.state_mut().run("file.new", json!({"document": true, "prefix": "Doc"})).unwrap();
+    h.run_steps(3);
+    let title = open_names(&h).last().cloned().unwrap();
+    move_to_folder(&mut h, &title, "Docs");
+    assert!(row_top(&h, &title) < row_top(&h, "c.md") || row_top(&h, "Docs") < row_top(&h, &title), "listed in the folder");
+    h.state_mut().run("file.saveAs", json!({"path": path(&dir, "d.md")})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.groups[0].placed.get(&path(&dir, "d.md")), Some(&id));
+    // Closed, it leaves the group and its folder.
+    panel_menu(&mut h, "d.md", "Close");
+    h.run_steps(2);
+    assert!(!h.state().ui.groups[0].placed.contains_key(&path(&dir, "d.md")));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -99,6 +99,12 @@ struct StoredGroup {
     name: String,
     #[serde(default)]
     files: Vec<String>,
+    /// Its folders ([`crate::group_folders`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folders: Vec<crate::group_folders::Folder>,
+    /// The folder each file sits in, the file as `files` keeps it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    placed: std::collections::BTreeMap<String, u64>,
 }
 
 /// Whether two parts of a path are the same: regardless of case on Windows.
@@ -183,7 +189,10 @@ fn parse(root: &str, text: &str) -> Result<Vec<FileGroup>, String> {
                 files.push(f);
             }
         }
-        out.push(FileGroup { name, files, ..FileGroup::default() });
+        let placed = g.placed.iter().map(|(f, id)| (resolve(root, f), *id)).filter(|(f, _)| files.contains(f)).collect();
+        let mut group = FileGroup { name, files, folders: g.folders, placed, ..FileGroup::default() };
+        group.tidy_folders();
+        out.push(group);
     }
     Ok(out)
 }
@@ -200,7 +209,15 @@ fn read(root: &str, name: &str, lang: crate::i18n::Language) -> Result<(String, 
 fn render(root: &str, groups: &[FileGroup]) -> String {
     let file = ProjectFile {
         monun: VERSION,
-        groups: groups.iter().map(|g| StoredGroup { name: g.name.clone(), files: g.files.iter().map(|f| stored(root, f)).collect() }).collect(),
+        groups: groups
+            .iter()
+            .map(|g| StoredGroup {
+                name: g.name.clone(),
+                files: g.files.iter().map(|f| stored(root, f)).collect(),
+                folders: g.folders.clone(),
+                placed: g.placed.iter().map(|(f, id)| (stored(root, f), *id)).collect(),
+            })
+            .collect(),
     };
     let mut text = serde_json::to_string_pretty(&file).unwrap_or_default();
     text.push('\n');
@@ -517,7 +534,13 @@ pub(crate) fn send_group(app: &mut SheetApp, group: &str, target: Option<&str>) 
     if app.ui.project.as_deref() == target {
         return Err(lang.tr("The group is in that project already.").to_string());
     }
-    let copy = |taken: &[FileGroup]| FileGroup { name: unique(taken, &g.name), files: g.files.clone(), ..FileGroup::default() };
+    let copy = |taken: &[FileGroup]| FileGroup {
+        name: unique(taken, &g.name),
+        files: g.files.clone(),
+        folders: g.folders.clone(),
+        placed: g.placed.clone(),
+        ..FileGroup::default()
+    };
     match target {
         None => {
             let set = app.ui.this_pc.get_or_insert_with(GroupSet::default);
@@ -878,7 +901,13 @@ mod tests {
         let root = root.to_string_lossy().into_owned();
         let inside = Path::new(&root).join("a").join("x.md").to_string_lossy().into_owned();
         let groups = vec![
-            FileGroup { name: "REQ-1".into(), files: vec![inside.clone(), "/elsewhere/y.xlsx".into()], active: Some(inside.clone()), used: Some(5) },
+            FileGroup {
+                name: "REQ-1".into(),
+                files: vec![inside.clone(), "/elsewhere/y.xlsx".into()],
+                active: Some(inside.clone()),
+                used: Some(5),
+                ..FileGroup::default()
+            },
             FileGroup { name: "req-1".into(), files: vec![], ..FileGroup::default() },
         ];
         let text = render(&root, &groups);
@@ -889,6 +918,23 @@ mod tests {
         assert_eq!(back[0].files, [inside, "/elsewhere/y.xlsx".to_string()]);
         assert!(parse(&root, r#"{"monun": 2, "groups": []}"#).is_err());
         assert!(parse(&root, "not json").is_err());
+    }
+
+    #[test]
+    fn a_groups_folders_go_in_its_project_file_with_its_files_relative() {
+        let root = std::env::temp_dir().join(format!("monun-project-folders-{}", std::process::id()));
+        let root = root.to_string_lossy().into_owned();
+        let inside = Path::new(&root).join("api").join("pay.http").to_string_lossy().into_owned();
+        let mut g = FileGroup { name: "REQ-1".into(), files: vec![inside.clone()], ..FileGroup::default() };
+        let api = g.add_folder("API", None);
+        g.place(&inside, Some(api));
+        let text = render(&root, std::slice::from_ref(&g));
+        assert!(text.contains("\"api/pay.http\": 1"), "{text}");
+        let back = parse(&root, &text).unwrap();
+        assert_eq!((back[0].folders.clone(), back[0].folder_of(&inside)), (g.folders.clone(), Some(api)));
+        // A file the group no longer lists has no place in it.
+        let stale = text.replace("\"files\": [\n        \"api/pay.http\"\n      ]", "\"files\": []");
+        assert!(parse(&root, &stale).unwrap()[0].placed.is_empty(), "{stale}");
     }
 
     #[test]

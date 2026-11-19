@@ -23,7 +23,8 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Files in the window (`SheetApp::file_tabs`, the desktop's): no tabs at the bottom. The group panel
   (`groups::panel`, shown from the start) lists the group in use's open windows
   (`groups::open_files_listed`, unsaved files too), closes and orders them, and its + makes files and
-  groups; the title bar's `groups::file_button` names the file in front and lists the others. A
+  groups. A group's files sort into folders (`group_folders`: `FileGroup::folders`, and `placed`,
+  path → folder; a file never saved goes by its document, `SheetApp::folder_pending`); the title bar's `groups::file_button` names the file in front and lists the others. A
   workbook shows Excel's sheet tabs (`tabs::sheet_tabs`, through `file_tabs::bottom_bar`); other
   files have no bottom bar. Its title strip tucks it into the window's edge
   (`UiState::group_tucked`, `panes::tucked`): a handle floats over the files there (an egui `Area`,

@@ -27,6 +27,7 @@ pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
 pub mod grid;
+pub mod group_folders;
 pub mod groups;
 #[cfg(feature = "hwp")]
 pub mod hwp_view;
@@ -487,6 +488,11 @@ pub struct SheetApp {
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes
     /// ([`groups::sync`]).
     pub(crate) groups_frozen: bool,
+    /// Files of the group in use put in a folder before they were ever saved (document uid →
+    /// folder id): they go there by path once saved ([`group_folders::follow_documents`]).
+    pub(crate) folder_pending: std::collections::HashMap<u64, u64>,
+    /// Each open document's path as last seen, so a file saved under a new name keeps its folder.
+    pub(crate) doc_paths: std::collections::HashMap<u64, Option<String>>,
     /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
     /// before it is read (a run that doesn't restore the user's files never writes to it).
     pub(crate) project_loaded: Option<projects::Loaded>,
