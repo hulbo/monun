@@ -253,7 +253,10 @@ fn iso_time(ms: f64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
-/// `text` laid out with a value a line and two spaces an indent, when it is JSON; the keys stay in
+/// How far a level of JSON or XML stands in, as Postman lays them out.
+const INDENT: &str = "    ";
+
+/// `text` laid out with a value a line and four spaces an indent, when it is JSON; the keys stay in
 /// their order.
 pub fn pretty_json(text: &str) -> Option<String> {
     let t = text.trim();
@@ -265,7 +268,7 @@ pub fn pretty_json(text: &str) -> Option<String> {
     let (mut in_str, mut escaped) = (false, false);
     let newline = |out: &mut String, depth: usize| {
         out.push('\n');
-        out.push_str(&"  ".repeat(depth));
+        out.push_str(&INDENT.repeat(depth));
     };
     let mut chars = t.chars().peekable();
     while let Some(c) = chars.next() {
@@ -312,6 +315,127 @@ pub fn pretty_json(text: &str) -> Option<String> {
             ':' => out.push_str(": "),
             c if c.is_whitespace() => {}
             c => out.push(c),
+        }
+    }
+    Some(out)
+}
+
+/// A piece of XML: a tag that opens (with its name), one that closes, one that stands alone (an
+/// empty element, a declaration, a comment), or text between tags.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Piece<'a> {
+    Open(&'a str, &'a str),
+    Close(&'a str, &'a str),
+    Alone(&'a str),
+    Text(&'a str),
+}
+
+/// The pieces of `text`, `None` once a tag doesn't end.
+fn pieces(text: &str) -> Option<Vec<Piece<'_>>> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let Some(lt) = rest.find('<') else {
+            if !rest.trim().is_empty() {
+                out.push(Piece::Text(rest));
+            }
+            break;
+        };
+        let (before, at) = rest.split_at(lt);
+        if !before.trim().is_empty() {
+            out.push(Piece::Text(before));
+        }
+        // Where the tag ends: comments, character data and declarations by their own marks; a
+        // tag by its `>`, quotes in its attributes skipped.
+        let end = if at.starts_with("<!--") {
+            at.find("-->").map(|i| i + 3)
+        } else if at.starts_with("<![CDATA[") {
+            at.find("]]>").map(|i| i + 3)
+        } else if at.starts_with("<?") {
+            at.find("?>").map(|i| i + 2)
+        } else {
+            let mut quote = None;
+            at.char_indices().find_map(|(i, c)| match (quote, c) {
+                (None, '"' | '\'') => {
+                    quote = Some(c);
+                    None
+                }
+                (Some(q), c) if c == q => {
+                    quote = None;
+                    None
+                }
+                (None, '>') => Some(i + 1),
+                _ => None,
+            })
+        }?;
+        let (tag, after) = at.split_at(end);
+        let piece = if tag.starts_with("<![CDATA[") {
+            Piece::Text(tag)
+        } else if tag.starts_with("<!") || tag.starts_with("<?") || tag.ends_with("/>") {
+            Piece::Alone(tag)
+        } else if let Some(n) = tag.strip_prefix("</") {
+            Piece::Close(tag, n.trim_end_matches('>').trim())
+        } else {
+            let inner = tag.trim_start_matches('<').trim_end_matches('>');
+            Piece::Open(tag, inner.split(char::is_whitespace).next().unwrap_or_default())
+        };
+        out.push(piece);
+        rest = after;
+    }
+    Some(out)
+}
+
+/// `text` laid out a tag a line and four spaces a level, when it is XML: an element holding only
+/// text stays on its line (`<name>Kim</name>`), as Postman shows it.
+pub fn pretty_xml(text: &str) -> Option<String> {
+    let t = text.trim();
+    if !t.starts_with('<') {
+        return None;
+    }
+    let pieces = pieces(t)?;
+    if !pieces.iter().any(|p| matches!(p, Piece::Open(..))) {
+        return None;
+    }
+    let mut out = String::with_capacity(t.len() * 2);
+    let mut depth = 0usize;
+    let mut line = |depth: usize, s: &str| {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&INDENT.repeat(depth));
+        out.push_str(s);
+    };
+    let mut i = 0;
+    while let Some(p) = pieces.get(i) {
+        match *p {
+            Piece::Open(tag, name) => match (pieces.get(i + 1), pieces.get(i + 2)) {
+                (Some(Piece::Text(text)), Some(Piece::Close(close, n))) if *n == name && !text.trim().contains('\n') => {
+                    line(depth, &format!("{tag}{}{close}", text.trim()));
+                    i += 3;
+                }
+                (Some(Piece::Close(close, n)), _) if *n == name => {
+                    line(depth, &format!("{tag}{close}"));
+                    i += 2;
+                }
+                _ => {
+                    line(depth, tag);
+                    depth += 1;
+                    i += 1;
+                }
+            },
+            Piece::Close(tag, _) => {
+                depth = depth.saturating_sub(1);
+                line(depth, tag);
+                i += 1;
+            }
+            Piece::Alone(tag) => {
+                line(depth, tag);
+                i += 1;
+            }
+            Piece::Text(text) => {
+                line(depth, text.trim());
+                i += 1;
+            }
         }
     }
     Some(out)
@@ -372,8 +496,22 @@ mod tests {
     #[test]
     fn json_is_laid_out_in_its_own_order() {
         let pretty = pretty_json(r#"{"z":1,"a":[1,2,{}],"s":"x, y: {z}","e":[] }"#).unwrap();
-        assert_eq!(pretty, "{\n  \"z\": 1,\n  \"a\": [\n    1,\n    2,\n    {}\n  ],\n  \"s\": \"x, y: {z}\",\n  \"e\": []\n}");
+        assert_eq!(pretty, "{\n    \"z\": 1,\n    \"a\": [\n        1,\n        2,\n        {}\n    ],\n    \"s\": \"x, y: {z}\",\n    \"e\": []\n}");
         assert!(pretty_json("not json {").is_none());
         assert!(pretty_json("{\"a\": 1").is_none());
+    }
+
+    #[test]
+    fn xml_is_laid_out_a_tag_a_line_its_text_beside_it() {
+        let xml = "<?xml version=\"1.0\"?><Envelope><Header a=\"x>y\"><id>7</id><empty/><none></none></Header><!-- note --><Body><name>김 철수</name></Body></Envelope>";
+        assert_eq!(
+            pretty_xml(xml).unwrap(),
+            "<?xml version=\"1.0\"?>\n<Envelope>\n    <Header a=\"x>y\">\n        <id>7</id>\n        <empty/>\n        <none></none>\n    </Header>\n    <!-- note -->\n    <Body>\n        <name>김 철수</name>\n    </Body>\n</Envelope>"
+        );
+        assert!(pretty_xml("plain text").is_none());
+        assert!(pretty_xml("<unclosed").is_none());
+        // Laid out again, the same.
+        let once = pretty_xml(xml).unwrap();
+        assert_eq!(pretty_xml(&once).unwrap(), once);
     }
 }

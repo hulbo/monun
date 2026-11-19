@@ -10,7 +10,8 @@ pub struct Outgoing {
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub body: String,
+    /// What goes as the body: its files are read on the way.
+    pub body: super::body::Payload,
     /// Certificates go unchecked (a development server's own).
     pub insecure: bool,
 }
@@ -68,11 +69,11 @@ pub fn send(out: &Outgoing) -> Result<Answer, String> {
             Builder::Body(r) => Builder::Body(r.header(k.as_str(), v.as_str())),
         };
     }
-    let body = out.body.as_bytes();
+    let body = super::body::bytes(&out.body)?;
     let answer = match b {
-        Builder::Body(r) => r.send(body),
+        Builder::Body(r) => r.send(body.as_slice()),
         Builder::Bare(r) if body.is_empty() => r.call(),
-        Builder::Bare(r) => r.force_send_body().send(body),
+        Builder::Bare(r) => r.force_send_body().send(body.as_slice()),
     };
     let mut answer = answer.map_err(|e| describe(&e))?;
     let status = answer.status();

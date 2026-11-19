@@ -8,10 +8,13 @@
 //! What the tab edits goes to the file's text (the document draft), so Save, Undo, AutoRecover
 //! and printing are a text file's. File Text shows the text to edit by hand.
 
+pub mod body;
+mod body_ui;
 pub mod http_file;
 pub mod send;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use egui::{Align, FontFamily, FontId, Layout, RichText, Ui, UiBuilder, vec2};
@@ -63,6 +66,62 @@ struct Tab {
     /// the text stays so, what was typed stays as typed (a space at a value's end too).
     work: Option<Work>,
     call: Option<Call>,
+    /// The bodies a switch of the Body's way left, for coming back.
+    stash: body_ui::Stash,
+    /// How the answer's body shows: as what (`None`: as it says it is), as it came, wrapped.
+    format: Option<Format>,
+    as_it_came: bool,
+    wrap: bool,
+}
+
+/// What an answer's body is shown as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Format {
+    Json,
+    Xml,
+    Html,
+    Text,
+}
+
+impl Format {
+    const ALL: [Format; 4] = [Format::Json, Format::Xml, Format::Html, Format::Text];
+
+    fn label(self) -> &'static str {
+        match self {
+            Format::Json => "JSON",
+            Format::Xml => "XML",
+            Format::Html => "HTML",
+            Format::Text => "Text",
+        }
+    }
+
+    fn lang(self) -> crate::code_editor::Lang {
+        match self {
+            Format::Json => crate::code_editor::Lang::Json,
+            Format::Xml | Format::Html => crate::code_editor::Lang::Markup,
+            Format::Text => crate::code_editor::Lang::Plain,
+        }
+    }
+
+    /// What a body is, by its `Content-Type`, else by how it starts.
+    fn of(content_type: &str, text: &str) -> Format {
+        let ct = content_type.to_ascii_lowercase();
+        if ct.contains("json") {
+            return Format::Json;
+        }
+        if ct.contains("html") {
+            return Format::Html;
+        }
+        if ct.contains("xml") {
+            return Format::Xml;
+        }
+        match body::RawKind::guess(text) {
+            body::RawKind::Json if http_file::pretty_json(text).is_some() => Format::Json,
+            body::RawKind::Html => Format::Html,
+            body::RawKind::Xml => Format::Xml,
+            _ => Format::Text,
+        }
+    }
 }
 
 struct Work {
@@ -115,10 +174,24 @@ struct Shown {
     reason: String,
     headers: Vec<(String, String)>,
     size: usize,
-    /// The body as text (JSON laid out).
-    text: String,
-    json: bool,
+    /// The body as text, as it came; laid out as JSON and as XML where it reads so.
+    raw: String,
+    json: Option<String>,
+    xml: Option<String>,
+    /// What it says it is (else reads as).
+    format: Format,
     cut: bool,
+}
+
+impl Shown {
+    /// The body's text as `format` shows it: laid out, unless `as_it_came`.
+    fn text(&self, format: Format, as_it_came: bool) -> &str {
+        match (format, as_it_came) {
+            (Format::Json, false) => self.json.as_deref().unwrap_or(&self.raw),
+            (Format::Xml, false) => self.xml.as_deref().unwrap_or(&self.raw),
+            _ => &self.raw,
+        }
+    }
 }
 
 /// Where a request's values come from: the folder it sits in and those that folder sits in.
@@ -138,6 +211,8 @@ struct Ready {
     missing: Vec<String>,
     /// The address as it goes, a hidden variable's value as dots.
     shown_url: String,
+    /// Why it can't go as it is (its GraphQL variables aren't JSON, its file isn't chosen).
+    error: Option<String>,
 }
 
 /// What a click in the tab asked for, done once it is drawn.
@@ -192,7 +267,7 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
 
 /// `req` with its variables read: the folders', then the file's, then its own (the later wins). A
 /// value may itself name another (`BaseUrl = https://{{Domain}}`).
-fn ready(scope: &Scope, file_vars: &[(String, String)], req: &Request, now: f64) -> Ready {
+fn ready(scope: &Scope, file_vars: &[(String, String)], (req, base): (&Request, Option<&Path>), now: f64) -> Ready {
     let mut values = scope.vars.clone();
     for (k, v) in file_vars.iter().chain(&req.vars) {
         upsert(&mut values, k, v, false, false);
@@ -213,20 +288,25 @@ fn ready(scope: &Scope, file_vars: &[(String, String)], req: &Request, now: f64)
         s
     };
     let url = read(req.url.trim());
+    // The body as it goes, and the request's headers it goes with (a form's boundary named…).
+    let (body, own, error) = match body::payload(req, &mut read, base) {
+        Ok((body, own)) => (body, own, None),
+        Err(e) => (body::Payload::Empty, req.headers.clone(), Some(e)),
+    };
     let mut headers: Vec<(String, String, ())> = Vec::new();
-    for (k, v) in scope.headers.iter().chain(&req.headers) {
+    for (k, v) in scope.headers.iter().chain(&own) {
         let k = k.trim();
         if !k.is_empty() {
             let v = read(v.trim());
             upsert(&mut headers, k, &v, (), true);
         }
     }
-    let body = read(&req.body);
     let method = if req.method.is_empty() { "GET".to_string() } else { req.method.clone() };
     Ready {
         out: Outgoing { method, url, headers: headers.into_iter().map(|(k, v, ())| (k, v)).collect(), body, insecure: scope.insecure },
         missing,
         shown_url: http_file::substitute(req.url.trim(), &masked, now).0,
+        error,
     }
 }
 
@@ -275,16 +355,16 @@ fn poll(app: &mut SheetApp, uid: u64, ctx: &egui::Context) {
 /// An answer's body as text: decoded (UTF-8, or the Korean code page an older server answers
 /// in), JSON laid out.
 fn shown(a: Answer) -> Shown {
-    let json_type = a.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.to_ascii_lowercase().contains("json"));
+    let content_type = a.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone()).unwrap_or_default();
     let binary = a.body.iter().take(4096).any(|b| *b == 0);
-    let text = if binary { format!("({} bytes)", a.body.len()) } else { monun_engine::docs::decode_text_file(&a.body).0 };
-    let pretty = if binary { None } else { http_file::pretty_json(&text) };
-    let json = pretty.is_some() || json_type;
-    Shown { status: a.status, reason: a.reason, headers: a.headers, size: a.body.len(), text: pretty.unwrap_or(text), json, cut: a.cut }
+    let raw = if binary { format!("({} bytes)", a.body.len()) } else { monun_engine::docs::decode_text_file(&a.body).0 };
+    let (json, xml) = if binary { (None, None) } else { (http_file::pretty_json(&raw), http_file::pretty_xml(&raw)) };
+    let format = if binary { Format::Text } else { Format::of(&content_type, &raw) };
+    Shown { status: a.status, reason: a.reason, headers: a.headers, size: a.body.len(), raw, json, xml, format, cut: a.cut }
 }
 
 /// `n` bytes as `512 B`, `1.2 KB`, `3.4 MB`.
-fn size_text(n: usize) -> String {
+pub(super) fn size_text(n: usize) -> String {
     let n = n as f64;
     if n < 1024.0 {
         format!("{n} B")
@@ -299,6 +379,10 @@ fn size_text(n: usize) -> String {
 fn send_now(app: &mut SheetApp, (uid, index): (u64, usize), ready: &Ready, ctx: &egui::Context) {
     let lang = app.ui.language;
     let tab = app.api.tabs.entry(uid).or_default();
+    if let Some(e) = &ready.error {
+        tab.call = Some(Call::failed(index, e.clone()));
+        return;
+    }
     if !ready.missing.is_empty() {
         let why = lang.tr("These variables have no value: {names}").replace("{names}", &ready.missing.join(", "));
         tab.call = Some(Call::failed(index, why));
@@ -331,7 +415,7 @@ fn title(r: &Request) -> String {
     if r.name.trim().is_empty() { format!("{} {}", r.method, r.url) } else { r.name.clone() }
 }
 
-fn mono(size: f32) -> FontId {
+pub(super) fn mono(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(theme::MONO.into()))
 }
 
@@ -375,9 +459,20 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     }
     let mut req = tab.work.as_ref().map(|w| w.request.clone()).unwrap_or_default();
     let (mut section, mut answer_view) = (tab.section, tab.answer_view);
+    let mut look = Look { format: tab.format, as_it_came: tab.as_it_came, wrap: tab.wrap };
+    let mut stash = std::mem::take(&mut tab.stash);
     let before = req.clone();
     let scope = scope(app, uid);
-    let prepared = ready(&scope, &file_vars, &req, crate::now_ms());
+    // A file the request sends is named relative to the request's own file.
+    let base: Option<PathBuf> = app
+        .session
+        .documents()
+        .iter()
+        .find(|d| d.uid == uid)
+        .and_then(|d| d.path.as_deref())
+        .and_then(|p| Path::new(p).parent())
+        .map(Path::to_path_buf);
+    let prepared = ready(&scope, &file_vars, (&req, base.as_deref()), crate::now_ms());
     let busy = app.api.busy(uid);
 
     request_bar(ui, (uid, lang, &t), (&requests, index), &mut req, (busy, &mut acts));
@@ -396,21 +491,24 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let width = ui.available_width();
     ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::Min), |ui| {
         ui.set_min_size(vec2(width, height));
+        let env = body_ui::Env { lang, t: &t, base: base.as_deref(), pick: app.services.pick_any.as_deref() };
         egui::ScrollArea::vertical().id_salt(("monun.api.request", uid)).auto_shrink([false, false]).show(ui, |ui| match section {
             Section::Params => params(ui, &mut req, lang, &t),
             Section::Headers => headers(ui, &mut req, &scope, lang, &t),
-            Section::Body => body(ui, &mut req, lang, &t),
+            Section::Body => body_ui::show(ui, &mut req, &mut stash, &env),
         });
     });
     ui.separator();
     // The answer of the request shown (another's waits until it shows again).
     let call = app.api.tabs.get(&uid).and_then(|tab| tab.call.as_ref()).filter(|c| c.index == index);
-    answer(ui, (uid, lang, &t), call, &mut answer_view, &mut acts);
+    answer(ui, (uid, lang, &t), call, (&mut answer_view, &mut look), &mut acts);
 
     if let Some(tab) = app.api.tabs.get_mut(&uid) {
         tab.request = index;
         tab.section = section;
         tab.answer_view = answer_view;
+        (tab.format, tab.as_it_came, tab.wrap) = (look.format, look.as_it_came, look.wrap);
+        tab.stash = stash;
     }
     let edited = (req != before).then(|| {
         let range = requests.get(index).map(|p| p.range.clone()).unwrap_or(text.len()..text.len());
@@ -418,7 +516,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     });
     if acts.iter().any(|a| matches!(a, Act::Send)) {
         // What goes is what shows, typed this frame or not.
-        let now = ready(&scope, &file_vars, &req, crate::now_ms());
+        let now = ready(&scope, &file_vars, (&req, base.as_deref()), crate::now_ms());
         send_now(app, (uid, index), &now, &ctx);
         acts.retain(|a| !matches!(a, Act::Send));
     }
@@ -612,7 +710,7 @@ fn with_pairs(url: &str, pairs: &[(String, String)]) -> String {
 
 /// A table of names and values to edit, a row's ✕ taking it out; `true` when one changed. Rows are
 /// laid out side by side (a grid would keep a field as narrow as it first was).
-fn pairs_table(ui: &mut Ui, salt: (&str, usize), rows: &mut Vec<(String, String)>, lang: crate::i18n::Language, t: &Tokens) -> bool {
+pub(super) fn pairs_table(ui: &mut Ui, salt: (&str, usize), rows: &mut Vec<(String, String)>, lang: crate::i18n::Language, t: &Tokens) -> bool {
     let mut changed = false;
     let mut remove = None;
     let name_w = 200.0;
@@ -696,30 +794,23 @@ fn headers(ui: &mut Ui, req: &mut Request, scope: &Scope, lang: crate::i18n::Lan
     });
 }
 
-fn body(ui: &mut Ui, req: &mut Request, lang: crate::i18n::Language, t: &Tokens) {
-    ui.horizontal(|ui| {
-        if ui.button(lang.tr("Format JSON")).clicked()
-            && let Some(p) = http_file::pretty_json(&req.body)
-        {
-            req.body = p;
-        }
-        if matches!(req.method.as_str(), "GET" | "HEAD") && !req.body.trim().is_empty() {
-            ui.label(RichText::new(lang.tr("A GET request sends this body too.")).font(theme::ui_font(12.0)).color(t.text_dim));
-        }
-    });
-    let font = mono(13.0);
-    let (plain, syntax) = (t.text, t.syntax);
-    let lang_of = if req.body.trim_start().starts_with(['{', '[']) { crate::code_editor::Lang::Json } else { crate::code_editor::Lang::Plain };
-    let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-        ui.fonts_mut(|f| f.layout_job(crate::code_editor::layout_job(buf.as_str(), lang_of, &font, plain, &syntax, wrap)))
-    };
-    ui.add(egui::TextEdit::multiline(&mut req.body).code_editor().desired_width(f32::INFINITY).desired_rows(10).layouter(&mut layouter))
-        .accessible_name(lang.tr("Body"));
+/// How the answer's body shows (Body's tool bar): as what, as it came, wrapped.
+struct Look {
+    format: Option<Format>,
+    as_it_came: bool,
+    wrap: bool,
 }
 
-/// The answer: its status, time and size, then its body or headers; the time counting up while it
-/// is on its way.
-fn answer(ui: &mut Ui, (uid, lang, t): (u64, crate::i18n::Language, &Tokens), call: Option<&Call>, view: &mut AnswerView, acts: &mut Vec<Act>) {
+/// The answer: its status, time and size, Body or Headers, and for the body what it shows as (JSON,
+/// XML, HTML, Text; laid out unless As It Came), Wrap and Copy; the time counting up while it is on
+/// its way. The body shows coloured as what it is, its lines numbered (unless wrapped).
+fn answer(
+    ui: &mut Ui,
+    (uid, lang, t): (u64, crate::i18n::Language, &Tokens),
+    call: Option<&Call>,
+    (view, look): (&mut AnswerView, &mut Look),
+    acts: &mut Vec<Act>,
+) {
     let Some(call) = call else {
         ui.label(RichText::new(lang.tr("Send (Ctrl+Enter) and the answer shows here.")).color(t.text_dim));
         return;
@@ -746,6 +837,8 @@ fn answer(ui: &mut Ui, (uid, lang, t): (u64, crate::i18n::Language, &Tokens), ca
             return;
         }
     };
+    let format = look.format.unwrap_or(shown.format);
+    let text = shown.text(format, look.as_it_came);
     ui.horizontal(|ui| {
         let colour = match shown.status {
             200..=299 => t.error_check_green,
@@ -767,33 +860,85 @@ fn answer(ui: &mut Ui, (uid, lang, t): (u64, crate::i18n::Language, &Tokens), ca
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if crate::widgets::icon_button(ui, Icon::Copy, t.text_dim, lang.tr("Copy the answer"), vec2(24.0, 22.0)).clicked() {
-                ui.ctx().copy_text(shown.text.clone());
+                ui.ctx().copy_text(text.to_string());
             }
+            if *view != AnswerView::Body {
+                return;
+            }
+            ui.checkbox(&mut look.wrap, lang.tr("Wrap"));
+            ui.checkbox(&mut look.as_it_came, lang.tr("As It Came")).on_hover_text(lang.tr("The body as the server sent it, not laid out"));
+            craft_ui::ComboBox::from_id_salt(("monun.api.answer_format", uid))
+                .width(72.0)
+                .selected_text(RichText::new(format.label()).color(t.accent_text).strong())
+                .show_ui(ui, |ui| {
+                    for f in Format::ALL {
+                        if ui.selectable_label(f == format, f.label()).clicked() {
+                            look.format = Some(f);
+                        }
+                    }
+                })
+                .response
+                .accessible_name(lang.tr("Show the body as"));
         });
     });
     ui.add_space(4.0);
-    egui::ScrollArea::both().id_salt(("monun.api.answer", uid)).auto_shrink([false, false]).show(ui, |ui| match view {
-        AnswerView::Body => {
-            let mut end = shown.text.len().min(SHOWN_MAX);
-            while !shown.text.is_char_boundary(end) {
-                end -= 1;
-            }
-            let text = shown.text.get(..end).unwrap_or_default();
-            let code = if shown.json { crate::code_editor::Lang::Json } else { crate::code_editor::Lang::Plain };
-            let job = crate::code_editor::layout_job(text, code, &mono(13.0), t.text, &t.syntax, f32::INFINITY);
-            ui.add(egui::Label::new(job).selectable(true).extend());
-            if end < shown.text.len() {
-                ui.label(RichText::new(lang.tr("Only its start shows here; Copy takes it all.")).color(t.text_dim));
-            }
-        }
+    match view {
+        AnswerView::Body => code_view(ui, (uid, t), text, format.lang(), look.wrap, lang),
         AnswerView::Headers => {
-            egui::Grid::new(("monun.api.answer_headers", uid)).num_columns(2).spacing(vec2(12.0, 3.0)).show(ui, |ui| {
-                for (k, v) in &shown.headers {
-                    ui.add(egui::Label::new(RichText::new(k).font(mono(13.0)).color(t.text_dim)).selectable(true));
-                    ui.add(egui::Label::new(RichText::new(v).font(mono(13.0))).selectable(true));
-                    ui.end_row();
-                }
+            egui::ScrollArea::both().id_salt(("monun.api.answer_headers", uid)).auto_shrink([false, false]).show(ui, |ui| {
+                egui::Grid::new(("monun.api.answer_headers", uid)).num_columns(2).spacing(vec2(12.0, 3.0)).show(ui, |ui| {
+                    for (k, v) in &shown.headers {
+                        ui.add(egui::Label::new(RichText::new(k).font(mono(13.0)).color(t.text_dim)).selectable(true));
+                        ui.add(egui::Label::new(RichText::new(v).font(mono(13.0))).selectable(true));
+                        ui.end_row();
+                    }
+                });
             });
+        }
+    }
+}
+
+/// Code to read and select: coloured as `code` reads, its rows even (Hangul too), its lines
+/// numbered in a margin (unless it wraps), scrolling both ways. The start of a long text shows.
+fn code_view(ui: &mut Ui, (uid, t): (u64, &Tokens), text: &str, code: crate::code_editor::Lang, wrap: bool, lang: crate::i18n::Language) {
+    let mut end = text.len().min(SHOWN_MAX);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let shown = text.get(..end).unwrap_or_default();
+    let font = mono(13.0);
+    let lines = shown.lines().count().max(1);
+    let digits = lines.to_string().len() as f32;
+    let gutter = if wrap { 0.0 } else { digits * 8.0 + 18.0 };
+    let width = if wrap { (ui.available_width() - 16.0).max(100.0) } else { f32::INFINITY };
+    let mut job = crate::code_editor::layout_job(shown, code, &font, t.text, &t.syntax, width);
+    let row = crate::doc_view::even_code_rows(ui.ctx(), &mut job, &font);
+    let area = if wrap { egui::ScrollArea::vertical() } else { egui::ScrollArea::both() };
+    area.id_salt(("monun.api.answer", uid)).auto_shrink([false, false]).show(ui, |ui| {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            if !wrap {
+                let (margin, _) = ui.allocate_exact_size(vec2(gutter, lines as f32 * row), egui::Sense::hover());
+                let clip = ui.clip_rect();
+                let first = ((clip.top() - margin.top()) / row).floor().max(0.0) as usize;
+                let last = (((clip.bottom() - margin.top()) / row).ceil().max(0.0) as usize).min(lines);
+                let small = mono(12.0);
+                for i in first..last {
+                    let y = margin.top() + i as f32 * row + row / 2.0;
+                    ui.painter().text(
+                        egui::pos2(margin.right() - 10.0, y),
+                        egui::Align2::RIGHT_CENTER,
+                        (i + 1).to_string(),
+                        small.clone(),
+                        t.text_dim,
+                    );
+                }
+            }
+            let label = egui::Label::new(job).selectable(true);
+            ui.add(if wrap { label.wrap() } else { label.extend() });
+        });
+        if end < text.len() {
+            ui.label(RichText::new(lang.tr("Only its start shows here; Copy takes it all.")).color(t.text_dim));
         }
     });
 }
@@ -905,13 +1050,15 @@ mod tests {
             vars: vec![("CustNo".into(), "C1024".into())],
             ..Request::default()
         };
-        let r = ready(&scope, &[], &req, 0.0);
+        let r = ready(&scope, &[], (&req, None), 0.0);
         assert!(r.missing.is_empty(), "{:?}", r.missing);
         assert_eq!(r.out.url, "https://dev.example.com/pay/C1024?a=1");
-        assert_eq!(r.out.headers, [("Authorization".to_string(), "Bearer abc".to_string()), ("Accept".to_string(), "application/json".to_string())]);
-        assert_eq!(r.out.body, "{\"t\":\"abc\"}");
+        // The folder's first, the request's own of a name instead, and the type its JSON body reads as.
+        let headers = [("Authorization", "Bearer abc"), ("Accept", "application/json"), ("Content-Type", "application/json")];
+        assert_eq!(r.out.headers, headers.map(|(k, v)| (k.to_string(), v.to_string())));
+        assert_eq!(r.out.body, body::Payload::Text("{\"t\":\"abc\"}".into()));
         assert_eq!(r.shown_url, "https://dev.example.com/pay/C1024?a=1");
-        let hidden = ready(&scope, &[], &Request { url: "https://x/{{Token}}/{{Nope}}".into(), ..Request::default() }, 0.0);
+        let hidden = ready(&scope, &[], (&Request { url: "https://x/{{Token}}/{{Nope}}".into(), ..Request::default() }, None), 0.0);
         assert_eq!((hidden.shown_url.as_str(), hidden.missing.as_slice()), ("https://x/••••/{{Nope}}", ["Nope".to_string()].as_slice()));
     }
 

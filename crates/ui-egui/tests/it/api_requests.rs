@@ -41,6 +41,11 @@ fn harness(path: &str, setup: impl FnOnce(&mut SheetApp)) -> H {
 
 /// A server on this PC answering one request with `answer` (JSON); the request comes back whole.
 fn serve_once(answer: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
+    serve("application/json", answer)
+}
+
+/// A server on this PC answering one request with `answer` of `content_type`.
+fn serve(content_type: &'static str, answer: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -64,8 +69,7 @@ fn serve_once(answer: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) 
             }
         }
         let _ = tx.send(String::from_utf8_lossy(&got).into_owned());
-        let _ =
-            write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}", answer.len());
+        let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}", answer.len());
     });
     (port, rx)
 }
@@ -128,7 +132,7 @@ fn a_request_goes_with_its_folders_values_and_its_answer_shows() {
     assert!(lower.contains("\r\nauthorization: bearer abc\r\n") && lower.contains("\r\ncontent-type: application/json\r\n"), "{request}");
     assert!(request.ends_with("\r\n\r\n{\"amount\": 1000}"), "{request}");
     // The JSON laid out, in its own order.
-    assert!(h.query_by_label("{\n  \"ok\": true,\n  \"n\": 1\n}").is_some());
+    assert!(h.query_by_label("{\n    \"ok\": true,\n    \"n\": 1\n}").is_some());
     assert_eq!(draft(&h), text, "sending writes nothing");
     let _ = std::fs::remove_file(&path);
 }
@@ -195,4 +199,85 @@ fn folder_settings_keep_a_folders_variables_and_headers() {
     assert_eq!(f.headers.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["X-Key"]);
     assert!(h.query_by_label("→ https://dev.example.com/").is_some(), "the request reads it");
     let _ = std::fs::remove_file(&path);
+}
+
+/// Clicks Send and waits for the answer `status` (a line like `200 OK`).
+fn send_and_wait(h: &mut H, status: &str) {
+    h.get_by_label("Send").click();
+    for _ in 0..200 {
+        h.run_steps(1);
+        if h.query_by_label(status).is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("no answer {status}");
+}
+
+#[test]
+fn a_body_is_chosen_the_ways_postman_offers_and_goes_so() {
+    let (port, got) = serve("application/xml", "<?xml version=\"1.0\"?><Envelope><Body><name>Kim</name><n>1</n></Body></Envelope>");
+    let path = file("form", "form.http", &format!("POST http://127.0.0.1:{port}/form\n"));
+    let mut h = harness(&path, |_| {});
+    h.get_by_label("Body").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("This request has no body.").is_some(), "none, to start with");
+    // x-www-form-urlencoded: its type set, a field added and typed.
+    h.get_by_label("x-www-form-urlencoded").click();
+    h.run_steps(2);
+    assert!(draft(&h).contains("Content-Type: application/x-www-form-urlencoded\n"), "{}", draft(&h));
+    h.get_by_label("Add Field").click();
+    h.run_steps(2);
+    type_into(&mut h, "Name", 0, "name");
+    type_into(&mut h, "Value", 0, "Kim Lee&1");
+    assert!(
+        draft(&h).ends_with("Content-Type: application/x-www-form-urlencoded\n\nname=Kim Lee%261\n"),
+        "an & that would split it is written %26: {}",
+        draft(&h)
+    );
+    send_and_wait(&mut h, "200 OK");
+    let request = got.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(request.to_ascii_lowercase().contains("\r\ncontent-type: application/x-www-form-urlencoded\r\n"), "{request}");
+    assert!(request.ends_with("\r\n\r\nname=Kim+Lee%261"), "{request}");
+    // The XML answer laid out, a tag a line.
+    assert!(
+        h.query_by_label("<?xml version=\"1.0\"?>\n<Envelope>\n    <Body>\n        <name>Kim</name>\n        <n>1</n>\n    </Body>\n</Envelope>")
+            .is_some()
+    );
+    // As It Came: as the server sent it.
+    h.get_by_label("As It Came").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("<?xml version=\"1.0\"?><Envelope><Body><name>Kim</name><n>1</n></Body></Envelope>").is_some());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_form_sends_its_file_and_a_switch_back_finds_the_body_left() {
+    let (port, got) = serve("text/plain", "ok");
+    let dir = std::path::Path::new(&file("multipart", "a.txt", "file text")).parent().unwrap().to_path_buf();
+    let text = format!(
+        "POST http://127.0.0.1:{port}/up\nContent-Type: multipart/form-data; boundary=B\n\n--B\nContent-Disposition: form-data; name=\"title\"\n\nMonun\n--B\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\n\n< ./a.txt\n--B--\n"
+    );
+    std::fs::write(dir.join("up.http"), &text).unwrap();
+    let path = dir.join("up.http").to_string_lossy().into_owned();
+    let mut h = harness(&path, |_| {});
+    h.get_by_label("Body").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("9 B").is_some(), "the file is there, its size shown");
+    send_and_wait(&mut h, "200 OK");
+    let request = got.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(request.to_ascii_lowercase().contains("\r\ncontent-type: multipart/form-data; boundary=b\r\n"), "{request}");
+    assert!(
+        request.ends_with("\r\n\r\n--B\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nMonun\r\n--B\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile text\r\n--B--\r\n"),
+        "{request}"
+    );
+    // raw, then back to form-data: the form as it was.
+    h.get_by_label("raw").click();
+    h.run_steps(2);
+    assert!(!draft(&h).contains("--B"), "{}", draft(&h));
+    h.get_by_label("form-data").click();
+    h.run_steps(2);
+    // (Written by the tab, the request starts with its `###` line.)
+    assert_eq!(draft(&h).trim_start_matches("###\n"), text);
+    let _ = std::fs::remove_dir_all(&dir);
 }

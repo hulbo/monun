@@ -9,6 +9,7 @@
 
 mod diagram;
 mod editor;
+pub(crate) use editor::even_code_rows;
 mod preview;
 
 use std::collections::HashMap;

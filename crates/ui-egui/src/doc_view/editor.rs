@@ -457,6 +457,14 @@ fn code_line_height(font: &FontId) -> f32 {
     (font.size * CODE_LINE_HEIGHT).round()
 }
 
+/// `job` (code in `font`) with every row as tall as the code editor's, Hangul and all; returns the
+/// rows' height. For code shown elsewhere (an API request's body and answer).
+pub(crate) fn even_code_rows(ctx: &egui::Context, job: &mut LayoutJob, font: &FontId) -> f32 {
+    let height = code_line_height(font);
+    even_rows(job, height, Wide::of(ctx, TextKind::Plain, font));
+    height
+}
+
 /// How egui lays out Hangul in code: it draws it in a fallback face on the code's baseline, moving
 /// the section that holds it down by `above` and making its row `grow` taller.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

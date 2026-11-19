@@ -297,6 +297,7 @@ fn services() -> Services {
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
         pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().and_then(|p| p.to_str().map(str::to_string)))),
+        pick_any: Some(Box::new(|| rfd::FileDialog::new().pick_file().and_then(|p| p.to_str().map(str::to_string)))),
         pick_save: Some(Box::new(|suggested: &str| {
             let path = std::path::Path::new(suggested);
             let stem = path.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
