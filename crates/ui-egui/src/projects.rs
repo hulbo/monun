@@ -60,6 +60,24 @@ pub struct GroupView {
     pub name: String,
     pub active: Option<String>,
     pub used: Option<u64>,
+    /// Its folders folded here (by id): folding never changes a file git sees.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub folded: Vec<u64>,
+}
+
+/// A folder as a project file keeps it: folded or not is each PC's own.
+fn shared(f: &crate::group_folders::Folder) -> crate::group_folders::Folder {
+    crate::group_folders::Folder { folded: false, ..f.clone() }
+}
+
+/// Whether two groups are the same as a project file keeps them: their files, their folders and
+/// which file sits in which (not which file is in front, when they were used or what is folded).
+fn same_kept(a: &FileGroup, b: &FileGroup) -> bool {
+    a.name == b.name
+        && a.files == b.files
+        && a.placed == b.placed
+        && a.folders.len() == b.folders.len()
+        && a.folders.iter().zip(&b.folders).all(|(x, y)| shared(x) == shared(y))
 }
 
 /// The project of the root in use, as read in this run: its root, its name, and its file as last
@@ -214,7 +232,7 @@ fn render(root: &str, groups: &[FileGroup]) -> String {
             .map(|g| StoredGroup {
                 name: g.name.clone(),
                 files: g.files.iter().map(|f| stored(root, f)).collect(),
-                folders: g.folders.clone(),
+                folders: g.folders.iter().map(shared).collect(),
                 placed: g.placed.iter().map(|(f, id)| (stored(root, f), *id)).collect(),
             })
             .collect(),
@@ -314,7 +332,17 @@ fn view_of(project: &str, app: &SheetApp) -> ProjectView {
     ProjectView {
         project: project.to_string(),
         group: app.ui.group.clone(),
-        groups: app.ui.groups.iter().map(|g| GroupView { name: g.name.clone(), active: g.active.clone(), used: g.used }).collect(),
+        groups: app
+            .ui
+            .groups
+            .iter()
+            .map(|g| GroupView {
+                name: g.name.clone(),
+                active: g.active.clone(),
+                used: g.used,
+                folded: g.folders.iter().filter(|f| f.folded).map(|f| f.id).collect(),
+            })
+            .collect(),
     }
 }
 
@@ -326,6 +354,9 @@ fn apply_view(groups: &mut [FileGroup], view: Option<&ProjectView>) -> String {
             if let Some(gv) = v.groups.iter().find(|x| x.name == g.name) {
                 g.active = gv.active.clone();
                 g.used = gv.used;
+                for f in &mut g.folders {
+                    f.folded = gv.folded.contains(&f.id);
+                }
             }
         }
     }
@@ -478,11 +509,12 @@ pub(crate) fn save_current(app: &mut SheetApp) {
             }
         }
     }
-    // The same groups and files, however the file is laid out, are left as they are: no change
-    // for git to see.
-    let same = disk.as_deref().and_then(|text| parse(&loaded.root, text).ok()).is_some_and(|theirs| {
-        theirs.len() == app.ui.groups.len() && theirs.iter().zip(&app.ui.groups).all(|(a, b)| a.name == b.name && a.files == b.files)
-    });
+    // The same groups, files and folders (and which file sits in which), however the file is laid
+    // out, are left as they are: no change for git to see.
+    let same = disk
+        .as_deref()
+        .and_then(|text| parse(&loaded.root, text).ok())
+        .is_some_and(|theirs| theirs.len() == app.ui.groups.len() && theirs.iter().zip(&app.ui.groups).all(|(a, b)| same_kept(a, b)));
     if same {
         set_seen(app, disk);
         return;
@@ -513,11 +545,26 @@ fn merged(app: &SheetApp, mut theirs: Vec<FileGroup>) -> Vec<FileGroup> {
         if let Some(o) = app.ui.groups.iter().find(|o| o.name == g.name) {
             g.active = o.active.clone();
             g.used = o.used;
+            for f in &mut g.folders {
+                f.folded = o.folder(f.id).is_some_and(|x| x.folded);
+            }
         }
     }
     if let Some(ours) = app.ui.groups.iter().find(|g| g.name == app.ui.group).cloned() {
         match theirs.iter_mut().find(|g| g.name == ours.name) {
-            Some(g) => g.files = ours.files,
+            Some(g) => {
+                // Its tabs here, each in the folder it sits in here (a folder theirs lacks kept).
+                for id in ours.placed.values() {
+                    if g.folder(*id).is_none()
+                        && let Some(f) = ours.folder(*id)
+                    {
+                        g.folders.push(f.clone());
+                    }
+                }
+                g.files = ours.files;
+                g.placed = ours.placed;
+                g.tidy_folders();
+            }
             None => theirs.push(ours),
         }
     }

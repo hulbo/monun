@@ -378,3 +378,43 @@ fn a_project_file_that_cant_be_read_just_now_is_left_as_it_is() {
     assert!(h.state().message.is_none(), "{:?}", h.state().message);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn a_file_put_in_a_folder_stays_there_after_a_restart() {
+    let (base, root) = root("folder-restart");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "p"}));
+    let y = path(&root.join("a").join("y.md"));
+    run(&mut h, "file.open", json!({"path": y}));
+    let group = h.state().ui.group.clone();
+    let before = project_file(&root, "p");
+    // A folder made for the file: the file moves into it, and no file opens or closes.
+    h.state_mut().open_dialog("newFolder", json!({"group": group, "path": y}));
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Folder name:").type_text("API");
+    h.run_steps(2);
+    h.get_all_by_label("OK").last().unwrap().click();
+    h.run_steps(3);
+    let text = project_file(&root, "p");
+    assert_ne!(text, before, "written though its files are the same");
+    assert!(text.contains("\"a/y.md\": 1"), "{text}");
+    // Folded here: this PC's, so the project file stays as it is.
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "API").click();
+    h.run_steps(3);
+    assert_eq!(project_file(&root, "p"), text, "folding changes nothing git sees");
+
+    // Started again with this PC's settings: the file in its folder, the folder folded.
+    let ui = h.state().ui.clone();
+    let mut again = harness(&[]);
+    again.state_mut().ui = ui;
+    groups::restore(again.state_mut());
+    again.run_steps(4);
+    assert_eq!(open_paths(&again), [y.clone()]);
+    let g = again.state().ui.groups.iter().find(|g| g.name == group).unwrap();
+    let folder = g.folders.first().unwrap();
+    assert_eq!((g.folder_of(&y), folder.folded), (Some(folder.id), true));
+    let _ = std::fs::remove_dir_all(&base);
+}
