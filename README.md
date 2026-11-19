@@ -255,8 +255,10 @@
   - 로그인·쿠키는 `%LOCALAPPDATA%\Monun\WebView2`에 남습니다. 통합 문서를 웹 페이지로 저장하는 것(파일 › 내보내기)은
     예전 그대로입니다.
 - **한국어 화면:** 메뉴와 대화상자가 한국어로 나오고, 설치된 한글 글꼴을 한글 이름으로 고를 수 있습니다.
-- **기본값:** 새 통합 문서는 굴림체, 기본 칸 너비 130px로 시작합니다. 바꾸려면
-  `%APPDATA%\Monun\prefs.json`의 `defaultFont`, `defaultColumnWidth`를 고치면 됩니다.
+- **기본값:** 새 통합 문서는 D2Coding 11, 기본 칸 너비 130px로 시작합니다. D2Coding은 네이버가 무료로 배포하는
+  글꼴(SIL Open Font License)로, 모눈에 들어 있지 않으니 [D2Coding](https://github.com/naver/d2codingfont)에서 받아
+  설치하세요. 없는 PC에서는 다른 글꼴로 대신 보입니다. 바꾸려면 `%APPDATA%\Monun\prefs.json`의 `defaultFont`,
+  `defaultColumnWidth`를 고치면 됩니다.
 - **화면:** 100% 배율이 윈도우 엑셀과 같은 크기이고, 글자를 얇고 선명하게 그립니다. 탭과 빠른 실행
   버튼이 한 줄에 있고, 리본은 Ctrl+F1이나 오른쪽 위 ▲ 버튼으로 숨길 수 있습니다.
 - **설정:** 파일 › 옵션에서 표시 테마(밝게·어둡게·시스템), 강조 색(녹색·파랑·청록·자주·분홍·주황·회색),

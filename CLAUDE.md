@@ -9,8 +9,9 @@ of the user's clients or work, nor paths, people or systems from the user's docu
 - Talk to the user in Korean.
 - When a change is built, tested and checked in the app, commit and push to `origin main` without
   asking. Ask first only for destructive git operations.
-- Defaults the user chose: new workbooks in 굴림체 11, 130 px default columns, Excel-for-Windows
-  cell size at 100%, Korean interface.
+- Defaults the user chose: new workbooks in D2Coding 11 (Naver's free font, not shipped: a PC
+  without it draws the fallbacks; prefs.json's 굴림체 of 1.1.2 and earlier moves to it), 130 px
+  default columns, Excel-for-Windows cell size at 100%, Korean interface.
 
 ## Layout
 Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`functions` →

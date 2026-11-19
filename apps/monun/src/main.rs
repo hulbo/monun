@@ -201,9 +201,10 @@ fn load_prefs(app: &mut SheetApp) {
     {
         app.session.prefs = p;
     }
-    // A prefs.json saved before this fork set its own default still holds the model's; nothing in
-    // the app changes it, so it takes this fork's. Any other `defaultFont` there is kept.
-    if app.session.prefs.default_font == monun_engine::model::DEFAULT_FONT {
+    // A prefs.json saved before Monun set its own default still holds the model's, and one saved
+    // by 1.1.2 or earlier holds the default of then; nothing in the app changes it, so it takes
+    // today's. Any other `defaultFont` there is kept.
+    if [monun_engine::model::DEFAULT_FONT, EARLIER_WORKBOOK_FONT].contains(&app.session.prefs.default_font.as_str()) {
         app.session.prefs.default_font = NEW_WORKBOOK_FONT.into();
     }
     if (app.session.prefs.default_column_width - monun_engine::model::DEFAULT_COL_WIDTH).abs() < 0.01 {
@@ -214,9 +215,14 @@ fn load_prefs(app: &mut SheetApp) {
     }
 }
 
-/// The font new workbooks start in (Excel's File › Options › "Use this as the default font").
-/// `defaultFont` in prefs.json picks another.
-const NEW_WORKBOOK_FONT: &str = "굴림체";
+/// The font new workbooks start in (Excel's File › Options › "Use this as the default font"):
+/// D2Coding, the font Naver gives away under the SIL Open Font License. Monun ships no font: on a PC
+/// without it, cells in it draw in the cell font's fallbacks. `defaultFont` in prefs.json picks
+/// another.
+const NEW_WORKBOOK_FONT: &str = "D2Coding";
+
+/// The font new workbooks started in until 1.1.2, which a prefs.json written then still holds.
+const EARLIER_WORKBOOK_FONT: &str = "굴림체";
 
 /// The standard column width of new workbooks, in pixels; `defaultColumnWidth` in prefs.json
 /// picks another.
