@@ -1,12 +1,10 @@
-//! The shared strict test harness: bundled faces plus the pinned craft-fonts input, never the
-//! host's installed fonts.
+//! The shared strict test harness: egui's bundled faces, never the host's installed fonts.
 //!
 //! `egui_kittest` keeps `MissingGlyphPolicy::Panic` and accessibility checks on. The production
 //! font set probes system fonts for scripts a workstation may lack; the suite must not, or a
-//! minimal CI image would fail for a reason unrelated to the change under test. `CRAFT_FONTS_DIR`
-//! is the pinned input (never a font copy in this repository); without it only egui's bundled
-//! faces are installed and the non-Latin language cases are skipped explicitly in the one test
-//! that renders every catalog.
+//! minimal CI image would fail for a reason unrelated to the change under test. With only the
+//! bundled faces, the CJK language cases are skipped explicitly in the one test that renders
+//! every catalog.
 
 use egui_kittest::HarnessBuilder;
 use monun_engine::Session;

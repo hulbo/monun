@@ -5,7 +5,7 @@
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, Shape, accesskit::Role, pos2};
 use egui_kittest::kittest::Queryable as _;
 use monun_engine::core::CellRef;
-use monun_ui_egui::{SheetApp, grid, i18n::Language};
+use monun_ui_egui::{SheetApp, grid};
 use serde_json::json;
 
 type Harness = egui_kittest::Harness<'static, SheetApp>;
@@ -207,29 +207,6 @@ fn english_underlines_the_key() {
         _ => false,
     });
     assert!(underlined, "the D of Delete… is underlined");
-}
-
-#[test]
-fn korean_shows_the_key_in_brackets() {
-    // Hangul needs the pinned craft-fonts input; without it only Latin faces are installed
-    // (see `common`), and `access_menu`'s unit tests cover the labels.
-    if !monun_ui_egui::theme::craft_fonts_loaded() {
-        return;
-    }
-    let mut h = harness();
-    let at = cell(&h, "C5");
-    h.state_mut().ui.language = Language::Ko;
-    h.run_steps(2);
-    right_click(&mut h, at);
-    for label in ["잘라내기(T)", "삭제(D)…", "내용 지우기(N)", "셀 서식(F)…", "필터(E)"] {
-        assert!(h.query_by_role_and_label(Role::Button, label).is_some(), "{label} is in the cell menu");
-    }
-    press(&mut h, Key::Escape);
-    let at = tab(&h, "Sheet1");
-    right_click(&mut h, at);
-    for label in ["시트 삽입(I)", "삭제(D)", "이름 바꾸기(R)", "모든 시트 선택(S)"] {
-        assert!(h.query_by_role_and_label(Role::Button, label).is_some(), "{label} is in the tab menu");
-    }
 }
 
 #[test]

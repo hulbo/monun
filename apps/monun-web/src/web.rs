@@ -72,10 +72,9 @@ pub fn start() {
                             _ => {}
                         }
                     }
-                    // Follow the browser's language, except a CJK one. CJK coverage comes from
-                    // optional craft-fonts input, not a guaranteed web font set, so a CJK browser
-                    // cannot be assumed to render localized labels without tofu. Users can still
-                    // choose a language explicitly.
+                    // Follow the browser's language, except a CJK one: the web build has no CJK
+                    // font of its own, so a CJK browser cannot be assumed to render localized
+                    // labels without tofu. Users can still choose a language explicitly.
                     let browser = monun_ui_egui::i18n::Language::system();
                     if !matches!(browser, monun_ui_egui::i18n::Language::Zh | monun_ui_egui::i18n::Language::Ja | monun_ui_egui::i18n::Language::Ko) {
                         app.ui.language = browser;

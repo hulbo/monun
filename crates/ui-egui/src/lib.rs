@@ -14,7 +14,6 @@ mod cell_pictures;
 pub mod chartview;
 pub mod code_editor;
 pub mod control;
-mod craft_fonts_policy;
 pub mod dialogs;
 pub mod dnd;
 pub mod doc_view;

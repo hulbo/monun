@@ -2,7 +2,7 @@ use super::*;
 use crate::i18n::Language;
 
 #[test]
-/// Loaded script-fallback faces end each role chain just before the craft fonts, in the language's order.
+/// Loaded script-fallback faces end each role chain, in the language's order.
 fn fallback_faces_are_appended_to_every_family() {
     // Structural: whatever loaded, the non-Latin fallback keys must sit at the end of each chain
     // (after the Latin/default fonts) so Latin still wins for Latin text, in the language's order.
@@ -15,72 +15,10 @@ fn fallback_faces_are_appended_to_every_family() {
         }
         for role in [UI, UI_BOLD, CELL, CELL_BOLD, CELL_ITALIC, CELL_BOLD_ITALIC, SERIF, MONO] {
             let chain = fonts.families.get(&FontFamily::Name(role.into())).map(Vec::as_slice).unwrap_or_default();
-            // The optional craft-fonts faces follow the system fallbacks at the very end.
-            let end = chain.iter().rposition(|k| !k.starts_with("craft-")).map_or(0, |i| i + 1);
+            let end = chain.len();
             assert!(end >= fb_keys.len(), "{role} chain too short for its fallback");
-            assert_eq!(&chain[end - fb_keys.len()..end], fb_keys.as_slice(), "{role} must end its non-craft chain with the fallback faces");
+            assert_eq!(&chain[end - fb_keys.len()..end], fb_keys.as_slice(), "{role} must end with the fallback faces");
         }
-    }
-}
-
-#[test]
-/// Every font family ends with exactly the permitted craft faces in manifest order.
-fn craft_fonts_are_the_last_fallback_in_every_family() {
-    // Ordering: app/bundled faces, Hack/emoji, system script fallbacks, permitted craft faces.
-    // A craft face must never displace a system face that already covers a glyph.
-    let fonts = font_definitions_for_language(Language::En);
-    let expected: Vec<String> = craft_font_faces().into_iter().map(|(key, _)| key).collect();
-    if expected.is_empty() {
-        return; // optional input absent
-    }
-    for (family, chain) in &fonts.families {
-        let first = chain.iter().position(|k| k.starts_with("craft-")).unwrap_or(chain.len());
-        assert_eq!(&chain[first..], expected.as_slice(), "{family:?} must end with exactly the permitted craft faces in manifest order");
-    }
-}
-
-#[test]
-/// Skips on wasm or when required mode is off; a required native build must embed LXGW with `Hani`/`Hans`.
-fn a_required_native_build_embeds_the_chinese_face() {
-    if cfg!(target_arch = "wasm32") || !craft_fonts_required() {
-        return;
-    }
-    assert!(
-        chinese_font_loaded(),
-        "CRAFT_FONTS_REQUIRED=1 native builds must embed the LXGW Chinese face from fonts/simplified-chinese-manifest.txt"
-    );
-    let face = craft_font_scripts().find(|(f, s, _)| *f == "LXGW WenKai Lite" && *s == "Regular");
-    assert_eq!(face.map(|(_, _, scripts)| scripts), Some(["Hani", "Hans"].as_slice()), "the Chinese manifest's script tags are asserted");
-}
-
-#[test]
-/// No embedded craft face belongs to the barred Noto CJK, Adobe or Source families.
-fn barred_faces_never_enter_the_font_set() {
-    for (family, _, _) in craft_font_scripts() {
-        assert!(!family.contains("CJK"), "the barred Noto CJK collection must never be embedded: {family}");
-        assert!(!family.starts_with("Source ") && !family.starts_with("Adobe "), "a barred Adobe/Source face was embedded: {family}");
-    }
-}
-
-#[test]
-/// Skips when craft fonts are absent unless required mode is set; otherwise the required faces and their exact script tags are embedded.
-fn the_required_craft_faces_keep_their_exact_scripts() {
-    if !craft_fonts_loaded() {
-        assert!(!craft_fonts_required(), "CRAFT_FONTS_REQUIRED=1 but no craft-fonts faces were embedded");
-        return;
-    }
-    let faces: Vec<_> = craft_font_scripts().collect();
-    for (family, style, scripts) in [
-        ("BIZ UDPGothic", "Regular", ["Jpan", "Latn"].as_slice()),
-        ("BIZ UDPGothic", "Bold", ["Jpan", "Latn"].as_slice()),
-        ("NanumGothic", "Regular", ["Hang", "Kore"].as_slice()),
-        ("Noto Sans Symbols", "Regular", ["Zsym"].as_slice()),
-        ("Noto Sans Symbols 2", "Regular", ["Zsym"].as_slice()),
-    ] {
-        assert!(
-            faces.iter().any(|(f, s, declared)| *f == family && *s == style && *declared == scripts),
-            "{family} {style} with {scripts:?} must be embedded; got {faces:?}"
-        );
     }
 }
 
@@ -177,24 +115,20 @@ fn fallback_faces_load_each_file_once() {
 }
 
 #[test]
-/// Checks that the proportional and cell families have glyphs for every present script sample; samples with no system or craft face are printed as skipped.
+/// Checks that the proportional and cell families have glyphs for every present script sample; samples with no system face are printed as skipped.
 fn fallback_covers_its_script() {
     // Real glyph check, per script: the proportional family (what cells and the UI use) must
     // have a glyph for every non-space character in the sample. A script runs when a system
-    // face or the optional craft-fonts input provides one; the printed skip is a recorded
-    // gate, and a present face that is not wired in fails.
+    // face provides one; the printed skip is a recorded gate, and a present face that is not
+    // wired in fails.
     type Case = (&'static str, Vec<(String, u32)>, &'static str);
-    let cases: [Case; 10] = [
+    let cases: [Case; 8] = [
         ("sys-cjk-han-ja", cjk_han_japanese(), "カテゴリ"),
-        // Chinese uses a system Han face or the native-only permitted LXGW craft face; the
-        // barred Noto CJK collection never supplies it.
         ("sys-cjk-han-zh", cjk_han_simplified(), "页面布局 客户端配置"),
         ("sys-cjk-hangul", cjk_hangul(), "한글"),
         ("sys-thai", thai(), "ทดสอบ"),
         ("sys-lao", lao(), "ພາສາລາວ"),
         ("sys-hebrew", hebrew(), "עברית"),
-        ("craft-noto-sans-arabic", Vec::new(), "مرحبا"),
-        ("craft-noto-sans-georgian", Vec::new(), "ქართული"),
         ("ui", candidates(UI), "Русский"),
         // Czech interface labels: every Czech accented letter, in both cases.
         ("ui", candidates(UI), "Příliš žluťoučký kůň úpěl ďábelské ódy ŘŠČŽÝÁÍÉÚŮĚŤĎŇÓ"),
@@ -208,11 +142,11 @@ fn fallback_covers_its_script() {
         for family in [FontFamily::Proportional, FontFamily::Name(CELL.into())] {
             let font = FontId::new(14.0, family.clone());
             for (key, cands, sample) in &cases {
-                // A script runs when a system face or the optional craft-fonts input provides
-                // one. The skip is printed: a missing fixture is a recorded gate, not a pass.
+                // A script runs when a system face provides one. The skip is printed: a missing
+                // face is a recorded gate, not a pass.
                 let system = cands.iter().any(|(p, _)| std::path::Path::new(p).exists());
-                if !system && !craft_fonts_cover(sample) {
-                    eprintln!("skipped {key}: no system face and no craft-fonts face for {sample:?}");
+                if !system {
+                    eprintln!("skipped {key}: no system face for {sample:?}");
                     continue;
                 }
                 let missing: String = sample.chars().filter(|c| !c.is_whitespace()).filter(|&c| !ctx.fonts_mut(|f| f.has_glyph(&font, c))).collect();
@@ -247,12 +181,10 @@ fn han_or_kana_text_without_glyphs_asks_for_the_han_faces() {
     out.textures_delta.clear();
     let font = FontId::new(14.0, FontFamily::Proportional);
     assert!(!note_text(&ctx, "한글 ABC 123", &font), "no Han or kana: nothing to look up");
-    // The pinned set has no Han face (unless the optional craft fonts bring Chinese): after this
-    // the next font set carries the Han faces, whatever the interface language.
-    if !chinese_font_loaded() {
-        let _ = note_text(&ctx, "页面 カテゴリ", &font);
-        assert!(han_included(Language::Ko));
-    }
+    // The pinned set has no Han face: after this the next font set carries the Han faces,
+    // whatever the interface language.
+    let _ = note_text(&ctx, "页面 カテゴリ", &font);
+    assert!(han_included(Language::Ko));
 }
 
 #[test]

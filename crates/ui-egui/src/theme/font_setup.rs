@@ -3,23 +3,6 @@ use super::Blob;
 use super::font_fallback::{cjk_hangul_bold, load_fallback};
 use super::{Arc, Color32, FontData, FontDefinitions, FontFamily, FontId};
 
-/// A font from the optional craft-fonts build input (`CRAFT_FONTS_DIR` at build time; see
-/// <https://github.com/storytold/craft-fonts> and its `docs/integration.md`). The slice is empty
-/// when the app is built without the checkout; nothing is downloaded and no font is in this repo.
-#[derive(Debug)]
-pub struct CraftFont {
-    pub family: &'static str,
-    pub style: &'static str,
-    /// ISO 15924 scripts the family is intended for, from the craft-fonts manifest.
-    pub scripts: &'static [&'static str],
-    pub bytes: &'static [u8],
-}
-
-mod craft_fonts {
-    use super::CraftFont;
-    include!(concat!(env!("OUT_DIR"), "/craft_fonts.rs"));
-}
-
 /// The light or dark value of a colour, by mode.
 pub(super) fn pick<T>(dark: bool, light: T, dark_value: T) -> T {
     if dark { dark_value } else { light }
@@ -181,47 +164,6 @@ pub(crate) fn drop_unparseable_fonts(fonts: &mut FontDefinitions) {
 /// in `epaint_default_fonts`). It is present whenever egui is built with `default_fonts`.
 const HACK: &str = "Hack";
 
-/// The permitted craft-fonts faces with their `FontDefinitions` keys, in manifest order. Empty
-/// without a `CRAFT_FONTS_DIR` checkout at build time. The filter is repeated here so a stale
-/// generated table can never smuggle in a barred face or a web-build face outside the allowlist.
-pub(super) fn craft_font_faces() -> Vec<(String, &'static CraftFont)> {
-    let wasm = cfg!(target_arch = "wasm32");
-    craft_fonts::CRAFT_FONTS
-        .iter()
-        .enumerate()
-        .filter(|(_, font)| !crate::craft_fonts_policy::barred(font.family))
-        .filter(|(_, font)| !wasm || crate::craft_fonts_policy::web_allowed(font.family, font.style))
-        .map(|(i, font)| (format!("craft-{i}-{}-{}", font.family, font.style), font))
-        .collect()
-}
-
-/// Adds the optional craft-fonts faces to `fonts` and returns their keys.
-fn add_craft_fonts(fonts: &mut FontDefinitions) -> Vec<String> {
-    let mut keys = Vec::new();
-    for (key, font) in craft_font_faces() {
-        fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(font.bytes)));
-        keys.push(key);
-    }
-    keys
-}
-
-/// Whether the optional craft-fonts input was embedded in this build.
-pub fn craft_fonts_loaded() -> bool {
-    !craft_fonts::CRAFT_FONTS.is_empty()
-}
-
-/// Whether the native-only Simplified Chinese craft face (LXGW WenKai Lite) was embedded. A web
-/// build or an older craft-fonts checkout without `fonts/simplified-chinese-manifest.txt` has none.
-pub fn chinese_font_loaded() -> bool {
-    craft_font_faces().iter().any(|(_, f)| f.family == "LXGW WenKai Lite" && f.style == "Regular")
-}
-
-/// Whether this build was made with `CRAFT_FONTS_REQUIRED=1`. Acceptance tests must fail rather
-/// than skip when this is true and the faces are absent.
-pub fn craft_fonts_required() -> bool {
-    craft_fonts::CRAFT_FONTS_REQUIRED
-}
-
 /// A bundled-face character with the same meaning as `c`, for interface chrome whose exact symbol
 /// no bundled face has (`✕`, `✓`, `⌃`). Document text still needs a real glyph; this is only a
 /// display fallback and never changes the characters a command inserts or stores.
@@ -240,25 +182,6 @@ pub fn symbol_fallback(c: char) -> Option<char> {
 pub fn available_text(ui: &egui::Ui, text: &str) -> String {
     let font = ui_font(13.0);
     text.chars().map(|c| if ui.ctx().fonts_mut(|f| f.has_glyph(&font, c)) { c } else { symbol_fallback(c).unwrap_or(c) }).collect()
-}
-
-/// The family, style and scripts of every embedded craft-fonts face (empty without the input).
-pub fn craft_font_scripts() -> impl Iterator<Item = (&'static str, &'static str, &'static [&'static str])> {
-    craft_font_faces().into_iter().map(|(_, f)| (f.family, f.style, f.scripts))
-}
-
-/// Whether one embedded craft-fonts face maps every non-whitespace character in `text`. Tests use
-/// this to tell "the pinned fixture covers this script" from "this host has no face for it",
-/// without trusting a manifest script tag alone.
-pub fn craft_fonts_cover(text: &str) -> bool {
-    craft_font_faces().iter().any(|(_, f)| {
-        use skrifa::MetadataProvider;
-        let Ok(font) = skrifa::FontRef::from_index(f.bytes, 0) else {
-            return false;
-        };
-        let map = font.charmap();
-        text.chars().filter(|c| !c.is_whitespace()).all(|c| map.map(c).is_some())
-    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -460,12 +383,10 @@ pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDef
     font_definitions_with(language, &[])
 }
 
-/// The bundled faces plus the pinned craft-fonts faces, with no system-font probing or installed
-/// workbook-font binding.
+/// egui's bundled faces alone, with no system-font probing or installed workbook-font binding.
 ///
 /// Integration tests use this through their shared harness, so a minimal CI image and a developer
-/// machine see the same font set. Craft-fonts remains a pinned build input rather than a repository
-/// asset; without it only egui's bundled faces are available, which is the documented no-font mode.
+/// machine see the same font set.
 pub fn pinned_font_definitions() -> FontDefinitions {
     font_definitions_impl(crate::i18n::Language::En, &[], false, false)
 }
@@ -477,7 +398,7 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
     font_definitions_impl(language, used, true, han_included(language))
 }
 
-/// Builds the role font chains, script fallbacks (the Han faces only `with_han`), installed workbook fonts and optional craft-font faces, drops unparseable data and records which families were bound.
+/// Builds the role font chains, script fallbacks (the Han faces only `with_han`), installed workbook fonts, drops unparseable data and records which families were bound.
 pub(super) fn font_definitions_impl(language: crate::i18n::Language, used: &[String], system: bool, with_han: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let base_prop: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
@@ -526,12 +447,6 @@ pub(super) fn font_definitions_impl(language: crate::i18n::Language, used: &[Str
     if let Some(ui) = fonts.families.get(&FontFamily::Name(UI.into())).cloned() {
         fonts.families.insert(FontFamily::Proportional, ui);
     }
-    // The optional craft-fonts faces go at the very end of every family: a system or bundled face
-    // that has the script keeps its glyph shapes, while the permitted OFL faces cover scripts and
-    // symbols the host image lacks (Japanese, Korean, Thai, Arabic, Georgian and the UI symbols).
-    // Chinese comes from the native-only OFL LXGW face when embedded; a system Han face still
-    // leads, and the barred Noto CJK collection never enters.
-    append_craft_faces(&mut fonts);
     drop_unparseable_fonts(&mut fonts);
     // Only families egui still has data for count as bound (a dropped face can empty a chain).
     bound.retain(|f| fonts.families.get(&FontFamily::Name(f.as_str().into())).is_some_and(|c| !c.is_empty()));
@@ -631,22 +546,6 @@ fn bind_cell_fallback(fonts: &mut FontDefinitions, fallback: &[String]) {
         {
             let at = chain.iter().position(|k| fallback.contains(k)).unwrap_or(chain.len());
             chain.insert(at, cell_key.clone());
-        }
-    }
-}
-
-/// Appends the permitted craft-fonts faces to every family, preserving the leading system or
-/// bundled face's glyph shapes.
-fn append_craft_faces(fonts: &mut FontDefinitions) {
-    let craft = add_craft_fonts(fonts);
-    if craft.is_empty() {
-        return;
-    }
-    for chain in fonts.families.values_mut() {
-        for key in &craft {
-            if !chain.contains(key) {
-                chain.push(key.clone());
-            }
         }
     }
 }

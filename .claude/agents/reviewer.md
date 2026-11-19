@@ -36,7 +36,7 @@ Read each changed function whole, and its callers where behaviour changed, not o
    files; each asset file has a row in `ATTRIBUTION.md`.
 7. Leftovers: debug output, commented-out code, references to GridCraft or Craft outside
    LICENSE-MIT, LICENSE-APACHE, NOTICE and `assets/app-icon/LICENSE.txt`. The `craft_ui`,
-   `craft_window` and `craft_print` dependencies and `CRAFT_FONTS_DIR` are working code: keep them.
+   `craft_window` and `craft_print` dependencies are working code: keep them.
 8. Style: the change reads like the code around it (naming, comment density, idiom).
 
 rustfmt, clippy and the tests are the verifier's job: do not build or run anything. Use Bash

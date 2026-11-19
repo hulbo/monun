@@ -424,7 +424,7 @@ fn renders_every_ribbon_tab_without_panicking() {
 }
 
 #[test]
-/// Language commands are listed and every available locale renders and persists; CJK locales are omitted when craft fonts are absent.
+/// Language commands are listed and every available locale renders and persists; CJK locales are omitted (the test fonts have no CJK face).
 fn language_switch_renders_the_ribbon_and_persists() {
     let mut h = harness(blank());
     // English by default whatever the host's locale: only the desktop app reads the system language.
@@ -438,13 +438,9 @@ fn language_switch_renders_the_ribbon_and_persists() {
     for id in ["app.language.set", "app.language.english", "app.language.japanese"] {
         assert!(ids.contains(&id), "engine.commands lists {id}");
     }
-    // A minimal CI image has egui's bundled faces but no Japanese/Korean/Chinese face. Those
-    // catalogs are exercised when the pinned craft-fonts input is present; skipping them here is
-    // the documented no-font gap, not a missing-glyph or accessibility opt-out.
-    let languages: Vec<Language> = Language::ALL
-        .into_iter()
-        .filter(|l| monun_ui_egui::theme::craft_fonts_loaded() || !matches!(l, Language::Ja | Language::Ko | Language::Zh))
-        .collect();
+    // The test harness has egui's bundled faces but no Japanese/Korean/Chinese face; skipping
+    // those catalogs here is that gap, not a missing-glyph or accessibility opt-out.
+    let languages: Vec<Language> = Language::ALL.into_iter().filter(|l| !matches!(l, Language::Ja | Language::Ko | Language::Zh)).collect();
     for language in languages {
         h.state_mut().run("app.language.set", json!({"language": language.code()})).unwrap();
         h.run_steps(2); // every available locale renders the ribbon without panicking

@@ -3,11 +3,8 @@
 //! Colours are our own, tuned to read like a modern desktop spreadsheet. Fonts come from egui's
 //! bundled faces and the operating system at runtime: the UI uses the platform UI font, cells use
 //! the best available match for the workbook font (Calibri/Carlito/Aptos/Arial…), and egui's
-//! bundled Ubuntu/Hack/egui-icons and monochrome emoji faces are the last resort. A build with
-//! `CRAFT_FONTS_DIR` also embeds the permitted OFL craft-fonts faces (barred Adobe/Source/Noto CJK
-//! families never enter it, and a web build keeps only its explicit allowlist). Native builds opt
-//! into craft-fonts' OFL LXGW Chinese face, so a host without a Han system face still draws Chinese
-//! interface text; no font file is stored in this repo.
+//! bundled Ubuntu/Hack/egui-icons and monochrome emoji faces are the last resort. No font file is
+//! stored in this repo or embedded in the app.
 //!
 //! Chrome colours belong in [`Tokens`], each with a light and a dark value; colours
 //! drawn on the sheet keep their light value in both themes, because the sheet stays white. The
@@ -28,12 +25,12 @@ pub use font_fallback::symbol_face_installed;
 use font_fallback::{cjk_han_japanese, cjk_han_simplified, cjk_hangul, fallback_faces, hebrew, lao, symbols_more, thai};
 use font_setup::pick;
 pub use font_setup::{
-    CELL, CELL_BOLD, CELL_BOLD_ITALIC, CELL_ITALIC, CraftFont, DOC_CODE, HanOrder, MONO, SERIF, UI, UI_BOLD, available_text, cell_family,
-    cell_text_width, chinese_font_loaded, craft_font_scripts, craft_fonts_cover, craft_fonts_loaded, craft_fonts_required, font_definitions,
-    font_definitions_for_language, font_definitions_with, han_included, note_text, pinned_font_definitions, symbol_fallback, ui_bold, ui_font,
+    CELL, CELL_BOLD, CELL_BOLD_ITALIC, CELL_ITALIC, DOC_CODE, HanOrder, MONO, SERIF, UI, UI_BOLD, available_text, cell_family, cell_text_width,
+    font_definitions, font_definitions_for_language, font_definitions_with, han_included, note_text, pinned_font_definitions, symbol_fallback,
+    ui_bold, ui_font,
 };
 #[cfg(test)]
-use font_setup::{candidates, craft_font_faces, try_load};
+use font_setup::{candidates, try_load};
 #[cfg(test)]
 pub(crate) use font_setup::{drop_unparseable_fonts, font_parses};
 

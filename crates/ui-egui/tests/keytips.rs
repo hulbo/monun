@@ -618,7 +618,7 @@ fn color_palette_navigates_with_arrows_and_enter_applies() {
     sequence(&mut h, &[Key::H, Key::H], false); // H,H opens the fill palette
     h.run_steps(3);
     key(&mut h, Key::ArrowDown); // highlight starts at theme row 0
-    key(&mut h, Key::ArrowRight); // -> row 0, col 1 = Craft theme dk1 (#000000)
+    key(&mut h, Key::ArrowRight); // -> row 0, col 1 = Monun theme dk1 (#000000)
     key(&mut h, Key::Enter);
     h.run_steps(3);
     assert!(h.state().message.is_none() && h.state().toast.is_none(), "arrow+Enter must not error");
