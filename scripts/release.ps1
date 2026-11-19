@@ -173,13 +173,18 @@ try {
     if ($runtime) { Stop-Release "monun.exe가 C 런타임 DLL을 씁니다: $($runtime -join ', ') (.cargo/config.toml의 +crt-static 확인)" }
     Write-Host 'C 런타임: 정적 링크 (VC++ 재배포 패키지 필요 없음)'
 
+    # The licences of the crates built into the exe go beside it in the setup. xtask builds in
+    # release: the antivirus blocks a dev build of serde's build script.
+    $thirdParty = Join-Path $buildDir 'THIRD-PARTY-LICENSES.txt'
+    Invoke-Checked '라이선스 목록 만들기' { cargo run --release --locked --quiet -p xtask --no-default-features --target-dir $buildDir -- third-party $thirdParty }
+
     Step '설치 파일을 만드는 중… (1분쯤)'
     New-Item -ItemType Directory -Force $distDir | Out-Null
     # Writing the icon into the setup file fails now and then ("EndUpdateResource failed (110)"):
     # the antivirus holds the new file for a moment. That error comes before the long compression,
     # so trying again costs little.
     for ($attempt = 1; ; $attempt++) {
-        $isccOutput = & $iscc /Q "/DAppVersion=$Version" "/DSourceExe=$exe" "/DOutputDir=$distDir" $iss 2>&1
+        $isccOutput = & $iscc /Q "/DAppVersion=$Version" "/DSourceExe=$exe" "/DOutputDir=$distDir" "/DThirdParty=$thirdParty" $iss 2>&1
         if ($LASTEXITCODE -eq 0) { break }
         if ($attempt -lt 10 -and ($isccOutput -match 'EndUpdateResource')) {
             Write-Host "  아이콘을 쓰지 못해 다시 시도합니다 ($attempt/10)" -ForegroundColor Yellow

@@ -1,8 +1,8 @@
 # 모눈 (Monun) — instructions for agents
 
 Monun is a personal, Rust-native spreadsheet for one Korean freelancer (Windows desktop). It reads
-and writes XLSX and aims to behave like Excel for Windows. The repository is private
-(github.com/hulbo/monun); nothing is distributed.
+and writes XLSX and aims to behave like Excel for Windows. The repository is github.com/hulbo/monun.
+Its tests and samples use made-up names, never those of the user's clients or work.
 
 ## Working here
 - Talk to the user in Korean.
@@ -151,8 +151,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   clean tree at `origin/main`; `-BuildOnly` makes the setup alone. When the user's 모눈 runs from
   `target\release` it builds in `target\installer`. The setup installs per user (no admin) into
   `%LOCALAPPDATA%\Programs\Monun` under a fixed `AppId`, never touches `%APPDATA%\Monun`, and its
-  uninstaller removes the file-type entries when they point at the installed exe. The antivirus now and then
-  stops ISCC writing the setup's icon (`EndUpdateResource failed (110)`); the script retries.
+  uninstaller removes the file-type entries when they point at the installed exe. Beside the exe it
+  installs the licences: `LICENSE-*`, `NOTICE`, `ATTRIBUTION.md` and `THIRD-PARTY-LICENSES.txt`,
+  which `cargo xtask third-party` writes from the crates built into monun.exe. The antivirus now and
+  then stops ISCC writing the setup's icon (`EndUpdateResource failed (110)`); the script retries.
   `.cargo/config.toml` links the C runtime statically, so the exe needs no VC++ Redistributable.
 
 ## Skill and subagents (`.claude/`)

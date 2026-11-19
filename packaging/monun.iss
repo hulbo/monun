@@ -83,6 +83,10 @@ Source: "..\LICENSE-MIT"; DestDir: "{app}"; DestName: "LICENSE-MIT.txt"; Flags: 
 Source: "..\LICENSE-APACHE"; DestDir: "{app}"; DestName: "LICENSE-APACHE.txt"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 Source: "..\ATTRIBUTION.md"; DestDir: "{app}"; Flags: ignoreversion
+; The crates built into the exe and their licence texts (cargo xtask third-party; release.ps1).
+#ifdef ThirdParty
+Source: "{#ThirdParty}"; DestDir: "{app}"; DestName: "THIRD-PARTY-LICENSES.txt"; Flags: ignoreversion
+#endif
 
 [Icons]
 ; Started in Documents, like the update script starts it, so file dialogs open there.

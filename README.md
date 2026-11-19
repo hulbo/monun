@@ -288,7 +288,8 @@ pwsh scripts/release.ps1 -Version 1.0.2
 "모눈 1.0.2" 커밋과 `v1.0.2` 태그를 main에 올리고, 그 설치 파일과 지난 릴리스 뒤의 커밋 목록으로 GitHub 릴리스를
 만듭니다. `target\release`의 모눈이 실행 중이면 그 모눈은 그대로 두고 `target\installer`에서 따로 빌드합니다.
 `-BuildOnly`는 설치 파일만 만들고 버전·git·GitHub는 건드리지 않습니다. exe는 C 런타임을 정적으로 링크합니다
-(`.cargo/config.toml`).
+(`.cargo/config.toml`). 설치 파일에는 exe 옆에 라이선스 파일들과, exe에 들어간 크레이트와 그 라이선스 전문을
+모은 `THIRD-PARTY-LICENSES.txt`(`cargo xtask third-party`)가 함께 들어갑니다.
 
 ## 자동 복구
 
@@ -300,4 +301,5 @@ pwsh scripts/release.ps1 -Version 1.0.2
 
 MIT 또는 Apache-2.0 중 하나를 선택해 따릅니다. 전문과 저작권 고지는 [LICENSE-MIT](LICENSE-MIT),
 [LICENSE-APACHE](LICENSE-APACHE), [NOTICE](NOTICE)에 있고, 번들 자산의 출처는
-[ATTRIBUTION.md](ATTRIBUTION.md)에 있습니다.
+[ATTRIBUTION.md](ATTRIBUTION.md)에 있습니다. 함께 빌드되는 오픈소스 크레이트의 목록과 라이선스 전문은
+`cargo xtask third-party THIRD-PARTY-LICENSES.txt`로 만들 수 있고, 설치 파일에 들어 있습니다.

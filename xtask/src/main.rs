@@ -13,6 +13,7 @@ mod layers;
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
 mod parity;
 mod stats;
+mod third_party;
 mod version;
 
 use std::path::{Path, PathBuf};
@@ -39,6 +40,8 @@ commands:
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
+  third-party <out.txt>
+                  write the licences of the crates built into monun.exe (the setup ships the file)
 ";
 
 fn main() -> ExitCode {
@@ -56,6 +59,7 @@ fn main() -> ExitCode {
         Some("keytips") => keytips::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
+        Some("third-party") => third_party::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())
