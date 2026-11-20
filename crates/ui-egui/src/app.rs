@@ -100,6 +100,7 @@ impl SheetApp {
             doc_paths: Default::default(),
             api: Default::default(),
             project_loaded: None,
+            project_arrivals: Vec::new(),
             root_memos: None,
             files_rect: None,
             arrange_windows: None,
@@ -173,6 +174,8 @@ impl SheetApp {
         self.watch_files(ctx);
         // The memos kept in the working root: read for it, and again after a git pull.
         crate::memos::root_file::watch(self);
+        // The project file too: a group's files changed outside (a script adding its report).
+        crate::projects::watch(self);
         self.auto_recover(ctx);
         self.perf.save_ms = now_ms() - saves;
         self.update_title(ctx);

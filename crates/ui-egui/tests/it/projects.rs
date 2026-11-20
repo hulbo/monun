@@ -418,3 +418,98 @@ fn a_file_put_in_a_folder_stays_there_after_a_restart() {
     assert_eq!((g.folder_of(&y), folder.folded), (Some(folder.id), true));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The project file `p` as a script outside 모눈 changes it: `change` edits its JSON.
+fn change_outside(root: &std::path::Path, change: impl FnOnce(&mut Json)) {
+    let mut file: Json = serde_json::from_str(&project_file(root, "p")).unwrap();
+    change(&mut file);
+    std::fs::write(root.join(".monun").join("p.json"), serde_json::to_string_pretty(&file).unwrap()).unwrap();
+}
+
+/// The group `name` of a project file's JSON.
+fn group_of<'a>(file: &'a mut Json, name: &str) -> &'a mut Json {
+    file["groups"].as_array_mut().unwrap().iter_mut().find(|g| g["name"] == name).unwrap()
+}
+
+#[test]
+fn a_file_added_outside_to_another_group_opens_with_it_and_stays() {
+    let (base, root) = root("added-outside");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "p"}));
+    let (x, y, b) = (path(&root.join("a").join("x.md")), path(&root.join("a").join("y.md")), path(&root.join("a").join("b.xlsx")));
+    run(&mut h, "file.open", json!({"path": x}));
+    groups::switch(h.state_mut(), groups::Target::New { name: "Reports".into(), take: false });
+    h.run_steps(4);
+    run(&mut h, "file.open", json!({"path": y}));
+    groups::switch(h.state_mut(), groups::Target::Group("Default group".into()));
+    h.run_steps(4);
+    assert_eq!(open_paths(&h), [x.clone()]);
+    // A script puts its report in Reports, in a folder, while 모눈 runs (before it looks again).
+    change_outside(&root, |file| {
+        let g = group_of(file, "Reports");
+        g["files"].as_array_mut().unwrap().push(json!("a/b.xlsx"));
+        g["folders"] = json!([{"id": 7, "name": "Weekly"}]);
+        g["placed"] = json!({"a/b.xlsx": 7});
+    });
+    // Going to the group opens the report with it, in its folder.
+    groups::switch(h.state_mut(), groups::Target::Group("Reports".into()));
+    h.run_steps(4);
+    assert_eq!(open_paths(&h), [y.clone(), b.clone()]);
+    let g = h.state().ui.groups.iter().find(|g| g.name == "Reports").unwrap();
+    assert_eq!(g.folder_of(&b), Some(7));
+    // Tabs changed and the group left (each writes the file): the report stays in it.
+    run(&mut h, "file.open", json!({"path": x}));
+    groups::switch(h.state_mut(), groups::Target::Group("Default group".into()));
+    h.run_steps(4);
+    let text = project_file(&root, "p");
+    let file: Json = serde_json::from_str(&text).unwrap();
+    let reports = file["groups"].as_array().unwrap().iter().find(|g| g["name"] == "Reports").unwrap();
+    assert_eq!(reports["files"], json!(["a/y.md", "a/b.xlsx", "a/x.md"]), "{text}");
+    assert_eq!(reports["placed"], json!({"a/b.xlsx": 7}), "{text}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn a_file_added_outside_to_the_group_in_use_opens_and_one_closed_here_stays_out() {
+    let (base, root) = root("added-in-use");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "p"}));
+    let (x, y, b) = (path(&root.join("a").join("x.md")), path(&root.join("a").join("y.md")), path(&root.join("a").join("b.xlsx")));
+    run(&mut h, "file.open", json!({"path": x}));
+    run(&mut h, "file.open", json!({"path": y}));
+    // A script adds the workbook to the group in use, and before 모눈 looks y.md is closed here.
+    change_outside(&root, |file| group_of(file, "Default group")["files"].as_array_mut().unwrap().push(json!("a/b.xlsx")));
+    run(&mut h, "file.close", json!({"document": true}));
+    h.run_steps(4);
+    // The workbook opens as a tab behind the file in front; the file closed here stays out.
+    assert_eq!(open_paths(&h), [x.clone(), b.clone()]);
+    assert_eq!(h.state().session.active().and_then(|d| d.path.clone()), Some(x.clone()));
+    let text = project_file(&root, "p");
+    let file: Json = serde_json::from_str(&text).unwrap();
+    assert_eq!(file["groups"][0]["files"], json!(["a/x.md", "a/b.xlsx"]), "{text}");
+    // Closed here with nothing changed outside: it stays out too.
+    run(&mut h, "file.close", json!({"document": true}));
+    h.run_steps(4);
+    assert_eq!(open_paths(&h), [b.clone()]);
+    let file: Json = serde_json::from_str(&project_file(&root, "p")).unwrap();
+    assert_eq!(file["groups"][0]["files"], json!(["a/b.xlsx"]));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn a_change_made_outside_is_read_within_seconds() {
+    let (base, root) = root("watched");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "p"}));
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("x.md"))}));
+    change_outside(&root, |file| file["groups"].as_array_mut().unwrap().push(json!({"name": "Reports", "files": ["a/b.xlsx"]})));
+    // Nothing done here: the next look (every two seconds) takes it in.
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    h.run_steps(2);
+    let b = path(&root.join("a").join("b.xlsx"));
+    assert!(h.state().ui.groups.iter().any(|g| g.name == "Reports" && g.files == [b.clone()]), "{:?}", h.state().ui.groups);
+    let _ = std::fs::remove_dir_all(&base);
+}

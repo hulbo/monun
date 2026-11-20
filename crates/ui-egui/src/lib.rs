@@ -498,6 +498,9 @@ pub struct SheetApp {
     /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
     /// before it is read (a run that doesn't restore the user's files never writes to it).
     pub(crate) project_loaded: Option<projects::Loaded>,
+    /// Files a change made outside 모눈 added to the group in use (a script putting its report in
+    /// the project), by group: opened as tabs by [`groups::sync`] while that group is in use.
+    pub(crate) project_arrivals: Vec<(String, String)>,
     /// The memos on the working root's files, kept in the root ([`memos::root_file`]): read for the
     /// root in use, `None` with no root.
     pub(crate) root_memos: Option<memos::root_file::Store>,

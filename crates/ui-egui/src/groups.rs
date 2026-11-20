@@ -216,6 +216,9 @@ pub(crate) fn sync(app: &mut SheetApp) {
         // The quit was cancelled.
         app.groups_frozen = false;
     }
+    if !app.project_arrivals.is_empty() {
+        open_arrivals(app);
+    }
     let (files, active) = open_files(app);
     let i = ensure(app);
     // A file saved under a new name keeps its folder; one never saved goes to its folder now.
@@ -266,16 +269,48 @@ fn open_group(app: &mut SheetApp, g: &FileGroup) {
     }
     app.follow_active_window();
     app.after_engine();
-    if !missing.is_empty() {
-        let lang = app.ui.language;
-        let mut text =
-            format!("{}\n\n{}", lang.tr("These files of the group could not be opened, so they were taken out of it:"), missing.join("\n"));
-        // A message already up (why a project gave way) comes first.
-        if let Some((_, earlier)) = app.message.take() {
-            text = format!("{earlier}\n\n{text}");
-        }
-        app.message = Some((lang.tr("Monun").to_string(), text));
+    tell_missing(app, &missing);
+}
+
+/// Says which of a group's files could not be opened (and so were taken out of it).
+fn tell_missing(app: &mut SheetApp, missing: &[String]) {
+    if missing.is_empty() {
+        return;
     }
+    let lang = app.ui.language;
+    let mut text = format!("{}\n\n{}", lang.tr("These files of the group could not be opened, so they were taken out of it:"), missing.join("\n"));
+    // A message already up (why a project gave way) comes first.
+    if let Some((_, earlier)) = app.message.take() {
+        text = format!("{earlier}\n\n{text}");
+    }
+    app.message = Some((lang.tr("Monun").to_string(), text));
+}
+
+/// Opens the files added outside 모눈 to the group in use ([`SheetApp::project_arrivals`]) as tabs,
+/// behind the file in front, which stays in front. One that can't be opened is taken out of the
+/// group and named in a message; those of a group no longer in use stay in its list only.
+fn open_arrivals(app: &mut SheetApp) {
+    let arrivals = std::mem::take(&mut app.project_arrivals);
+    let front = app.session.active().map(|d| d.uid);
+    let mut missing = Vec::new();
+    for (group, path) in arrivals {
+        if group != app.ui.group || app.session.documents().iter().any(|d| d.path.as_deref() == Some(path.as_str())) {
+            continue;
+        }
+        if app.run("file.open", json!({"path": path})).is_err() {
+            missing.push(path);
+        }
+    }
+    if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == app.ui.group) {
+        g.files.retain(|f| !missing.contains(f));
+        g.placed.retain(|f, _| !missing.contains(f));
+    }
+    if let Some(i) = front.and_then(|uid| app.session.documents().iter().position(|d| d.uid == uid)) {
+        app.session.set_active(i);
+    }
+    app.follow_active_window();
+    app.after_engine();
+    tell_missing(app, &missing);
 }
 
 /// Writes the groups now (the desktop's `ui.json`, and a project of the root's own file), so a
@@ -390,6 +425,9 @@ fn go(app: &mut SheetApp, target: &Target) {
         _ => None,
     };
     sync(app);
+    // The project file read again first: a file added to a group outside 모눈 since it was read (a
+    // script putting its report there) opens with that group.
+    crate::projects::save_current(app);
     app.backstage = None;
     // Each close takes the workbook in front with all its windows.
     for _ in 0..app.session.documents().len() {

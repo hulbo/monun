@@ -13,6 +13,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
+use monun_engine::io::{DiskStamp, disk_stamp};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -93,7 +94,13 @@ pub struct Loaded {
     /// Why its file couldn't be read at all last time (held by another program, not text): told
     /// about once, and the file left as it is.
     pub unreadable: Option<String>,
+    /// Its file's [`DiskStamp`] when [`watch`] last looked, and when that was (ms).
+    pub stamp: Option<DiskStamp>,
+    pub checked: f64,
 }
+
+/// How often the project file is looked at for a change made outside 모눈, in ms.
+const CHECK_MS: f64 = 2000.0;
 
 /// A project read for a switch to it.
 pub(crate) struct Opened {
@@ -388,6 +395,8 @@ pub(crate) fn swap(app: &mut SheetApp, target: Option<String>, opened: Option<Op
     match app.ui.project.clone() {
         Some(project) => {
             save_current(app);
+            // Files added outside to the group left are in its file now; none opens here.
+            app.project_arrivals.clear();
             let view = view_of(&project, app);
             app.ui.project_views.retain(|v| v.project != project);
             app.ui.project_views.push(view);
@@ -449,8 +458,9 @@ pub(crate) fn at_start(app: &mut SheetApp) {
 
 /// Writes the project in use to its file, when it is a project of the root read in this run and
 /// its groups or their files changed (which group and file are in front, and when each was used,
-/// stay on this PC). When the file was changed outside 모눈 since it was read (a git pull), that
-/// version is taken, but for the group in use's files: its tabs here.
+/// stay on this PC). When the file was changed outside 모눈 since it was read (a git pull, a script
+/// adding a file), that version is taken, but for the group in use's files: its tabs here, with the
+/// files added to it outside opening as tabs ([`merged`]).
 pub(crate) fn save_current(app: &mut SheetApp) {
     let Some(loaded) = app.project_loaded.clone() else { return };
     if app.ui.project.as_deref() != Some(loaded.name.as_str()) {
@@ -487,7 +497,13 @@ pub(crate) fn save_current(app: &mut SheetApp) {
         && disk != loaded.seen
     {
         match parse(&loaded.root, text) {
-            Ok(theirs) => app.ui.groups = merged(app, theirs),
+            Ok(theirs) => {
+                let base = loaded.seen.as_deref().and_then(|seen| parse(&loaded.root, seen).ok());
+                let (groups, arrivals) = merged(app, theirs, base.as_deref());
+                app.ui.groups = groups;
+                let group = app.ui.group.clone();
+                app.project_arrivals.extend(arrivals.into_iter().map(|path| (group.clone(), path)));
+            }
             // A file 모눈 can't read (a git conflict left in it, a newer version's) is left as it
             // is, and said so once.
             Err(e) => {
@@ -538,9 +554,34 @@ fn set_seen(app: &mut SheetApp, seen: Option<String>) {
     }
 }
 
+/// Each frame: the project file looked at every few seconds, and when it changed (a script adding a
+/// file to a group, a git pull) taken in at once, so a group opened next opens with it.
+pub(crate) fn watch(app: &mut SheetApp) {
+    if app.groups_frozen || app.ui.project.is_none() {
+        return;
+    }
+    let now = crate::monotonic_ms();
+    let Some(l) = app.project_loaded.as_mut() else { return };
+    if now - l.checked < CHECK_MS {
+        return;
+    }
+    l.checked = now;
+    let stamp = disk_stamp(&project_path(&l.root, &l.name).to_string_lossy());
+    if stamp == l.stamp {
+        return;
+    }
+    l.stamp = stamp;
+    // Reads it, takes a change made outside and writes what 모눈 has that the file lacks.
+    save_current(app);
+}
+
 /// `theirs` (the project file as changed outside 모눈) with this PC's place in it, and the group in
-/// use's files as its tabs here are.
-fn merged(app: &SheetApp, mut theirs: Vec<FileGroup>) -> Vec<FileGroup> {
+/// use's files as its tabs here are, but for the files added to it outside since the file was read
+/// (`base`): those join it, and are returned to be opened as tabs. A file that was in the file as
+/// read and isn't a tab here was closed here, and stays out. Where a file sits is taken from
+/// `theirs` too when it was moved outside and not here.
+fn merged(app: &SheetApp, mut theirs: Vec<FileGroup>, base: Option<&[FileGroup]>) -> (Vec<FileGroup>, Vec<String>) {
+    let mut arrivals = Vec::new();
     for g in theirs.iter_mut() {
         if let Some(o) = app.ui.groups.iter().find(|o| o.name == g.name) {
             g.active = o.active.clone();
@@ -553,22 +594,43 @@ fn merged(app: &SheetApp, mut theirs: Vec<FileGroup>) -> Vec<FileGroup> {
     if let Some(ours) = app.ui.groups.iter().find(|g| g.name == app.ui.group).cloned() {
         match theirs.iter_mut().find(|g| g.name == ours.name) {
             Some(g) => {
+                let before = base.and_then(|b| b.iter().find(|x| x.name == ours.name));
+                let was = |f: &String| before.is_some_and(|b| b.files.contains(f));
+                let added: Vec<String> = g.files.iter().filter(|f| !ours.files.contains(f) && !was(f)).cloned().collect();
+                let mut placed = ours.placed.clone();
+                for f in &added {
+                    if let Some(id) = g.placed.get(f) {
+                        placed.insert(f.clone(), *id);
+                    }
+                }
+                if let Some(b) = before {
+                    for f in &ours.files {
+                        let (then, now, here) = (b.placed.get(f), g.placed.get(f), ours.placed.get(f));
+                        if now != then && here == then {
+                            match now {
+                                Some(id) => placed.insert(f.clone(), *id),
+                                None => placed.remove(f),
+                            };
+                        }
+                    }
+                }
                 // Its tabs here, each in the folder it sits in here (a folder theirs lacks kept).
-                for id in ours.placed.values() {
+                for id in placed.values() {
                     if g.folder(*id).is_none()
                         && let Some(f) = ours.folder(*id)
                     {
                         g.folders.push(f.clone());
                     }
                 }
-                g.files = ours.files;
-                g.placed = ours.placed;
+                g.files = ours.files.iter().chain(&added).cloned().collect();
+                g.placed = placed;
                 g.tidy_folders();
+                arrivals = added;
             }
             None => theirs.push(ours),
         }
     }
-    theirs
+    (theirs, arrivals)
 }
 
 /// Copies the group `group` (of the project in use) into the project `target` (`None`: This PC),
@@ -689,7 +751,8 @@ pub(crate) fn command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<J
         "project.rename" => rename(app, &text("name").unwrap_or_default(), &text("to").unwrap_or_default()),
         "project.delete" => delete(app, &text("name").unwrap_or_default()),
         "project.reload" => {
-            // The file as it is now (a git pull), but for the group in use's files: its tabs.
+            // The file as it is now (a git pull), but for the group in use's files: its tabs, and
+            // any file there that isn't one opens as one.
             if let Some(l) = app.project_loaded.as_mut() {
                 l.seen = None;
                 // Asked for: a file that still can't be read is said so again.
