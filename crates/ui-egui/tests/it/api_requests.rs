@@ -80,8 +80,8 @@ fn in_folder(app: &mut SheetApp, path: &str, vars: &[(&str, &str, bool)], header
     let g = app.ui.groups.iter_mut().find(|g| g.name == group).unwrap();
     let id = g.add_folder("API", None);
     let f = g.folders.iter_mut().find(|f| f.id == id).unwrap();
-    f.vars = vars.iter().map(|(n, v, s)| Setting { name: n.to_string(), value: v.to_string(), secret: *s }).collect();
-    f.headers = headers.iter().map(|(n, v)| Setting { name: n.to_string(), value: v.to_string(), secret: false }).collect();
+    f.vars = vars.iter().map(|(n, v, s)| Setting { name: n.to_string(), value: v.to_string(), secret: *s, ..Setting::default() }).collect();
+    f.headers = headers.iter().map(|(n, v)| Setting { name: n.to_string(), value: v.to_string(), ..Setting::default() }).collect();
     g.place(path, Some(id));
     id
 }
@@ -195,7 +195,7 @@ fn folder_settings_keep_a_folders_variables_and_headers() {
     h.run_steps(3);
     let g = h.state().ui.groups.iter().find(|g| g.name == group).unwrap();
     let f = g.folder(id).unwrap();
-    assert_eq!(f.vars, [Setting { name: "Domain".into(), value: "dev.example.com".into(), secret: false }]);
+    assert_eq!(f.vars, [Setting { name: "Domain".into(), value: "dev.example.com".into(), ..Setting::default() }]);
     assert_eq!(f.headers.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["X-Key"]);
     assert!(h.query_by_label("→ https://dev.example.com/").is_some(), "the request reads it");
     let _ = std::fs::remove_file(&path);
@@ -280,4 +280,77 @@ fn a_form_sends_its_file_and_a_switch_back_finds_the_body_left() {
     // (Written by the tab, the request starts with its `###` line.)
     assert_eq!(draft(&h).trim_start_matches("###\n"), text);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_environment_chosen_at_the_front_of_the_line_reads_its_values() {
+    let (port, got) = serve_once(r#"{"env":"dev"}"#);
+    let path = file(
+        "env",
+        "orders.http",
+        "GET {{url}}/orders
+",
+    );
+    let mut h = harness(&path, |app| {
+        let id = in_folder(app, &path, &[("url", "http://127.0.0.1:1", false)], &[]);
+        let group = groups::current(app);
+        let f = app.ui.groups.iter_mut().find(|g| g.name == group).unwrap().folders.iter_mut().find(|f| f.id == id).unwrap();
+        f.envs = vec!["Dev".into(), "Prod".into()];
+        f.vars[0].by_env = [("Dev".to_string(), format!("http://127.0.0.1:{port}"))].into();
+    });
+    // No environment yet: the value for all.
+    assert!(h.query_by_label("Environment").is_some(), "the environment at the front of the line");
+    assert!(h.query_by_label("→ http://127.0.0.1:1/orders").is_some());
+    // Dev chosen at the front of the line: {{url}} reads its value there, and the group keeps it.
+    h.get_by_label("Environment").click();
+    h.run_steps(2);
+    h.get_by_label("Dev").click();
+    h.run_steps(3);
+    assert!(h.query_by_label(&format!("→ http://127.0.0.1:{port}/orders")).is_some());
+    let group = groups::current(h.state_mut());
+    assert_eq!(h.state().ui.groups.iter().find(|g| g.name == group).unwrap().env.as_deref(), Some("Dev"));
+    send_and_wait(&mut h, "200 OK");
+    let request = got.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(request.starts_with("GET /orders "), "{request}");
+    // Prod has no value of its own: the value for all.
+    h.get_by_label("Environment").click();
+    h.run_steps(2);
+    h.get_by_label("Prod").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("→ http://127.0.0.1:1/orders").is_some());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn folder_settings_name_environments_and_keep_each_variables_values() {
+    let path = file(
+        "env-settings",
+        "a.http",
+        "GET {{url}}/
+",
+    );
+    let mut id = 0;
+    let mut h = harness(&path, |app| id = in_folder(app, &path, &[("url", "https://example.test", false)], &[]));
+    let group = groups::current(h.state_mut());
+    h.state_mut().open_dialog("folderSettings", json!({"group": group, "id": id}));
+    h.run_steps(3);
+    // Add Environment suggests Dev, then Local.
+    h.get_by_label("Add Environment").click();
+    h.run_steps(2);
+    h.get_by_label("Add Environment").click();
+    h.run_steps(2);
+    type_into(&mut h, "Value · Dev", 0, "https://dev.example.test");
+    // Renamed, the environment keeps its values.
+    type_into(&mut h, "Environment name", 0, "2");
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    let g = h.state().ui.groups.iter().find(|g| g.name == group).unwrap();
+    let f = g.folder(id).unwrap();
+    assert_eq!(f.envs, ["Dev2", "Local"]);
+    assert_eq!(f.vars[0].by_env.get("Dev2").map(String::as_str), Some("https://dev.example.test"));
+    assert!(!f.vars[0].by_env.contains_key("Local"), "an empty value isn't kept");
+    // Kept with the folder (in a project's file too): its environments and values by name.
+    let json = serde_json::to_string(f).unwrap();
+    assert!(json.contains("\"envs\":[\"Dev2\",\"Local\"]") && json.contains("\"byEnv\":{\"Dev2\":"), "{json}");
+    let _ = std::fs::remove_file(&path);
 }

@@ -36,6 +36,11 @@ pub struct FileGroup {
     /// The folder each of its files sits in (path → folder id); a file not here sits at the top.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub placed: std::collections::BTreeMap<String, u64>,
+    /// The environment its API requests read their folders' variables in (`Dev`, `Prod`;
+    /// [`crate::group_folders::Folder::envs`]), as chosen at a request's line: this PC's, never in
+    /// a project's file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
 }
 
 /// The order the group panel and the group menu list the groups in (the panel's Sort button).

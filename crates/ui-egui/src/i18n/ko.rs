@@ -2240,6 +2240,21 @@ const MORE: &[(&str, &str)] = &[
     ("A web page can only be looked at in Monun.", "모눈에서는 웹 페이지를 보기만 할 수 있습니다."),
     ("New Site Link…", "새 사이트 연결…"),
     ("Site Link", "사이트 연결"),
+    // API requests: the folders' environments (Dev, Local, Prod) and the one in use.
+    ("Environment", "환경"),
+    ("Environments", "환경"),
+    ("No Environment", "환경 없음"),
+    ("Edit Environments…", "환경 편집…"),
+    ("The environment the folders' variables are read in", "폴더 변수를 어느 환경의 값으로 읽을지"),
+    ("Environment name", "환경 이름"),
+    ("Add Environment", "환경 추가"),
+    ("Dev", "개발"),
+    ("Local", "로컬"),
+    ("Prod", "운영"),
+    (
+        "Name environments (Dev, Local, Prod) to give each variable a value in each; choose one at the front of a request's line. A value left empty reads Value.",
+        "환경(개발·로컬·운영)을 정하면 변수마다 환경별 값을 넣을 수 있습니다. 요청 줄 맨 앞에서 환경을 고릅니다. 비워 둔 값은 '값' 칸을 씁니다.",
+    ),
     // New › Other File (file_tabs::new_other): a source file or any text file, by its name.
     ("New Other File…", "새 기타 파일…"),
     ("Other File", "기타 파일"),

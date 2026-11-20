@@ -203,6 +203,10 @@ struct Scope {
     vars: Vec<(String, String, bool)>,
     headers: Vec<(String, String)>,
     insecure: bool,
+    /// The environments its folders name, the outermost folder's first.
+    envs: Vec<String>,
+    /// The environment in use (its group's), if any.
+    env: Option<String>,
 }
 
 /// A request with its variables read.
@@ -223,6 +227,8 @@ enum Act {
     Settings(String, u64),
     Pick(usize),
     AddRequest,
+    /// The environment the group's requests read in (`None`: none).
+    Env(Option<String>),
 }
 
 /// Puts `(name, value)` in `list`, over one of that name (`ci`: regardless of case).
@@ -247,11 +253,19 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
     };
     let Some(id) = folder else { return Scope::default() };
     let chain = g.folder_chain(id);
+    let env = g.env.clone();
     let mut vars: Vec<(String, String, bool)> = Vec::new();
     let mut headers: Vec<(String, String, ())> = Vec::new();
+    let mut envs: Vec<String> = Vec::new();
     for f in chain.iter().rev() {
+        for e in &f.envs {
+            if !envs.contains(e) {
+                envs.push(e.clone());
+            }
+        }
+        // A variable's value in the environment in use, where it has one.
         for v in f.vars.iter().filter(|v| !v.name.trim().is_empty()) {
-            upsert(&mut vars, v.name.trim(), &v.value, v.secret, false);
+            upsert(&mut vars, v.name.trim(), v.value_in(env.as_deref()), v.secret, false);
         }
         for h in f.headers.iter().filter(|h| !h.name.trim().is_empty()) {
             upsert(&mut headers, h.name.trim(), &h.value, (), true);
@@ -262,6 +276,8 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
         vars,
         headers: headers.into_iter().map(|(k, v, ())| (k, v)).collect(),
         insecure: chain.iter().any(|f| f.insecure),
+        envs,
+        env,
     }
 }
 
@@ -475,7 +491,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let prepared = ready(&scope, &file_vars, (&req, base.as_deref()), crate::now_ms());
     let busy = app.api.busy(uid);
 
-    request_bar(ui, (uid, lang, &t), (&requests, index), &mut req, (busy, &mut acts));
+    request_bar(ui, (uid, lang, &t), (&requests, index), (&mut req, &scope), (busy, &mut acts));
     ui.add_space(4.0);
     ui.add(egui::Label::new(RichText::new(format!("→ {}", prepared.shown_url)).font(mono(12.0)).color(t.text_dim)).truncate());
     if !prepared.missing.is_empty() {
@@ -544,6 +560,14 @@ fn finish(app: &mut SheetApp, uid: u64, (text, edited): (&str, Option<(String, u
             }
             Act::Raw => app.api.tabs.entry(uid).or_default().raw = true,
             Act::Settings(group, id) => app.open_dialog("folderSettings", json!({"group": group, "id": id})),
+            Act::Env(env) => {
+                // The group's: every request in it reads its folders' values in that environment.
+                let group = app.ui.group.clone();
+                if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
+                    g.env = env;
+                }
+                crate::groups::persist(app);
+            }
             Act::Pick(i) => {
                 let tab = app.api.tabs.entry(uid).or_default();
                 tab.request = i;
@@ -569,16 +593,42 @@ fn finish(app: &mut SheetApp, uid: u64, (text, edited): (&str, Option<(String, u
     }
 }
 
-/// The request's line: which request of the file (when it holds more than one), its method, its
-/// address, and Send (Cancel while it is on its way).
+/// The request's line: the environment its variables are read in (for a request in a folder), which
+/// request of the file (when it holds more than one), its method, its address, and Send (Cancel
+/// while it is on its way).
 fn request_bar(
     ui: &mut Ui,
     (uid, lang, t): (u64, crate::i18n::Language, &Tokens),
     (requests, index): (&[&Part], usize),
-    req: &mut Request,
+    (req, scope): (&mut Request, &Scope),
     (busy, acts): (bool, &mut Vec<Act>),
 ) {
     ui.horizontal(|ui| {
+        if let Some((group, id, _)) = &scope.folder {
+            // As Postman's, at the front: the environment in use, if one of the folders names it.
+            let shown = scope.env.clone().filter(|e| scope.envs.contains(e));
+            let label = shown.clone().unwrap_or_else(|| lang.tr("No Environment").to_string());
+            craft_ui::ComboBox::from_id_salt(("monun.api.env", uid))
+                .width(112.0)
+                .selected_text(RichText::new(label).strong())
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(shown.is_none(), lang.tr("No Environment")).clicked() {
+                        acts.push(Act::Env(None));
+                    }
+                    for e in &scope.envs {
+                        if ui.selectable_label(shown.as_deref() == Some(e.as_str()), e).clicked() {
+                            acts.push(Act::Env(Some(e.clone())));
+                        }
+                    }
+                    ui.separator();
+                    if ui.button(lang.tr("Edit Environments…")).clicked() {
+                        acts.push(Act::Settings(group.clone(), *id));
+                    }
+                })
+                .response
+                .on_hover_text(lang.tr("The environment the folders' variables are read in"))
+                .accessible_name(lang.tr("Environment"));
+        }
         if requests.len() > 1 {
             craft_ui::ComboBox::from_id_salt(("monun.api.pick", uid))
                 .width(150.0)
@@ -961,14 +1011,20 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     let note = lang.tr("For the API requests in the folder “{name}” and in the folders within it.").replace("{name}", &folder.name);
     ui.label(RichText::new(note).color(t.text_dim));
     ui.add_space(8.0);
+    ui.label(RichText::new(lang.tr("Environments")).strong());
+    let note = lang.tr("Name environments (Dev, Local, Prod) to give each variable a value in each; choose one at the front of a request's line. A value left empty reads Value.");
+    ui.label(RichText::new(note).font(theme::ui_font(12.0)).color(t.text_dim));
+    envs_editor(ui, id, &mut work, (lang, &t));
+    ui.add_space(8.0);
     ui.label(RichText::new(lang.tr("Variables")).strong());
     ui.label(RichText::new(lang.tr("Write {{Name}} in a request's address, headers or body.")).font(theme::ui_font(12.0)).color(t.text_dim));
-    settings_table(ui, ("monun.api.folder_vars", id), &mut work.vars, true, (lang, &t));
+    let envs = work.envs.clone();
+    settings_table(ui, ("monun.api.folder_vars", id), &mut work.vars, Some(&envs), (lang, &t));
     ui.add_space(8.0);
     ui.label(RichText::new(lang.tr("Headers")).strong());
     let note = lang.tr("Every request in the folder sends these; a request's own header of the same name goes instead.");
     ui.label(RichText::new(note).font(theme::ui_font(12.0)).color(t.text_dim));
-    settings_table(ui, ("monun.api.folder_headers", id), &mut work.headers, false, (lang, &t));
+    settings_table(ui, ("monun.api.folder_headers", id), &mut work.headers, None, (lang, &t));
     ui.add_space(8.0);
     ui.checkbox(&mut work.insecure, lang.tr("Don't check certificates (a development server's own)"));
     if let Ok(v) = serde_json::to_value(&work) {
@@ -979,13 +1035,33 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     match crate::widgets::dialog_buttons(ui, &row) {
         Some(0) => {
             *open = false;
+            // Environments named once each; a variable's values only for those, and only filled.
+            let mut envs: Vec<String> = Vec::new();
+            for e in work.envs.iter().map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
+                if !envs.contains(&e) {
+                    envs.push(e);
+                }
+            }
             let clean = |rows: Vec<Setting>| -> Vec<Setting> {
-                rows.into_iter().filter(|r| !r.name.trim().is_empty()).map(|r| Setting { name: r.name.trim().to_string(), ..r }).collect()
+                rows.into_iter()
+                    .filter(|r| !r.name.trim().is_empty())
+                    .map(|r| Setting {
+                        name: r.name.trim().to_string(),
+                        by_env: r
+                            .by_env
+                            .into_iter()
+                            .map(|(k, v)| (k.trim().to_string(), v))
+                            .filter(|(k, v)| envs.contains(k) && !v.is_empty())
+                            .collect(),
+                        ..r
+                    })
+                    .collect()
             };
             if let Some(f) = app.ui.groups.iter_mut().find(|g| g.name == group).and_then(|g| g.folders.iter_mut().find(|f| f.id == id)) {
                 f.vars = clean(work.vars);
                 f.headers = clean(work.headers);
                 f.insecure = work.insecure;
+                f.envs = envs;
             }
             crate::groups::persist(app);
         }
@@ -994,11 +1070,84 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     }
 }
 
-/// A folder's variables or headers to edit: name, value (dots for a hidden variable), Hidden, ✕.
-fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, secrets: bool, (lang, t): (crate::i18n::Language, &Tokens)) {
+/// The names Add Environment suggests first, in the interface's language.
+const ENV_NAMES: [&str; 3] = ["Dev", "Local", "Prod"];
+
+/// A folder's environments to edit: each name (renaming it keeps its variables' values), ✕, and Add
+/// Environment, which suggests Dev, Local and Prod first.
+fn envs_editor(ui: &mut Ui, id: u64, work: &mut Folder, (lang, t): (crate::i18n::Language, &Tokens)) {
+    let mut renames: Vec<(String, String)> = Vec::new();
     let mut remove = None;
-    let name_w = 170.0;
-    let value_w = if secrets { 290.0 } else { 360.0 };
+    let mut add = false;
+    ui.horizontal_wrapped(|ui| {
+        for (i, name) in work.envs.iter_mut().enumerate() {
+            ui.push_id(("monun.api.env_name", id, i), |ui| {
+                let before = name.clone();
+                let field = ui
+                    .add(egui::TextEdit::singleline(name).desired_width(96.0).hint_text(lang.tr("Name")))
+                    .accessible_name(lang.tr("Environment name"));
+                if field.changed() {
+                    renames.push((before, name.clone()));
+                }
+                if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(18.0, 22.0)).clicked() {
+                    remove = Some(i);
+                }
+                ui.add_space(6.0);
+            });
+        }
+        if ui.button(lang.tr("Add Environment")).clicked() {
+            add = true;
+        }
+    });
+    for (old, new) in renames {
+        for v in &mut work.vars {
+            if let Some(value) = v.by_env.remove(&old) {
+                v.by_env.insert(new.clone(), value);
+            }
+        }
+    }
+    if let Some(i) = remove.filter(|i| *i < work.envs.len()) {
+        let gone = work.envs.remove(i);
+        for v in &mut work.vars {
+            v.by_env.remove(&gone);
+        }
+    }
+    if add {
+        let free = |n: &String| !work.envs.contains(n);
+        let name = ENV_NAMES
+            .iter()
+            .map(|n| lang.tr(n).to_string())
+            .find(free)
+            .or_else(|| (1..100).map(|n| format!("{} {n}", lang.tr("Environment"))).find(free))
+            .unwrap_or_default();
+        work.envs.push(name);
+    }
+}
+
+/// A folder's variables or headers to edit: name, value (dots for a hidden variable), a value for
+/// each of `envs` (a variable's; `None` for headers), Hidden, ✕.
+fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, envs: Option<&[String]>, (lang, t): (crate::i18n::Language, &Tokens)) {
+    let secrets = envs.is_some();
+    let envs = envs.unwrap_or_default();
+    let mut remove = None;
+    let gap = ui.spacing().item_spacing.x;
+    let name_w = if envs.is_empty() { 170.0 } else { 140.0 };
+    // The values share what the name, Hidden and ✕ leave.
+    let rest = ui.available_width() - name_w - if secrets { 64.0 } else { 0.0 } - 22.0 - gap * (envs.len() as f32 + 3.0);
+    let value_w = (rest / (envs.len() as f32 + 1.0)).clamp(80.0, 360.0);
+    if !envs.is_empty() {
+        // The columns' names over them.
+        ui.horizontal(|ui| {
+            let head = |ui: &mut Ui, text: &str, w: f32| {
+                ui.add_sized(vec2(w, 16.0), egui::Label::new(RichText::new(text).font(theme::ui_font(12.0)).color(t.text_dim)).truncate());
+            };
+            head(ui, lang.tr("Name"), name_w);
+            head(ui, lang.tr("Value"), value_w);
+            for e in envs {
+                head(ui, e, value_w);
+            }
+        });
+    }
     for (i, r) in rows.iter_mut().enumerate() {
         ui.push_id((salt, i), |ui| {
             ui.horizontal(|ui| {
@@ -1008,6 +1157,14 @@ fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, secre
                     egui::TextEdit::singleline(&mut r.value).font(mono(13.0)).desired_width(value_w).password(r.secret).hint_text(lang.tr("Value")),
                 )
                 .accessible_name(lang.tr("Value"));
+                for e in envs {
+                    let mut value = r.by_env.get(e).cloned().unwrap_or_default();
+                    let field =
+                        egui::TextEdit::singleline(&mut value).font(mono(13.0)).desired_width(value_w).password(r.secret).hint_text(e.as_str());
+                    if ui.add(field).accessible_name(format!("{} · {e}", lang.tr("Value"))).changed() {
+                        r.by_env.insert(e.clone(), value);
+                    }
+                }
                 if secrets {
                     ui.checkbox(&mut r.secret, lang.tr("Hidden")).on_hover_text(lang.tr("Show the value as dots (a password or a token)"));
                 }
@@ -1041,6 +1198,7 @@ mod tests {
             ],
             headers: vec![("Authorization".into(), "Bearer {{Token}}".into()), ("Accept".into(), "*/*".into())],
             insecure: false,
+            ..Scope::default()
         };
         let req = Request {
             method: "POST".into(),
@@ -1060,6 +1218,20 @@ mod tests {
         assert_eq!(r.shown_url, "https://dev.example.com/pay/C1024?a=1");
         let hidden = ready(&scope, &[], (&Request { url: "https://x/{{Token}}/{{Nope}}".into(), ..Request::default() }, None), 0.0);
         assert_eq!((hidden.shown_url.as_str(), hidden.missing.as_slice()), ("https://x/••••/{{Nope}}", ["Nope".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn a_variable_reads_its_value_in_the_environment_in_use() {
+        let url = Setting {
+            name: "url".into(),
+            value: "https://example.test".into(),
+            by_env: [("Dev".to_string(), "https://dev.example.test".to_string()), ("Local".to_string(), String::new())].into(),
+            ..Setting::default()
+        };
+        assert_eq!(url.value_in(Some("Dev")), "https://dev.example.test");
+        assert_eq!(url.value_in(Some("Local")), "https://example.test", "an empty value reads Value");
+        assert_eq!(url.value_in(Some("Prod")), "https://example.test", "an environment it has no value in");
+        assert_eq!(url.value_in(None), "https://example.test");
     }
 
     #[test]

@@ -46,6 +46,10 @@ pub struct Folder {
     /// development server's own.
     #[serde(skip_serializing_if = "is_false")]
     pub insecure: bool,
+    /// Its environments (`Dev`, `Local`, `Prod`), as Postman's: a variable may hold a value for each
+    /// ([`Setting::by_env`]), read while that environment is in use ([`FileGroup::env`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub envs: Vec<String>,
 }
 
 /// A folder's variable or header: a name and a value; a secret one shows as dots.
@@ -56,6 +60,17 @@ pub struct Setting {
     pub value: String,
     #[serde(skip_serializing_if = "is_false")]
     pub secret: bool,
+    /// A variable's value in each of its folder's environments (by name), read instead of `value`
+    /// while that environment is in use; one left empty reads `value`.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub by_env: std::collections::BTreeMap<String, String>,
+}
+
+impl Setting {
+    /// The value in the environment `env` (in use): its own there, or else the one for all.
+    pub fn value_in(&self, env: Option<&str>) -> &str {
+        env.and_then(|e| self.by_env.get(e)).filter(|v| !v.is_empty()).map_or(self.value.as_str(), String::as_str)
+    }
 }
 
 fn is_false(b: &bool) -> bool {

@@ -513,3 +513,27 @@ fn a_change_made_outside_is_read_within_seconds() {
     assert!(h.state().ui.groups.iter().any(|g| g.name == "Reports" && g.files == [b.clone()]), "{:?}", h.state().ui.groups);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn the_environment_in_use_is_this_pcs_and_outlasts_a_restart() {
+    let (base, root) = root("env-pc");
+    let mut h = harness(&[]);
+    run(&mut h, "project.root", json!({"path": path(&root)}));
+    run(&mut h, "project.new", json!({"name": "p"}));
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("x.md"))}));
+    let group = h.state().ui.group.clone();
+    h.state_mut().ui.groups.iter_mut().find(|g| g.name == group).unwrap().env = Some("Prod".into());
+    // A change written to the project's file leaves the environment out of it.
+    run(&mut h, "file.open", json!({"path": path(&root.join("a").join("y.md"))}));
+    let text = project_file(&root, "p");
+    assert!(text.contains("a/y.md") && !text.contains("Prod"), "{text}");
+    // Started again with this PC's settings: still in use.
+    let ui = h.state().ui.clone();
+    let mut again = harness(&[]);
+    again.state_mut().ui = ui;
+    groups::restore(again.state_mut());
+    again.run_steps(4);
+    let g = again.state().ui.groups.iter().find(|g| g.name == group).unwrap();
+    assert_eq!(g.env.as_deref(), Some("Prod"));
+    let _ = std::fs::remove_dir_all(&base);
+}

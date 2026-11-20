@@ -138,7 +138,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         "zoom" => 220.0,
         "pasteSpecial" => 480.0,
-        "folderSettings" => 600.0,
+        "folderSettings" => 820.0,
         _ => 380.0,
     };
     // In the middle of the window each time it opens (egui would bring it back where it was last,

@@ -64,6 +64,9 @@ pub struct GroupView {
     /// Its folders folded here (by id): folding never changes a file git sees.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folded: Vec<u64>,
+    /// The environment its API requests read in here ([`FileGroup::env`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
 }
 
 /// A folder as a project file keeps it: folded or not is each PC's own.
@@ -348,6 +351,7 @@ fn view_of(project: &str, app: &SheetApp) -> ProjectView {
                 active: g.active.clone(),
                 used: g.used,
                 folded: g.folders.iter().filter(|f| f.folded).map(|f| f.id).collect(),
+                env: g.env.clone(),
             })
             .collect(),
     }
@@ -361,6 +365,7 @@ fn apply_view(groups: &mut [FileGroup], view: Option<&ProjectView>) -> String {
             if let Some(gv) = v.groups.iter().find(|x| x.name == g.name) {
                 g.active = gv.active.clone();
                 g.used = gv.used;
+                g.env = gv.env.clone();
                 for f in &mut g.folders {
                     f.folded = gv.folded.contains(&f.id);
                 }
@@ -586,6 +591,7 @@ fn merged(app: &SheetApp, mut theirs: Vec<FileGroup>, base: Option<&[FileGroup]>
         if let Some(o) = app.ui.groups.iter().find(|o| o.name == g.name) {
             g.active = o.active.clone();
             g.used = o.used;
+            g.env = o.env.clone();
             for f in &mut g.folders {
                 f.folded = o.folder(f.id).is_some_and(|x| x.folded);
             }
