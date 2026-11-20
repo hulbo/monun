@@ -82,7 +82,8 @@ pub fn svg(source: &str, dark: bool) -> Result<String, String> {
 fn draw(source: &str, options: &RenderOptions) -> Result<String, mermaid_rs_renderer::ParseError> {
     let (layout, config, kind) = laid_out(source, options)?;
     let svg = cylinders(&mermaid_rs_renderer::render_svg(&layout, &options.theme, &config));
-    Ok(if matches!(kind, DiagramKind::Flowchart | DiagramKind::Er) { without_label_borders(&svg) } else { svg })
+    let svg = if matches!(kind, DiagramKind::Flowchart | DiagramKind::Er) { without_label_borders(&svg) } else { svg };
+    Ok(styled_text(&svg))
 }
 
 /// The diagram parsed and laid out, with the layout settings it was laid out with, and its kind.
@@ -99,17 +100,18 @@ fn laid_out(
     let mut graph = parsed.graph;
     let flowchart = graph.kind == DiagramKind::Flowchart;
     let er = graph.kind == DiagramKind::Er;
-    // `&lt;`, `#quot;` and the like as the characters they stand for, as Mermaid shows them (the
-    // renderer escaped them again: `List&lt;Dto&gt;` showed so).
+    // A label's inline HTML (`<b>`, `<i>`…) as marks made into styled text once drawn, then `&lt;`,
+    // `#quot;` and the like as the characters they stand for, as Mermaid shows them (the renderer
+    // escaped them again: `List&lt;Dto&gt;` showed so). In that order, `&lt;b&gt;` shows as written.
     for node in graph.nodes.values_mut() {
-        node.label = entities(&node.label);
+        node.label = entities(&inline_html(&node.label));
     }
     for sub in &mut graph.subgraphs {
-        sub.label = entities(&sub.label);
+        sub.label = entities(&inline_html(&sub.label));
     }
     for edge in &mut graph.edges {
         for label in [&mut edge.label, &mut edge.start_label, &mut edge.end_label].into_iter().flatten() {
-            *label = entities(label);
+            *label = entities(&inline_html(label));
             if flowchart || er {
                 *label = unquote(label);
             }
@@ -198,6 +200,275 @@ fn er_comments(label: &str) -> String {
         })
         .collect();
     lines.join("\n")
+}
+
+/// Marks standing for a label's inline HTML formatting while the renderer lays it out (it would
+/// draw `<b>` as written): each turns a style on or off, and [`styled_text`] makes them into styled
+/// text in the SVG. Private-use characters, so no label has them of its own.
+const MARKS: [(char, Style, bool); 8] = [
+    ('\u{E000}', Style::Bold, true),
+    ('\u{E001}', Style::Bold, false),
+    ('\u{E002}', Style::Italic, true),
+    ('\u{E003}', Style::Italic, false),
+    ('\u{E004}', Style::Underline, true),
+    ('\u{E005}', Style::Underline, false),
+    ('\u{E006}', Style::Strike, true),
+    ('\u{E007}', Style::Strike, false),
+];
+
+/// A style a label's inline HTML gives its text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Style {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+}
+
+/// The mark that turns `style` on (`on`) or off.
+fn mark(style: Style, on: bool) -> char {
+    MARKS.iter().find(|(_, s, o)| *s == style && *o == on).map_or('\u{E000}', |(c, _, _)| *c)
+}
+
+/// The inline HTML tags Mermaid's labels allow that only style their text: their text is kept, the
+/// tags taken out.
+const PLAIN_TAGS: &[&str] = &["span", "font", "small", "big", "sup", "sub", "code", "kbd", "mark", "a", "tt", "var", "cite", "q", "abbr"];
+
+/// `label` with its inline HTML as Mermaid shows it: `<b>`/`<strong>`, `<i>`/`<em>`, `<u>`/`<ins>`
+/// and `<s>`/`<del>`/`<strike>` as [`MARKS`]; a line break however written (`<br/>`, `<br />`,
+/// `<BR>`) as the renderer's `<br>`; the other formatting tags ([`PLAIN_TAGS`], with or without
+/// attributes) taken out, their text kept. Anything else in angle brackets (`List<Dto>`, `<id>`,
+/// `a < b > c`) stays as written.
+fn inline_html(label: &str) -> String {
+    if !label.contains('<') {
+        return label.to_owned();
+    }
+    let mut out = String::with_capacity(label.len());
+    let mut rest = label;
+    while let Some(open) = rest.find('<') {
+        out.push_str(rest.get(..open).unwrap_or(""));
+        let after = rest.get(open + 1..).unwrap_or("");
+        // The tag's inside, up to its `>` (none before another `<`).
+        let inside = after.find(['>', '<']).filter(|&i| after.get(i..).is_some_and(|t| t.starts_with('>'))).and_then(|i| after.get(..i));
+        let Some(inside) = inside else {
+            out.push('<');
+            rest = after;
+            continue;
+        };
+        let closing = inside.starts_with('/');
+        let body = inside.trim_start_matches('/');
+        let name_len = body.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(body.len());
+        let name = body.get(..name_len).unwrap_or("").to_ascii_lowercase();
+        let tail = body.get(name_len..).unwrap_or("");
+        // `<b>`, `<b class="x">`, `<br/>`: a name, then nothing, white space or `/`.
+        let tag_like = !name.is_empty() && (tail.is_empty() || tail.starts_with(char::is_whitespace) || tail.trim() == "/");
+        let style = match name.as_str() {
+            "b" | "strong" => Some(Style::Bold),
+            "i" | "em" => Some(Style::Italic),
+            "u" | "ins" => Some(Style::Underline),
+            "s" | "del" | "strike" => Some(Style::Strike),
+            _ => None,
+        };
+        match (tag_like, style) {
+            (true, Some(style)) => out.push(mark(style, !closing)),
+            (true, None) if name == "br" && !closing => out.push_str("<br>"),
+            (true, None) if PLAIN_TAGS.contains(&name.as_str()) => {}
+            _ => {
+                out.push('<');
+                out.push_str(inside);
+                out.push('>');
+            }
+        }
+        rest = after.get(inside.len() + 1..).unwrap_or("");
+    }
+    out.push_str(rest);
+    out
+}
+
+/// How far italic text leans: the tangent of 12°, as browsers slant a font without an italic face
+/// (the Hangul faces have none, and resvg makes no oblique of its own).
+const SLANT: f32 = 0.21;
+
+/// A `<tspan>` opening tag giving its text the styles `on`: bold, a line under or through it, and
+/// for italic text in the line laid out (`hidden`) no ink, as the slanted copy draws it.
+fn style_span(on: &[Style], hidden: bool) -> String {
+    let mut tag = String::from("<tspan");
+    if on.contains(&Style::Bold) {
+        tag.push_str(" font-weight=\"bold\"");
+    }
+    if hidden {
+        tag.push_str(" fill-opacity=\"0\"");
+    }
+    let lines: Vec<&str> =
+        [(Style::Underline, "underline"), (Style::Strike, "line-through")].iter().filter(|(s, _)| on.contains(s)).map(|(_, d)| *d).collect();
+    if !lines.is_empty() && !hidden {
+        tag.push_str(&format!(" text-decoration=\"{}\"", lines.join(" ")));
+    }
+    tag.push('>');
+    tag
+}
+
+/// A line of a `<text>`: its `<tspan …>` (none for text written straight in the `<text>`), and its
+/// pieces of text with the styles each has.
+struct Line<'a> {
+    tag: Option<&'a str>,
+    pieces: Vec<(Vec<Style>, String)>,
+}
+
+/// The pieces of `content` (a line's text, [`MARKS`] in it) with the styles on for each, `on`
+/// carried from the line before and left as this line ends.
+fn pieces(content: &str, on: &mut Vec<Style>) -> Vec<(Vec<Style>, String)> {
+    let mut out: Vec<(Vec<Style>, String)> = vec![(on.clone(), String::new())];
+    for c in content.chars() {
+        match MARKS.iter().find(|(m, _, _)| *m == c) {
+            Some((_, style, turn_on)) => {
+                on.retain(|s| s != style);
+                if *turn_on {
+                    on.push(*style);
+                }
+                out.push((on.clone(), String::new()));
+            }
+            None => {
+                if let Some((_, text)) = out.last_mut() {
+                    text.push(c);
+                }
+            }
+        }
+    }
+    out.retain(|(_, text)| !text.is_empty());
+    out
+}
+
+/// The lines of a `<text>`'s inside: its `<tspan>`s, or the text itself. `None` when it holds
+/// anything else (a `<tspan>` within a `<tspan>`).
+fn lines_of(inside: &str) -> Option<Vec<(Option<&str>, &str)>> {
+    if !inside.trim_start().starts_with("<tspan") {
+        return (!inside.contains('<')).then(|| vec![(None, inside)]);
+    }
+    let mut out = Vec::new();
+    let mut rest = inside.trim_start();
+    while !rest.trim().is_empty() {
+        let open_end = rest.strip_prefix("<tspan").and_then(|_| rest.find('>'))? + 1;
+        let tag = rest.get(..open_end)?;
+        let after = rest.get(open_end..)?;
+        let close = after.find("</tspan>")?;
+        let content = after.get(..close)?;
+        if content.contains('<') {
+            return None;
+        }
+        out.push((Some(tag), content));
+        rest = after.get(close + "</tspan>".len()..)?.trim_start();
+    }
+    Some(out)
+}
+
+/// A length of an SVG attribute (`12.5`, `12.5px`, `1.15em` of `font_size`).
+fn length(value: &str, font_size: f32) -> Option<f32> {
+    let value = value.trim();
+    if let Some(em) = value.strip_suffix("em") {
+        return em.trim().parse::<f32>().ok().map(|v| v * font_size);
+    }
+    value.trim_end_matches("px").trim().parse::<f32>().ok()
+}
+
+/// `tag` (an opening tag) with its attribute `name` set to `value`, added when it has none.
+fn with_attr(tag: &str, name: &str, value: &str) -> String {
+    let key = format!(" {name}=\"");
+    if let Some(at) = tag.find(&key) {
+        let from = at + key.len();
+        if let Some(len) = tag.get(from..).and_then(|t| t.find('"')) {
+            return format!("{}{value}{}", tag.get(..from).unwrap_or(""), tag.get(from + len..).unwrap_or(""));
+        }
+    }
+    let close = if tag.ends_with("/>") { tag.len() - 2 } else { tag.len().saturating_sub(1) };
+    format!("{}{key}{value}\"{}", tag.get(..close).unwrap_or(tag), tag.get(close..).unwrap_or(""))
+}
+
+/// One `<text>` element (its whole markup) with its [`MARKS`] made into styles. Italic text is drawn
+/// by a copy of its line slanted about the line's baseline, the rest of that copy without ink, so
+/// each glyph lands where the line laid it out; in the line itself it has no ink.
+fn styled_element(element: &str) -> String {
+    if !element.contains(|c: char| MARKS.iter().any(|(m, _, _)| *m == c)) {
+        return element.to_owned();
+    }
+    let open_end = element.find('>').map_or(element.len(), |i| i + 1);
+    let open = element.get(..open_end).unwrap_or("");
+    let inside = element.get(open_end..element.len().saturating_sub("</text>".len())).unwrap_or("");
+    let Some(raw) = lines_of(inside) else {
+        // Not a layout this knows: the marks dropped, the text kept.
+        return element.chars().filter(|c| !MARKS.iter().any(|(m, _, _)| m == c)).collect();
+    };
+    let mut on = Vec::new();
+    let lines: Vec<Line> = raw.into_iter().map(|(tag, content)| Line { tag, pieces: pieces(content, &mut on) }).collect();
+    let mut out = String::from(open);
+    for line in &lines {
+        out.push_str(line.tag.unwrap_or(""));
+        for (styles, text) in &line.pieces {
+            if styles.is_empty() {
+                out.push_str(text);
+            } else {
+                out.push_str(&style_span(styles, styles.contains(&Style::Italic)));
+                out.push_str(text);
+                out.push_str("</tspan>");
+            }
+        }
+        if line.tag.is_some() {
+            out.push_str("</tspan>");
+        }
+    }
+    out.push_str("</text>");
+    // The slanted copies, a line each.
+    let font_size = attr(open, "font-size").and_then(|v| length(v, 16.0)).unwrap_or(16.0);
+    let mut y = attr(open, "y").and_then(|v| length(v, font_size)).unwrap_or(0.0);
+    let text_x = attr(open, "x").unwrap_or("0");
+    for line in &lines {
+        if let Some(dy) = line.tag.and_then(|t| attr(t, "dy")).and_then(|v| length(v, font_size)) {
+            y += dy;
+        }
+        if !line.pieces.iter().any(|(styles, _)| styles.contains(&Style::Italic)) {
+            continue;
+        }
+        let x = line.tag.and_then(|t| attr(t, "x")).unwrap_or(text_x);
+        let copy = with_attr(&with_attr(open, "x", x), "y", &format!("{y:.2}"));
+        let copy = with_attr(&copy, "transform", &format!("matrix(1 0 {:.2} 1 {:.2} 0)", -SLANT, SLANT * y));
+        out.push_str(&copy);
+        for (styles, text) in &line.pieces {
+            let italic = styles.contains(&Style::Italic);
+            out.push_str(&style_span(styles, !italic));
+            out.push_str(text);
+            out.push_str("</tspan>");
+        }
+        out.push_str("</text>");
+    }
+    out
+}
+
+/// The SVG with each label's [`MARKS`] made into styled text ([`styled_element`]): bold
+/// (`font-weight`), a line under or through it (`text-decoration`), italic slanted, across the
+/// label's lines. A mark anywhere else is dropped.
+fn styled_text(svg: &str) -> String {
+    let is_mark = |c: char| MARKS.iter().any(|(m, _, _)| *m == c);
+    if !svg.contains(is_mark) {
+        return svg.to_owned();
+    }
+    let mut out = String::with_capacity(svg.len() + 256);
+    let mut rest = svg;
+    // The next `<text …>` (not `<textPath`).
+    let next_text = |s: &str| s.match_indices("<text").map(|(i, _)| i).find(|&i| s.get(i + 5..).is_some_and(|t| t.starts_with([' ', '>'])));
+    while let Some(start) = next_text(rest) {
+        out.push_str(rest.get(..start).unwrap_or(""));
+        let tail = rest.get(start..).unwrap_or("");
+        let Some(end) = tail.find("</text>").map(|i| i + "</text>".len()) else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        out.push_str(&styled_element(tail.get(..end).unwrap_or("")));
+        rest = tail.get(end..).unwrap_or("");
+    }
+    out.push_str(rest);
+    out.retain(|c| !is_mark(c));
+    out
 }
 
 /// `text` with its character references decoded: HTML's (`&lt;`, `&amp;`, `&#39;`, `&#x2192;`) and
@@ -698,6 +969,54 @@ mod tests {
         // Anything else stays as written.
         let other = "<svg><ellipse cx=\"1\" cy=\"1\" rx=\"1\" ry=\"1\"/><rect x=\"0\" y=\"0\" width=\"5\" height=\"5\"/></svg>";
         assert_eq!(cylinders(other), other);
+    }
+
+    #[test]
+    fn a_labels_inline_html_styles_its_text_and_other_angle_brackets_stay() {
+        // As marks while laid out: styles, line breaks however written, the plain tags taken out.
+        assert_eq!(inline_html("<b>굵게</b><br/>보통"), "\u{E000}굵게\u{E001}<br>보통");
+        assert_eq!(inline_html("<STRONG>a</STRONG><br />b<BR>c"), "\u{E000}a\u{E001}<br>b<br>c");
+        assert_eq!(
+            inline_html("<i>x</i> <em>y</em> <u>u</u> <s>s</s> <del>d</del>"),
+            "\u{E002}x\u{E003} \u{E002}y\u{E003} \u{E004}u\u{E005} \u{E006}s\u{E007} \u{E006}d\u{E007}"
+        );
+        assert_eq!(inline_html("<span style=\"color:red\">빨강</span> <sup>2</sup> <code>c</code>"), "빨강 2 c");
+        // What isn't a formatting tag stays as written; an open tag with no end still styles.
+        for text in ["List<OrderDto>", "<id>, <ssn>", "a < b > c", "x <= y", "<b", "<>"] {
+            assert_eq!(inline_html(text), text);
+        }
+        assert_eq!(inline_html("a<b>"), "a\u{E000}");
+
+        // Drawn: the bold part a bold tspan; the rest as it was.
+        let drawn = svg("flowchart LR\n    A[\"<b>대상</b><br>운영 화면이 읽는 표\"] --> B[\"<i>기울임</i> List&lt;Dto&gt; <id>\"]", false)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(drawn.contains("<tspan font-weight=\"bold\">대상</tspan>"), "{drawn:.3000}");
+        // Italic: no ink where the line lays it out, and drawn by a slanted copy of the line.
+        assert!(drawn.contains("<tspan fill-opacity=\"0\">기울임</tspan>"), "{drawn:.3000}");
+        assert!(drawn.contains("transform=\"matrix(1 0 -0.21 1 "), "a slanted copy");
+        assert!(drawn.contains("<tspan>기울임</tspan>"), "inked in the copy");
+        assert!(!drawn.contains("&lt;b&gt;") && !drawn.contains("&lt;/b&gt;") && !drawn.contains("&lt;i&gt;"), "no tag drawn as text");
+        assert!(drawn.contains("List&lt;Dto&gt;") && drawn.contains("&lt;id&gt;"), "angle brackets that aren't tags stay");
+        assert!(!drawn.contains(|c: char| ('\u{E000}'..='\u{E007}').contains(&c)), "no mark left");
+        // A bold span wrapped over two lines is bold on both.
+        let wrapped =
+            styled_text("<text x=\"0\"><tspan x=\"0\" dy=\"0\">\u{E000}one</tspan><tspan x=\"0\" dy=\"1\">two\u{E001} three</tspan></text>");
+        assert_eq!(
+            wrapped,
+            "<text x=\"0\"><tspan x=\"0\" dy=\"0\"><tspan font-weight=\"bold\">one</tspan></tspan><tspan x=\"0\" dy=\"1\"><tspan font-weight=\"bold\">two</tspan> three</tspan></text>"
+        );
+        // An italic word on the second line: its copy sits on that line's baseline (y 10 + dy 17).
+        let slanted = styled_text(
+            "<text x=\"5\" y=\"10\" font-size=\"14\"><tspan x=\"5\" dy=\"0\">a</tspan><tspan x=\"5\" dy=\"17\">b \u{E002}c\u{E003}</tspan></text>",
+        );
+        assert_eq!(
+            slanted,
+            "<text x=\"5\" y=\"10\" font-size=\"14\"><tspan x=\"5\" dy=\"0\">a</tspan><tspan x=\"5\" dy=\"17\">b <tspan fill-opacity=\"0\">c</tspan></tspan></text>\
+             <text x=\"5\" y=\"27.00\" font-size=\"14\" transform=\"matrix(1 0 -0.21 1 5.67 0)\"><tspan fill-opacity=\"0\">b </tspan><tspan>c</tspan></text>"
+        );
+        // A text this doesn't know the layout of keeps its text, without the marks.
+        assert_eq!(styled_text("<text><tspan><tspan>\u{E000}x</tspan></tspan></text>"), "<text><tspan><tspan>x</tspan></tspan></text>");
+        assert!(render("flowchart LR\n  A[\"<b>가</b>\"] --> B", Options { dark: false, scale: 1.0 }).is_ok());
     }
 
     #[test]
