@@ -2240,6 +2240,17 @@ const MORE: &[(&str, &str)] = &[
     ("A web page can only be looked at in Monun.", "모눈에서는 웹 페이지를 보기만 할 수 있습니다."),
     ("New Site Link…", "새 사이트 연결…"),
     ("Site Link", "사이트 연결"),
+    // New › Other File (file_tabs::new_other): a source file or any text file, by its name.
+    ("New Other File…", "새 기타 파일…"),
+    ("Other File", "기타 파일"),
+    ("New File", "새 파일"),
+    ("File name:", "파일 이름:"),
+    ("Type:", "형식:"),
+    ("Monun can't make a new file of that type.", "모눈에서는 그 형식의 새 파일을 만들 수 없습니다."),
+    (
+        "The extension says what the file is and how it is coloured: Main.java, App.vue, application.yml, mapper.xml…",
+        "확장자에 따라 파일 종류와 색이 정해집니다: Main.java, App.vue, application.yml, mapper.xml…",
+    ),
     ("Address:", "주소:"),
     (
         "The link is kept as a file (.url), so it goes in groups and projects as files do.",

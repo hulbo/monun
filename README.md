@@ -186,6 +186,20 @@
   파일은 연 그대로의 인코딩(UTF-8, BOM 있는 UTF-8, 예전 한글 EUC-KR/CP949)과 줄바꿈(CRLF/LF)으로 저장되며,
   도구줄에 표시됩니다. 다른 이름으로 저장할 때 확장자를 바꾸면(.sql ↔ .txt ↔ .md) 그 종류로 보입니다. 엑셀 통합
   문서를 .txt로 저장하면 예전처럼 시트 값이 탭으로 구분된 텍스트가 됩니다.
+- **소스 파일:** 개발에 쓰는 소스 파일도 SQL 파일처럼 열어 고칩니다. AI가 고친 파일만 프로젝트 그룹에 넣어 두고
+  바로 확인하는 데 씁니다. 바깥에서 바뀐 파일은, 모눈에서 고치던 중이 아니면 2초 안에 지금 내용으로 다시 보입니다.
+  - 확장자: Java·JSP·Kotlin·Groovy/Gradle, JavaScript·TypeScript(JSX/TSX), Vue·Svelte, XML(MyBatis 매퍼, XSD,
+    WSDL)·XHTML·SVG, JSON, YAML·TOML·INI·properties·.env, CSS·SCSS·Less, Shell·배치·PowerShell, Python, C·C++·C#,
+    Go, Rust, PHP, FreeMarker·Velocity, Diff, 로그 등과 `Dockerfile`, `Makefile`, `.gitignore` 같은 이름의 파일입니다.
+  - 확장자에 맞게 색이 칠해지고, 상태 표시줄에 언어(Java, Vue, YAML…)가, 그룹 패널과 탭에 소스 아이콘(`< >`)이
+    나옵니다. Vue·JSP·XML 안의 `<script>`·`<style>`·`<% %>`는 각각 JavaScript·CSS·Java로 칠합니다. 인코딩(UTF-8,
+    EUC-KR)과 줄바꿈은 연 그대로 저장됩니다.
+  - 새로 만들 때는 종류마다 메뉴를 두지 않고 **새 기타 파일…** 하나로 만듭니다(시작 화면, 파일 › 새로 만들기, 그룹
+    패널 `+`, 폴더를 오른쪽 클릭하면 그 폴더에). 이름을 확장자까지 넣으면(`Main.java`, `application.yml`) 그
+    종류로 보이고, 처음 저장할 때 위치를 묻습니다.
+  - .json 파일은 모눈 통합 문서 형식이 아니면 소스로 열립니다. .html은 지금처럼 웹 페이지로 보입니다.
+  - 탐색기의 '연결 프로그램'에 .java, .jsp, .js, .ts, .vue, .xml, .yml, .properties, .json, .css, .gradle,
+    .kt, .py, .log 등이 들어갑니다(기본 앱은 바꾸지 않습니다).
 - **PDF 보기:** .pdf 파일도 모눈에서 엽니다(열기, 끌어놓기, 탐색기의 '연결 프로그램'). 보기 전용이라 고치거나
   저장할 수 없고, 그룹과 프로젝트에는 다른 파일처럼 들어갑니다. 화면은 Markdown 문서 보기와 같습니다.
   - 모든 쪽이 위아래로 이어지고, 처음에는 창 너비에 맞춥니다. Ctrl+휠이나 상태 표시줄로 확대하면 너비 맞춤이 풀립니다.

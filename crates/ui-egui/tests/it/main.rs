@@ -102,6 +102,7 @@ mod show_objects;
 mod shrink_to_fit;
 mod slides_view;
 mod sort_dialog_columns;
+mod source_files;
 mod status_bar_menu;
 mod support;
 mod symbol_glyphs;

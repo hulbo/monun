@@ -732,12 +732,41 @@ fn markup(text: &str) -> Vec<(Range<usize>, Token)> {
             let j = s.past(i + 4, "-->");
             s.span(i, j, Token::Comment, &mut out);
             j
+        } else if s.starts(i, "<%--") {
+            // A JSP comment.
+            let j = s.past(i + 4, "--%>");
+            s.span(i, j, Token::Comment, &mut out);
+            j
+        } else if s.starts(i, "<%") {
+            // A JSP scriptlet, expression or directive: Java between `<%` and `%>`.
+            let open = s.until(i + 2, |c| !matches!(c, '=' | '!' | '@'));
+            s.span(i, open, Token::Keyword, &mut out);
+            let end = s.past(open, "%>");
+            let close = if s.starts(end.saturating_sub(2), "%>") { end - 2 } else { end };
+            embed(&s, (open, close), Lang::Java, &mut out);
+            s.span(close, end, Token::Keyword, &mut out);
+            end
         } else if s.starts(i, "<![CDATA[") {
             let j = s.past(i + 9, "]]>");
             s.span(i, j, Token::String, &mut out);
             j
         } else if c == '<' && s.at(i + 1).is_some_and(|d| d.is_alphabetic() || matches!(d, '/' | '?' | '!')) {
-            tag(&s, i, &mut out)
+            let j = tag(&s, i, &mut out);
+            // The script and style of a page (HTML, Vue, JSP): JavaScript and CSS up to its end tag.
+            let name: String = (i + 1..).map_while(|k| s.at(k).filter(|c| c.is_ascii_alphanumeric())).collect::<String>().to_ascii_lowercase();
+            let closed = j >= 2 && s.at(j - 2) == Some('/');
+            match (name.as_str(), closed) {
+                ("script", false) | ("style", false) => {
+                    let lang = if name == "script" { Lang::Script } else { Lang::Css };
+                    let from = s.byte(j);
+                    let rest = s.text.get(from..).unwrap_or_default().to_ascii_lowercase();
+                    let end_byte = rest.find(&format!("</{name}")).map_or(s.text.len(), |at| from + at);
+                    let end = s.chars.partition_point(|(b, _)| *b < end_byte);
+                    embed(&s, (j, end), lang, &mut out);
+                    end
+                }
+                _ => j,
+            }
         } else if (c == '#' || c == '$') && s.at(i + 1) == Some('{') {
             // MyBatis's parameters (`#{id}`, `${table}`) in a mapper's SQL.
             let j = s.past(i + 2, "}");
@@ -755,6 +784,13 @@ fn markup(text: &str) -> Vec<(Range<usize>, Token)> {
         i = j.max(i + 1);
     }
     out
+}
+
+/// Colours the chars `from..to` of `s` as `lang` (a page's script or style, a JSP's Java).
+fn embed(s: &Chars, (from, to): (usize, usize), lang: Lang, out: &mut Vec<(Range<usize>, Token)>) {
+    let (a, b) = (s.byte(from), s.byte(to));
+    let Some(inner) = s.text.get(a..b) else { return };
+    out.extend(highlight(inner, lang).into_iter().map(|(r, t)| (r.start + a..r.end + a, t)));
 }
 
 /// A tag at `i` (its `<`): its name a keyword, its attributes' names built-ins and their values
@@ -1036,6 +1072,29 @@ mod tests {
         assert!(has(&found, "<select", Token::Keyword) && has(&found, "</select", Token::Keyword) && has(&found, "<?xml", Token::Keyword));
         assert!(has(&found, "id", Token::Builtin) && has(&found, "\"find\"", Token::String));
         assert!(has(&found, "<!-- 메모 -->", Token::Comment) && has(&found, "#{id}", Token::Builtin));
+    }
+
+    #[test]
+    fn a_pages_script_style_and_jsp_java_take_their_own_colours() {
+        let vue = "<template><p>{{ a }}</p></template>
+<script setup>
+const n = 1 // 메모
+</script>
+<style>.a { color: red; }</style>";
+        let found = spans(vue, Lang::Markup);
+        assert!(has(&found, "const", Token::Keyword) && has(&found, "1", Token::Number) && has(&found, "// 메모", Token::Comment));
+        assert!(has(&found, "</script", Token::Keyword) && has(&found, "<style", Token::Keyword) && has(&found, "</style", Token::Keyword));
+        let jsp = "<%@ page contentType=\"text/html\" %>
+<%-- 목록 --%>
+<% for (int i = 0; i < 3; i++) { %><td><%= i %></td><% } %>";
+        let found = spans(jsp, Lang::Markup);
+        assert!(has(&found, "<%--  목록 --%>".replace("  ", " ").as_str(), Token::Comment));
+        assert!(has(&found, "for", Token::Keyword) && has(&found, "int", Token::Keyword) && has(&found, "\"text/html\"", Token::String));
+        assert!(has(&found, "<%=", Token::Keyword) && has(&found, "<td", Token::Keyword));
+        // An unclosed script or scriptlet colours to the end and never fails.
+        for broken in ["<script>let a = '", "<% if (x", "<style", "<%", "<script/>x"] {
+            let _ = spans(broken, Lang::Markup);
+        }
     }
 
     #[test]

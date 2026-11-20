@@ -209,6 +209,16 @@ pub(crate) fn text_kind(app: &SheetApp) -> TextKind {
     app.session.active().and_then(monun_engine::DocState::text_kind).unwrap_or(TextKind::Markdown)
 }
 
+/// The language the file in front is coloured as, by its name: a source file's, plain otherwise.
+pub(crate) fn text_lang(app: &SheetApp) -> crate::code_editor::Lang {
+    app.session.active().map_or(crate::code_editor::Lang::Plain, doc_lang)
+}
+
+/// A document's language, by its name ([`monun_markdown::code::source_of`]).
+pub(crate) fn doc_lang(d: &monun_engine::DocState) -> crate::code_editor::Lang {
+    monun_markdown::code::source_of(&d.display_title()).map_or(crate::code_editor::Lang::Plain, |s| s.lang)
+}
+
 /// Whether a right click in the rendered document offers Add Memo (see `preview::Look::memos`).
 fn memo_menu(app: &SheetApp) -> Option<bool> {
     match crate::memos::memo_file(app) {
@@ -327,6 +337,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
     let query = state.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let t = Tokens::get(ctx);
     let kind = d.text_kind().unwrap_or(TextKind::Markdown);
+    let lang = doc_lang(d);
     let (mut long, mut other) = (0, None);
     for (i, sh) in (0..).map_while(|i| d.wb.sheet(i).map(|sh| (i, sh))) {
         let Some(doc) = sh.document.as_ref() else { continue };
@@ -355,7 +366,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
             continue;
         }
         let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
-        if editor::lay_out_ahead(&mut state.layouts, ctx, key, &doc.text, (z, wrap, &query, kind), &t, AHEAD_MS) {
+        if editor::lay_out_ahead(&mut state.layouts, ctx, key, &doc.text, (z, wrap, &query, kind, lang), &t, AHEAD_MS) {
             state.laid_ahead.insert(key);
         }
         ctx.request_repaint();
@@ -363,7 +374,7 @@ pub fn lay_out_ahead(app: &mut SheetApp, ctx: &egui::Context) {
     }
     let Some((key, mode, z, text)) = other else { return };
     let wrap = state.layouts.wrap(mode).unwrap_or_else(|| editor_wrap(ctx, mode, state.split));
-    if editor::lay_out_ahead(&mut state.layouts, ctx, key, text, (z, wrap, &query, kind), &t, AHEAD_MS) {
+    if editor::lay_out_ahead(&mut state.layouts, ctx, key, text, (z, wrap, &query, kind, lang), &t, AHEAD_MS) {
         state.laid_other.insert(key);
     }
     ctx.request_repaint();
@@ -1148,9 +1159,11 @@ fn text_file_items(app: &SheetApp, ui: &mut Ui, kind: TextKind, t: &Tokens) {
         Some(monun_engine::model::TextEncoding::Cp949) => "EUC-KR (CP949)",
     };
     let breaks = if file.is_some_and(|f| f.crlf) { "CRLF" } else { "LF" };
-    let name = match kind {
-        TextKind::Sql => "SQL",
-        TextKind::Http => "HTTP",
+    let source = app.session.active().and_then(|d| monun_markdown::code::source_of(&d.display_title()));
+    let name = match (kind, source) {
+        (TextKind::Sql, _) => "SQL",
+        (TextKind::Http, _) => "HTTP",
+        (TextKind::Code, Some(s)) => s.label,
         _ => lang.tr("Plain Text"),
     };
     let label = |ui: &mut Ui, text: &str, tip: &str, ink| {

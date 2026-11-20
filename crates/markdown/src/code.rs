@@ -5,11 +5,13 @@
 //! input.
 
 mod langs;
+mod source;
 mod sql;
 
 use std::ops::Range;
 
 pub use langs::lang_of;
+pub use source::{Source, source_extensions, source_of};
 
 /// The language a text is coloured as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

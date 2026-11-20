@@ -29,6 +29,7 @@ mod purchase_list;
 mod range_fill_formats;
 mod row_autofit;
 mod sheet_name_quoting;
+mod source_files;
 mod sparse_clear_invalidation;
 mod stored_list_shape;
 mod table_resize_overlap;

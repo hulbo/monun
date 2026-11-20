@@ -48,7 +48,7 @@ pub fn is_text_file(wb: &Workbook) -> bool {
 }
 
 /// What a text file holds, by its name's extension: Markdown (rendered beside its text), SQL
-/// (coloured) or plain text.
+/// (coloured), a source file (coloured as its language) or plain text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextKind {
     Markdown,
@@ -72,6 +72,9 @@ pub enum TextKind {
     /// API requests (`.http`, `.rest`), as VS Code's REST Client and IntelliJ's HTTP Client write
     /// them: a text file the interface shows as a request to send.
     Http,
+    /// A source file (.java, .js, .vue, .yml, .xml, .properties, `Dockerfile`…): a text file
+    /// coloured as its language, which its name says ([`monun_markdown::code::source_of`]).
+    Code,
 }
 
 impl TextKind {
@@ -89,6 +92,7 @@ impl TextKind {
             Some("html" | "htm" | "url") => TextKind::Web,
             Some("pptx" | "ppsx" | "potx" | "pptm" | "ppsm" | "potm") => TextKind::Slides,
             Some("http" | "rest") => TextKind::Http,
+            _ if monun_markdown::code::source_of(name).is_some() => TextKind::Code,
             _ => TextKind::Plain,
         }
     }
@@ -106,6 +110,8 @@ impl TextKind {
             TextKind::Web => "url",
             TextKind::Slides => "pptx",
             TextKind::Http => "http",
+            // A new source file is made by its name (`Session::new_named_file`).
+            TextKind::Code => "txt",
         }
     }
 

@@ -18,8 +18,9 @@ const APP_NAME: &str = "모눈";
 const CAPABILITIES: &str = r"Software\Monun\Capabilities";
 
 /// The file types 모눈 opens (`FileKind` in the engine), each with the type name Explorer shows
-/// for files whose default app is 모눈.
-const TYPES: [(&str, &str); 28] = [
+/// for files whose default app is 모눈. Of the source files, those of everyday development that
+/// aren't programs Windows runs (no .bat, .cmd or .ps1).
+const TYPES: [(&str, &str); 44] = [
     (".xlsx", "모눈 워크시트"),
     (".xlsm", "모눈 매크로 사용 워크시트"),
     (".xltx", "모눈 서식 파일"),
@@ -48,6 +49,22 @@ const TYPES: [(&str, &str); 28] = [
     (".html", "모눈 HTML 문서"),
     (".htm", "모눈 HTML 문서"),
     (".pptx", "모눈 PowerPoint 프레젠테이션"),
+    (".java", "모눈 Java 소스 파일"),
+    (".jsp", "모눈 JSP 파일"),
+    (".js", "모눈 JavaScript 파일"),
+    (".ts", "모눈 TypeScript 파일"),
+    (".vue", "모눈 Vue 파일"),
+    (".xml", "모눈 XML 문서"),
+    (".yml", "모눈 YAML 파일"),
+    (".yaml", "모눈 YAML 파일"),
+    (".properties", "모눈 Properties 파일"),
+    (".json", "모눈 JSON 파일"),
+    (".css", "모눈 CSS 파일"),
+    (".scss", "모눈 SCSS 파일"),
+    (".gradle", "모눈 Gradle 파일"),
+    (".kt", "모눈 Kotlin 파일"),
+    (".py", "모눈 Python 파일"),
+    (".log", "모눈 로그 파일"),
 ];
 
 /// One string value under `HKEY_CURRENT_USER`: its key, its name (empty for the key's default
@@ -157,6 +174,13 @@ mod tests {
         }
         assert_eq!(value(&entries, r"Software\Classes\Applications\monun.exe", "FriendlyAppName"), Some("모눈"));
         assert_eq!(value(&entries, r"Software\RegisteredApplications", "Monun"), Some(r"Software\Monun\Capabilities"));
+    }
+
+    #[test]
+    fn every_type_registered_is_one_monun_opens() {
+        for (ext, _) in TYPES {
+            assert!(monun_engine::io::FileKind::from_path(&format!("a{ext}")).is_some(), "{ext}");
+        }
     }
 
     #[test]

@@ -102,6 +102,7 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
         _ if !crate::docs::is_text_file(wb) => None,
         crate::docs::TextKind::Markdown => None,
         crate::docs::TextKind::Sql => Some(monun_markdown::code::Lang::Sql),
+        crate::docs::TextKind::Code => Some(monun_markdown::code::source_of(file).map_or(monun_markdown::code::Lang::Plain, |s| s.lang)),
         _ => Some(monun_markdown::code::Lang::Plain),
     };
     let documents: Vec<Option<Vec<Vec<document::Op>>>> = layouts

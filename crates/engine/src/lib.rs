@@ -41,6 +41,7 @@ pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command, register_te
 pub use monun_calc as calc;
 pub use monun_core as core;
 pub use monun_formula as formula;
+pub use monun_markdown as markdown;
 pub use monun_model as model;
 pub use monun_numfmt as numfmt;
 pub use selection::Selection;
@@ -718,6 +719,7 @@ impl Session {
             docs::TextKind::Web => "Page",
             docs::TextKind::Slides => "Presentation",
             docs::TextKind::Http => "Request",
+            docs::TextKind::Code => "File",
             docs::TextKind::Word | docs::TextKind::Hwp => "Document",
         };
         let prefix = prefix.trim();
@@ -731,6 +733,35 @@ impl Session {
             _ => docs::markdown_workbook(&title, text.as_bytes()),
         };
         self.add_document(DocState::new(wb, None, title, Trust::Local))
+    }
+    /// A new text file called `name` (`Main.java`, `application.yml`), holding `text`: what a file
+    /// of that name opened is, before it has a file, so it is coloured as its extension says. A
+    /// name a new file has already gets a number (`Main (2).java`). Only a file Monun writes as
+    /// text can be made so (not a PDF, a picture, a web page or a presentation).
+    pub fn new_named_file(&mut self, name: &str, text: &str) -> Result<usize> {
+        let name = name.trim();
+        if name.is_empty() || name.trim_matches('.').is_empty() || name.chars().any(|c| "\\/:*?\"<>|".contains(c) || c.is_control()) {
+            return Err(EngineError::Other(format!("`{name}` can't be a file's name.")));
+        }
+        let kind = docs::TextKind::of_name(name);
+        if matches!(kind, docs::TextKind::Pdf | docs::TextKind::Image | docs::TextKind::Web | docs::TextKind::Slides) {
+            return Err(EngineError::Other(format!("A new `{name}` can't be made in Monun; make a text file of another name.")));
+        }
+        let taken = |t: &str| self.docs.iter().any(|d| d.path.is_none() && d.title.eq_ignore_ascii_case(t));
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (name, String::new()),
+        };
+        let title = (1..)
+            .map(|n| if n == 1 { name.to_string() } else { format!("{stem} ({n}){ext}") })
+            .find(|t| !taken(t))
+            .unwrap_or_else(|| name.to_string());
+        let wb = match kind {
+            docs::TextKind::Word => docs::word_workbook(&title),
+            docs::TextKind::Hwp => docs::hwp_workbook(&title),
+            _ => docs::markdown_workbook(&title, text.as_bytes()),
+        };
+        Ok(self.add_document(DocState::new(wb, None, title, Trust::Local)))
     }
 
     /// Journals a command, then trims the oldest entries past either cap. A recording in progress

@@ -49,6 +49,11 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
 - Code colours: `monun_markdown::code` (`highlight`, `lang_of`; SQL, Python, LaTeX and the languages a
   Markdown code block names) is shared by the code editor, the document view and editor
   (`code_editor::layout_job`), printing (`print/document.rs`) and the web page export (`doc_html.rs`).
+- Source files (.java, .vue, .yml, .xml…, `Dockerfile`): `monun_markdown::code::source_of` is the one
+  table of them (extension or name → status-bar label and colours). The engine opens them as text
+  (`FileKind::Text`, `TextKind::Code`; a `.json` that isn't a Monun workbook too) and saves them as
+  they came; the editor colours them by the document's name (`doc_view::doc_lang`). New › Other File
+  (`file_tabs::new_other`, `file.new {document, name}`) makes one by name, one entry for every kind.
 - Translations: `crates/ui-egui/src/i18n/ko.rs` (`cargo xtask i18n-report` lists gaps); wrap new
   labels in `lang.tr(...)`.
 - App icon: `assets/app-icon/monun.svg` is the source; the PNG, `.ico` and `.icns` files are

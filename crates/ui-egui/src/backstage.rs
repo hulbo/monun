@@ -323,7 +323,7 @@ fn dim(ui: &mut Ui, text: &str) {
 }
 
 /// What File › New makes: a workbook, or a new file of each kind a document tab edits.
-const NEW_KINDS: [(Option<TextKind>, &str); 8] = [
+const NEW_KINDS: [(Option<TextKind>, &str); 9] = [
     (None, "Excel Workbook"),
     (Some(TextKind::Markdown), "Markdown Document"),
     (Some(TextKind::Word), "Word Document"),
@@ -332,6 +332,7 @@ const NEW_KINDS: [(Option<TextKind>, &str); 8] = [
     (Some(TextKind::Plain), "Text File"),
     (Some(TextKind::Web), "Site Link"),
     (Some(TextKind::Http), "API Request"),
+    (Some(TextKind::Code), "Other File"),
 ];
 
 /// A File › New tile: a small page of its kind drawn in code, the kind's icon in its corner, over
@@ -467,6 +468,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
                     Some(TextKind::Markdown) => crate::file_tabs::new_markdown(app),
                     Some(TextKind::Web) => crate::web_view::new_link(app),
                     Some(TextKind::Http) => crate::api_view::new_request(app, None),
+                    Some(TextKind::Code) => crate::file_tabs::new_other(app, None),
                     Some(kind) => crate::file_tabs::new_text(app, kind),
                 }
                 out.close = true;

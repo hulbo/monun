@@ -342,3 +342,25 @@ fn many_ampersands_read_quickly() {
     let _ = parse(&text);
     assert!(started.elapsed().as_secs_f32() < 2.0, "{:?}", started.elapsed());
 }
+
+#[test]
+fn source_files_are_known_by_extension_or_name() {
+    use crate::code::{Lang, source_of};
+    let of = |name: &str| source_of(name).map(|s| (s.label, s.lang));
+    assert_eq!(of("src/main/java/demo/Main.java"), Some(("Java", Lang::Java)));
+    assert_eq!(of(r"C:\work\front\App.vue"), Some(("Vue", Lang::Markup)));
+    assert_eq!(of("application-local.YML"), Some(("YAML", Lang::Config)));
+    assert_eq!(of("mapper/UserMapper.xml"), Some(("XML", Lang::Markup)));
+    assert_eq!(of("messages.properties"), Some(("Properties", Lang::Config)));
+    assert_eq!(of("index.tsx"), Some(("TypeScript JSX", Lang::Script)));
+    assert_eq!(of("build.gradle"), Some(("Gradle", Lang::Java)));
+    assert_eq!(of("Dockerfile"), Some(("Dockerfile", Lang::Shell)));
+    assert_eq!(of(".gitignore"), Some(("Ignore", Lang::Shell)));
+    assert_eq!(of(".env.production"), Some(("Environment", Lang::Config)));
+    assert_eq!(of("server.log"), Some(("Log", Lang::Plain)));
+    // Files of their own kinds, and files that aren't source.
+    for name in ["query.sql", "notes.md", "a.http", "readme.txt", "page.html", "book.xlsx", "photo.png", "noext", ".java"] {
+        assert_eq!(of(name), None, "{name}");
+    }
+    assert!(crate::code::source_extensions().any(|x| x == "jsp"));
+}

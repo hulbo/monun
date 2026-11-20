@@ -604,6 +604,8 @@ enum PanelAction {
     },
     /// A new API request in this folder of the group in use.
     NewRequest(u64),
+    /// A new file of any other kind (New › Other File) in this folder of the group in use.
+    NewFile(u64),
 }
 
 /// A file row's file: its window and document (a file of the group in use), its path (`None` for
@@ -856,6 +858,9 @@ fn level(tree: &mut Tree, ui: &mut Ui, parent: Option<u64>, depth: usize) {
             ui.set_min_width(180.0);
             if tree.on && ui.button(lang.tr("New API Request")).clicked() {
                 asked = Some(PanelAction::NewRequest(f.id));
+            }
+            if tree.on && ui.button(lang.tr("New Other File…")).clicked() {
+                asked = Some(PanelAction::NewFile(f.id));
             }
             if ui.button(lang.tr("New Folder…")).clicked() {
                 asked = Some(PanelAction::Dialog("newFolder", json!({"group": g.name, "parent": f.id})));
@@ -1335,6 +1340,7 @@ fn act(app: &mut SheetApp, ui: &Ui, action: PanelAction, current: &str) {
             persist(app);
         }
         PanelAction::NewRequest(folder) => crate::api_view::new_request(app, Some(folder)),
+        PanelAction::NewFile(folder) => crate::file_tabs::new_other(app, Some(folder)),
         PanelAction::Open { group, path } => {
             // Its group's files open with it in front.
             if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
@@ -1414,6 +1420,9 @@ pub(crate) fn new_menu(app: &mut SheetApp, ui: &mut Ui) {
     }
     if ui.button(lang.tr("New API Request")).clicked() {
         crate::api_view::new_request(app, None);
+    }
+    if ui.button(lang.tr("New Other File…")).clicked() {
+        crate::file_tabs::new_other(app, None);
     }
     ui.separator();
     if ui.button(lang.tr("Open…")).clicked() {

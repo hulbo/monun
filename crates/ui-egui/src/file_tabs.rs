@@ -102,6 +102,7 @@ pub(crate) fn file_icon(kind: Option<TextKind>) -> Icon {
         Some(TextKind::Web) => Icon::WebFile,
         Some(TextKind::Slides) => Icon::SlidesFile,
         Some(TextKind::Http) => Icon::ApiFile,
+        Some(TextKind::Code) => Icon::CodeFile,
     }
 }
 
@@ -125,6 +126,101 @@ pub(crate) fn new_text(app: &mut SheetApp, kind: TextKind) {
     };
     let prefix = app.ui.language.tr(prefix).to_string();
     app.run_or_alert("file.new", json!({"document": true, "kind": name, "prefix": prefix}));
+}
+
+/// New › Other File: asks for the new file's name (in `folder` of the group in use, when given).
+/// Its extension says what it is (`Main.java` is coloured as Java), so one entry makes every kind
+/// of source file.
+pub(crate) fn new_other(app: &mut SheetApp, folder: Option<u64>) {
+    app.open_dialog("newFile", json!({"folder": folder}));
+}
+
+/// What a file called `name` will be, as its status bar says it (`Java`, `YAML`, `Plain Text`);
+/// `None` for a name Monun doesn't make files of (a picture, a PDF…).
+fn kind_name(name: &str, lang: crate::i18n::Language) -> Option<String> {
+    if let Some(s) = monun_markdown::code::source_of(name) {
+        return Some(s.label.to_string());
+    }
+    let label = match TextKind::of_name(name) {
+        TextKind::Markdown => "Markdown Document",
+        TextKind::Sql => "SQL",
+        TextKind::Http => "API Request",
+        TextKind::Word => "Word Document",
+        TextKind::Hwp => "Hangul Document",
+        TextKind::Plain | TextKind::Code => "Plain Text",
+        TextKind::Pdf | TextKind::Image | TextKind::Web | TextKind::Slides => return None,
+    };
+    Some(lang.tr(label).to_string())
+}
+
+/// The New File dialog: the file's name with its extension, and what that makes it. OK makes the
+/// file (unsaved: its first save asks where).
+pub(crate) fn new_file_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog, open: &mut bool) {
+    use crate::widgets::DialogButton;
+    use egui::RichText;
+    let lang = app.ui.language;
+    let t = Tokens::get(ui.ctx());
+    let text = |d: &crate::dialogs::Dialog, k: &str| d.values.get(k).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+    ui.add_space(4.0);
+    ui.label(lang.tr("File name:"));
+    let mut name = text(d, "name");
+    let field =
+        ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).hint_text("Main.java")).accessible_name(lang.tr("File name:"));
+    if d.values.get("focused").and_then(serde_json::Value::as_bool) != Some(true) {
+        field.request_focus();
+        d.values.insert("focused".into(), json!(true));
+    }
+    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if field.changed() {
+        d.values.remove("error");
+    }
+    d.values.insert("name".into(), json!(name));
+    let what = (!name.trim().is_empty()).then(|| kind_name(name.trim(), lang));
+    match &what {
+        Some(Some(kind)) => {
+            ui.label(RichText::new(format!("{} {kind}", lang.tr("Type:"))).color(t.text));
+        }
+        Some(None) => {
+            ui.label(RichText::new(lang.tr("Monun can't make a new file of that type.")).color(t.danger));
+        }
+        None => {}
+    }
+    ui.label(
+        RichText::new(lang.tr("The extension says what the file is and how it is coloured: Main.java, App.vue, application.yml, mapper.xml…"))
+            .color(t.text_dim),
+    );
+    let error = text(d, "error");
+    if !error.is_empty() {
+        ui.label(RichText::new(lang.tr(&error)).color(t.danger));
+    }
+    ui.add_space(8.0);
+    let row = [DialogButton::confirm("OK"), DialogButton::neutral("Cancel")];
+    let submit = match crate::widgets::dialog_buttons(ui, &row) {
+        Some(0) => true,
+        Some(_) => {
+            *open = false;
+            false
+        }
+        None => enter,
+    };
+    if !submit || !matches!(what, Some(Some(_))) {
+        return;
+    }
+    let before: Vec<u64> = app.session.documents().iter().map(|d| d.uid).collect();
+    match app.run("file.new", json!({"document": true, "name": name.trim()})) {
+        Ok(_) => {
+            *open = false;
+            // Made from a folder's menu: it goes in that folder.
+            if let Some(folder) = d.values.get("folder").and_then(serde_json::Value::as_u64)
+                && let Some(doc) = app.session.active().map(|d| d.uid).filter(|u| !before.contains(u))
+            {
+                app.folder_pending.insert(doc, folder);
+            }
+        }
+        Err(e) => {
+            d.values.insert("error".into(), json!(e));
+        }
+    }
 }
 
 /// What shows while no file is open: New workbook, Markdown document, SQL or text file, Open…
@@ -180,6 +276,9 @@ pub fn start_page(app: &mut SheetApp, ui: &mut Ui) {
                     }
                     if start_button(ui, Icon::WebFile, lang.tr("New Site Link…"), &t).clicked() {
                         crate::web_view::new_link(app);
+                    }
+                    if start_button(ui, Icon::CodeFile, lang.tr("New Other File…"), &t).clicked() {
+                        new_other(app, None);
                     }
                     if start_button(ui, Icon::Folder, lang.tr("Open…"), &t).clicked() {
                         app.run_or_alert("file.open", json!({}));

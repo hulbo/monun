@@ -137,6 +137,8 @@ pub(super) const AHEAD_DOCS: usize = 2;
 struct Look {
     doc: (u64, usize),
     kind: TextKind,
+    /// A source file's language (its colours).
+    lang: Lang,
     wrap: u32,
     size: u32,
     dark: bool,
@@ -431,13 +433,14 @@ fn font_at(z: f32) -> FontId {
     FontId::new(14.0 * z, FontFamily::Name(theme::MONO.into()))
 }
 
-/// The editor's layout job of `text`: its Markdown marks or SQL coloured (plain text as it is) and
-/// `query`'s matches tinted. SQL and plain text lines are all as tall (see [`even_rows`]; `wide` is
-/// [`Wide::of`]'s).
-fn job_of(text: &str, (kind, wide): (TextKind, Wide), font: &FontId, colors: &Colors, wrap: f32, query: &str) -> LayoutJob {
+/// The editor's layout job of `text`: its Markdown marks, SQL or a source file's language
+/// (`lang`) coloured (plain text as it is) and `query`'s matches tinted. Lines of everything but
+/// Markdown are all as tall (see [`even_rows`]; `wide` is [`Wide::of`]'s).
+fn job_of(text: &str, (kind, lang, wide): (TextKind, Lang, Wide), font: &FontId, colors: &Colors, wrap: f32, query: &str) -> LayoutJob {
     let mut job = match kind {
         TextKind::Markdown => markdown_job(text, font, colors, wrap),
         TextKind::Sql => code_editor::layout_job(text, Lang::Sql, font, colors.text, &colors.syntax, wrap),
+        TextKind::Code => code_editor::layout_job(text, lang, font, colors.text, &colors.syntax, wrap),
         TextKind::Plain | TextKind::Pdf | TextKind::Word | TextKind::Hwp | TextKind::Image | TextKind::Web | TextKind::Slides | TextKind::Http => {
             code_editor::layout_job(text, Lang::Plain, font, colors.text, &colors.syntax, wrap)
         }
@@ -561,14 +564,14 @@ pub(super) fn lay_out_ahead(
     ctx: &egui::Context,
     doc: (u64, usize),
     text: &str,
-    (z, wrap, query, kind): (f32, f32, &str, TextKind),
+    (z, wrap, query, kind, lang): (f32, f32, &str, TextKind, Lang),
     t: &Tokens,
     budget: f64,
 ) -> bool {
     let font = font_at(z);
     let colors = Colors::of(t);
-    let look = Look { doc, kind, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
-    let code = (kind, Wide::of(ctx, kind, &font));
+    let look = Look { doc, kind, lang, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+    let code = (kind, lang, Wide::of(ctx, kind, &font));
     layouts.ahead(ctx, look, query, text, || job_of(text, code, &font, &colors, wrap, query), budget)
 }
 
@@ -670,6 +673,7 @@ const FIRST_SHOW_MS: f64 = 30.0;
 fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super::Mode) {
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let kind = super::text_kind(app);
+    let lang = super::text_lang(app);
     let bars = crate::panes::scroll_bars_below(app.group_handle, ui.available_rect_before_wrap());
     let (draft, layouts) = (&app.doc_view.draft, &mut app.doc_view.layouts);
     let Some(dr) = draft.as_ref() else { return };
@@ -685,7 +689,7 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
     let end = dr.text.get(start..).and_then(|s| s.match_indices('\n').nth(rows * 2)).map_or(dr.text.len(), |(i, _)| start + i);
     let mut head = dr.text.get(start..end).unwrap_or_default().to_owned();
     let left = text_margin(ui, kind, &dr.text, &font);
-    let code = (kind, Wide::of(ui.ctx(), kind, &font));
+    let code = (kind, lang, Wide::of(ui.ctx(), kind, &font));
     let mut wrap_at = None;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         wrap_at = Some(wrap);
@@ -711,7 +715,7 @@ fn first_screen(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: super
         *w = Some(wrap);
     }
     let ctx = ui.ctx().clone();
-    lay_out_ahead(layouts, &ctx, (dr.uid, dr.sheet), &dr.text, (z, wrap, &query, kind), t, FIRST_SHOW_MS);
+    lay_out_ahead(layouts, &ctx, (dr.uid, dr.sheet), &dr.text, (z, wrap, &query, kind, lang), t, FIRST_SHOW_MS);
     ctx.request_repaint();
 }
 
@@ -734,6 +738,7 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     let select = app.doc_view.select.take();
     let query = app.doc_view.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
     let kind = super::text_kind(app);
+    let lang = super::text_lang(app);
     let ctx = ui.ctx().clone();
     if app.doc_view.focus_editor && !ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) {
         app.doc_view.focus_editor = false;
@@ -758,14 +763,14 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens, mode: su
     // The line to keep at the top after a zoom (a line to go to wins).
     let anchor = app.doc_view.anchor.take_if(|(d, _)| *d == doc).map(|(_, line)| line).filter(|_| goto.is_none());
     let anchor_at = anchor.map(|line| char_index(&dr.text, monun_markdown::line_start(&dr.text, line)));
-    let code = (kind, Wide::of(&ctx, kind, &font));
+    let code = (kind, lang, Wide::of(&ctx, kind, &font));
     let layouts = &mut app.doc_view.layouts;
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let text = buf.as_str();
         if let Some(w) = layouts.wraps.get_mut(slot(mode)) {
             *w = Some(wrap);
         }
-        let look = Look { doc, kind, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
+        let look = Look { doc, kind, lang, wrap: wrap.to_bits(), size: font.size.to_bits(), dark: t.dark };
         layouts.layout(ui.ctx(), look, &query, text, || job_of(text, code, &font, &colors, wrap, &query))
     };
     let left = text_margin(ui, kind, &dr.text, &font);
@@ -1292,10 +1297,19 @@ mod tests {
         for text in ["", "# 제목\n- [ ] 할 일 `x` [a](#b) {{구매목록!D1}} **굵게**\n```\ncode\n```\n> 인용", "[unclosed `tick {{"] {
             let job = markdown_job(text, &font, &c, 100.0);
             assert_eq!(job.text, text);
-            for kind in [TextKind::Markdown, TextKind::Sql, TextKind::Plain] {
-                assert_eq!(job_of(text, (kind, Wide { above: 3.0, grow: 4.0 }), &font, &c, 100.0, "x").text, text, "{kind:?}");
+            for kind in [TextKind::Markdown, TextKind::Sql, TextKind::Plain, TextKind::Code] {
+                assert_eq!(job_of(text, (kind, Lang::Java, Wide { above: 3.0, grow: 4.0 }), &font, &c, 100.0, "x").text, text, "{kind:?}");
             }
         }
+        // A source file is coloured as its language: a Java keyword isn't the text's colour.
+        let java = "public class A { // note
+}";
+        let colours = |lang| {
+            let job = job_of(java, (TextKind::Code, lang, Wide::default()), &font, &c, 100.0, "");
+            job.sections.iter().map(|s| s.format.color).filter(|col| *col != c.text).count()
+        };
+        assert!(colours(Lang::Java) > 0);
+        assert_eq!(colours(Lang::Plain), 0, "plain text stays the text's colour");
     }
 }
 
@@ -1411,8 +1425,8 @@ mod paragraph_tests {
             let font = FontId::new(14.0, FontFamily::Name(theme::MONO.into()));
             let text = long_text(2000);
             let doc = (7, 1);
-            let job = || job_of(&text, (TextKind::Markdown, Wide::default()), &font, &colors, 500.0, "");
-            let look = Look { doc, kind: TextKind::Markdown, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
+            let job = || job_of(&text, (TextKind::Markdown, Lang::Plain, Wide::default()), &font, &colors, 500.0, "");
+            let look = Look { doc, kind: TextKind::Markdown, lang: Lang::Plain, wrap: 500f32.to_bits(), size: font.size.to_bits(), dark: false };
             let mut layouts = Layouts::default();
             assert!(!layouts.ready(doc, &text, 1.0, false));
             let mut slices = 1;
@@ -1433,7 +1447,7 @@ mod paragraph_tests {
             // A short document is ready at once and keeps no paragraphs.
             assert!(layouts.ready((7, 2), "# 짧은 문서\n", 1.0, false));
             layouts.layout(ui.ctx(), Look { doc: (7, 2), ..look }, "", "# 짧은 문서\n", || {
-                job_of("# 짧은 문서\n", (TextKind::Markdown, Wide::default()), &font, &colors, 500.0, "")
+                job_of("# 짧은 문서\n", (TextKind::Markdown, Lang::Plain, Wide::default()), &font, &colors, 500.0, "")
             });
             assert_eq!(layouts.docs.len(), 1);
         });

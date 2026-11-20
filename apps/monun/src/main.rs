@@ -270,14 +270,15 @@ fn services() -> Services {
         paste_html: Some(Box::new(move || read_clipboard(&html_clipboard, |clipboard| clipboard.get().html()))),
         paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
         pick_open: Some(Box::new(|| {
+            // Source files (.java, .vue, .yml, .xml…) open as text to read and edit.
+            let sources: Vec<&str> = monun_engine::markdown::code::source_extensions().collect();
+            let mut every = vec![
+                "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp", "hwpx",
+                "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url", "pptx", "ppsx", "potx", "pptm", "http", "rest",
+            ];
+            every.extend(sources.iter().filter(|x| !every.contains(x)).collect::<Vec<_>>());
             rfd::FileDialog::new()
-                .add_filter(
-                    "Spreadsheets and documents",
-                    &[
-                        "xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json", "md", "sql", "pdf", "docx", "doc", "rtf", "odt", "hwp",
-                        "hwpx", "png", "jpg", "jpeg", "gif", "bmp", "webp", "html", "htm", "url", "pptx", "ppsx", "potx", "pptm", "http", "rest",
-                    ],
-                )
+                .add_filter("Spreadsheets, documents and source files", &every)
                 .add_filter("Excel Workbook", &["xlsx", "xlsm"])
                 .add_filter("Excel 97-2003 Workbook (import)", &["xls"])
                 .add_filter("Excel Binary Workbook (data import)", &["xlsb"])
@@ -293,6 +294,8 @@ fn services() -> Services {
                 .add_filter("Web pages and site links (view only)", &["html", "htm", "url"])
                 .add_filter("PowerPoint presentations (view only)", &["pptx", "ppsx", "potx", "pptm"])
                 .add_filter("PDF document (read only)", &["pdf"])
+                .add_filter("Source files (Java, JavaScript, Vue, YAML, XML…)", &sources)
+                .add_filter("All files", &["*"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
@@ -322,7 +325,21 @@ fn services() -> Services {
                 ("Site Link (.url)", "url"),
                 ("API Request (.http)", "http"),
             ];
-            let ext = path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).filter(|e| TYPES.iter().any(|(_, x)| x == e));
+            let named = path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase);
+            // A source file (Main.java, Dockerfile) keeps its name and type, plain text after it.
+            if let Some(source) = monun_engine::markdown::code::source_of(suggested) {
+                let file = path.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(suggested).to_string();
+                let x = named.unwrap_or_else(|| "*".to_string());
+                let label = if x == "*" { source.label.to_string() } else { format!("{} (.{x})", source.label) };
+                return rfd::FileDialog::new()
+                    .set_file_name(file)
+                    .add_filter(label, &[x])
+                    .add_filter("Text (.txt)", &["txt"])
+                    .add_filter("All files", &["*"])
+                    .save_file()
+                    .and_then(|p| p.to_str().map(str::to_string));
+            }
+            let ext = named.filter(|e| TYPES.iter().any(|(_, x)| x == e));
             let ext = ext.unwrap_or_else(|| "xlsx".to_string());
             let mut dialog = rfd::FileDialog::new().set_file_name(format!("{stem}.{ext}"));
             for (label, x) in TYPES.iter().filter(|(_, x)| *x == ext).chain(TYPES.iter().filter(|(_, x)| *x != ext)) {

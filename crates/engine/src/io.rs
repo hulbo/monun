@@ -53,8 +53,10 @@ pub enum FileKind {
 
 impl FileKind {
     pub fn from_path(path: &str) -> Option<FileKind> {
-        let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
-        Some(match ext.as_str() {
+        // A source file (.java, .vue, .yml…, `Dockerfile`) is text, by its extension or its name.
+        let source = || monun_markdown::code::source_of(path).map(|_| FileKind::Text);
+        let Some(ext) = std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str) else { return source() };
+        Some(match ext.to_ascii_lowercase().as_str() {
             "xlsx" | "xlsm" | "xltx" | "xltm" => FileKind::Xlsx,
             "xls" | "xlt" => FileKind::Xls,
             "xlsb" => FileKind::Xlsb,
@@ -71,7 +73,7 @@ impl FileKind {
             "png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff" => FileKind::Image,
             "url" => FileKind::Web,
             "pptx" | "ppsx" | "potx" | "pptm" | "ppsm" | "potm" => FileKind::Slides,
-            _ => return None,
+            _ => return source(),
         })
     }
 }
@@ -97,6 +99,16 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
 /// quote the password.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
     open_bytes_with(name, bytes, password, false)
+}
+
+/// Whether a `.json` file is a Monun workbook (an object with its `sheets`; a `.scjson` always is)
+/// rather than JSON of another program's, which opens as source text.
+fn is_json_workbook(name: &str, bytes: &[u8]) -> bool {
+    if name.to_ascii_lowercase().ends_with(".scjson") {
+        return true;
+    }
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(bytes).is_ok_and(|o| o.contains_key("sheets"))
 }
 
 /// [`open_bytes_with_password`], and with `csv_as_text` a CSV/TSV/TXT file keeps every field as
@@ -236,6 +248,8 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
         // Only checked to be a PDF: the interface reads it itself to show it.
         Some(FileKind::Pdf) if crate::docs::is_pdf(bytes) => Ok((crate::docs::pdf_workbook(name), vec![])),
         Some(FileKind::Pdf) => Err(EngineError::Other(format!("'{name}' is not a PDF file."))),
+        // A JSON file that isn't a Monun workbook (`package.json`, a settings file) is source text.
+        Some(FileKind::Json) if !is_json_workbook(name, bytes) => Ok((crate::docs::text_workbook(name, bytes), vec![])),
         Some(FileKind::Json) => {
             let mut wb: Workbook = serde_json::from_slice(bytes).map_err(|e| EngineError::Other(format!("not a Monun JSON workbook: {e}")))?;
             wb.styles.rebuild_index();
@@ -340,6 +354,17 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
     // A text file writes its text; a workbook goes to .txt as its sheet's values, never to .sql.
     let kind = match kind {
+        // A text file saved as .json (a source file) writes its text, not a Monun workbook.
+        FileKind::Json
+            if !path.to_ascii_lowercase().ends_with(".scjson")
+                && crate::docs::is_text_file(wb)
+                && crate::docs::TextKind::of_name(path) == crate::docs::TextKind::Code =>
+        {
+            match wb.sheets.first().and_then(|sh| sh.document.as_ref()) {
+                Some(doc) => return Ok(crate::docs::text_file_bytes(doc)),
+                None => FileKind::Json,
+            }
+        }
         FileKind::Text => match wb.sheets.first().and_then(|sh| sh.document.as_ref()).filter(|_| crate::docs::is_text_file(wb)) {
             Some(doc) => return Ok(crate::docs::text_file_bytes(doc)),
             None if crate::docs::TextKind::of_name(path) == crate::docs::TextKind::Sql => {

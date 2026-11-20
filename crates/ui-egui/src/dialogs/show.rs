@@ -349,6 +349,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "folderSettings" => crate::api_view::settings_dialog(app, ui, &mut d, &mut open),
                 "newProject" | "renameProject" | "deleteProject" => crate::projects::dialog(app, ui, &mut d, &mut open),
                 "siteLink" => crate::web_view::dialog(app, ui, &mut d, &mut open),
+                "newFile" => crate::file_tabs::new_file_dialog(app, ui, &mut d, &mut open),
                 "saveChanges" => {
                     // The window title asks the question; the window bar names the workbook.
                     let quitting = d.values.get("quit").and_then(Json::as_bool) == Some(true);
