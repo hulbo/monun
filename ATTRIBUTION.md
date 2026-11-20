@@ -39,3 +39,7 @@ workbooks) is original and has no file to list.
 | `assets/app-icon/hicolor/scalable/apps/kr.hulbo.monun.svg` | Authors credited in `NOTICE` | copy of monun.svg | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | Linux scalable icon |
 | `assets/app-icon/README.md` | Authors credited in `NOTICE` | original | MIT OR Apache-2.0 | Icon documentation |
 | `assets/app-icon/LICENSE.txt` | (licence text) | original | — | Licence of the app icon files |
+| `docs/images/main.png` | Authors credited in `NOTICE` | original (a screenshot of Monun; the sample data and names are made up) | MIT OR Apache-2.0 | README screenshot: a workbook and the group panel |
+| `docs/images/source.png` | Authors credited in `NOTICE` | original (a screenshot of Monun; the sample data and names are made up) | MIT OR Apache-2.0 | README screenshot: a Java source file |
+| `docs/images/api.png` | Authors credited in `NOTICE` | original (a screenshot of Monun; the sample data and names are made up) | MIT OR Apache-2.0 | README screenshot: an API request and its answer |
+| `docs/images/markdown.png` | Authors credited in `NOTICE` | original (a screenshot of Monun; the sample data and names are made up) | MIT OR Apache-2.0 | README screenshot: a Markdown document side by side |

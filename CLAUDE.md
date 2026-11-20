@@ -46,6 +46,10 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   refused (`io::DRM_PROTECTED`). Never decrypt it or pass Monun off as one of those programs. A
   notice with release steps and a watch for the released file was tried and taken out: the user
   wants it opened automatically or not at all.
+- Docs: `README.md` is the short public front page (what Monun is, download, features, install); the
+  details are in `docs/FEATURES.md` (the user's guide), `docs/DEVELOPMENT.md` (build, structure,
+  tests, releases) and `docs/PLANNING.md` (background, goals, principles, design). A user-visible
+  change goes in `docs/FEATURES.md`; README only when it changes the front page.
 - Code colours: `monun_markdown::code` (`highlight`, `lang_of`; SQL, Python, LaTeX and the languages a
   Markdown code block names) is shared by the code editor, the document view and editor
   (`code_editor::layout_job`), printing (`print/document.rs`) and the web page export (`doc_html.rs`).
@@ -160,7 +164,7 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   and `MONUN_NO_PREFS` runs neither write nor pick them up.
 - `update.cmd` (the user's "모눈 업데이트" desktop shortcut) runs `scripts/update.ps1` in
   `C:\Project\monun`: fast-forwards `main` from origin and rebuilds the release exe.
-- Releases (for PCs that don't build; README "릴리스 만들기"): `pwsh scripts/release.ps1 -Version x.y.z`
+- Releases (for PCs that don't build; `docs/DEVELOPMENT.md` "릴리스 만들기"): `pwsh scripts/release.ps1 -Version x.y.z`
   bumps `[workspace.package] version`, builds, compiles `packaging/monun.iss` (Inno Setup 6.7+) into
   `dist\Monun-x.y.z-Setup.exe`, commits "모눈 x.y.z", pushes it to main with tag `vx.y.z` and creates
   the GitHub release with `gh`. Publishing is outward-facing: only when the user asks. It needs a
