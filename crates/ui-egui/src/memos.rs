@@ -20,7 +20,9 @@ use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
 /// One memo: the file it is on, where (the paragraph's first line, 0-based, and its first words),
-/// what it says and when it was written.
+/// what it says and when it was written. A memo with a `link` links the paragraph to that file:
+/// it shows in the margin left of the page as the file's name, and a click opens the file (the
+/// mouse's Back button comes back).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DocMemo {
@@ -31,6 +33,9 @@ pub struct DocMemo {
     pub text: String,
     /// `YYYY-MM-DD HH:MM`, local time.
     pub created: String,
+    /// The file it links to (its path), for a link; empty for a memo.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub link: String,
 }
 
 /// The memo being written (`id` none) or changed in the panel.
@@ -139,15 +144,15 @@ fn next_id(app: &SheetApp) -> u64 {
 
 /// Keeps a new memo: in the root's file for a file under the working root, else (or when that
 /// file can't be read or written) in `ui.json`. Returns its id.
-fn keep_new(app: &mut SheetApp, path: String, line: usize, quote: String, text: String) -> u64 {
-    let memo = DocMemo { id: next_id(app), path, line, quote, text, created: stamp() };
+fn keep_new(app: &mut SheetApp, (path, line, quote): (String, usize, String), text: String, link: String) -> u64 {
+    let memo = DocMemo { id: next_id(app), path, line, quote, text, created: stamp(), link };
     match root_file::add(app, memo) {
         Ok(id) => id,
         Err(mut memo) => {
             // The root's file may have brought ids since.
             memo.id = next_id(app);
             let id = memo.id;
-            app.ui.memos.push(memo);
+            app.ui.memos.push(*memo);
             persist(app);
             id
         }
@@ -211,6 +216,8 @@ pub(crate) fn placed(app: &mut SheetApp, path: &str, text: &str) -> Vec<(DocMemo
 /// What the panel asks for, done once it is drawn.
 enum Act {
     Go(u64, usize),
+    /// Open the file a link goes to.
+    Open(String),
     Edit(DocMemo),
     Delete(u64, String),
     Save,
@@ -280,7 +287,11 @@ fn others(app: &mut SheetApp) -> Vec<(u64, String, Vec<Other>)> {
                 let text = d.wb.sheet(0).and_then(|sh| sh.document.as_ref()).map(|doc| doc.text.clone()).unwrap_or_default();
                 let items: Vec<Other> = placed(app, &path, &text)
                     .into_iter()
-                    .map(|(m, line)| Other::Memo { id: m.id, line, quote: m.quote, text: m.text, created: m.created })
+                    .map(|(m, line)| {
+                        // A link says where it goes.
+                        let text = if m.text.is_empty() && !m.link.is_empty() { format!("→ {}", name_of(&m.link)) } else { m.text };
+                        Other::Memo { id: m.id, line, quote: m.quote, text, created: m.created }
+                    })
                     .collect();
                 out.push((uid, name, items));
             }
@@ -425,6 +436,7 @@ fn this_document(app: &mut SheetApp, ui: &mut Ui) {
             app.memos.picked = Some(id);
             crate::doc_view::go_to_line(app, line);
         }
+        Some(Act::Open(to)) => open_link(app, &to),
         Some(Act::Edit(m)) => {
             app.memos.draft = Some(Draft { id: Some(m.id), path: m.path, line: m.line, quote: m.quote, text: m.text, focus: true });
         }
@@ -446,7 +458,7 @@ fn save_draft(app: &mut SheetApp) {
         return;
     }
     let Some(id) = d.id else {
-        app.memos.picked = Some(keep_new(app, d.path, d.line, d.quote, text));
+        app.memos.picked = Some(keep_new(app, (d.path, d.line, d.quote), text, String::new()));
         return;
     };
     if let Some(m) = app.ui.memos.iter_mut().find(|m| m.id == id && same_path(&m.path, &d.path)) {
@@ -457,7 +469,7 @@ fn save_draft(app: &mut SheetApp) {
     match root_file::edit(app, id, &d.path, &text) {
         Ok(true) => {}
         // Gone meanwhile (deleted on another PC): what was written is kept, as a new memo.
-        Ok(false) => app.memos.picked = Some(keep_new(app, d.path, d.line, d.quote, text)),
+        Ok(false) => app.memos.picked = Some(keep_new(app, (d.path, d.line, d.quote), text, String::new())),
         Err(e) => {
             root_file::tell(app, root_file::COULD_NOT_SAVE, &e);
             // The text stays in its box.
@@ -537,7 +549,26 @@ fn memo_card(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, m: &DocMemo, at: Optio
             }
         }
         ui.add_space(2.0);
-        ui.add(egui::Label::new(egui::RichText::new(&m.text).font(theme::ui_font(13.0)).color(t.text)).wrap());
+        // A link: the file it goes to, a click away.
+        if !m.link.is_empty() {
+            let name = name_of(&m.link);
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+            let icon = Rect::from_center_size(pos2(r.left() + 7.0, r.center().y), vec2(12.0, 12.0));
+            icons::paint(ui.painter(), icon, Icon::Link, t.accent);
+            let font = theme::ui_font(13.0);
+            let shown = crate::file_tabs::fit(ui, name, &font, (r.right() - icon.right() - 6.0).max(10.0));
+            ui.painter().text(pos2(icon.right() + 6.0, r.center().y), Align2::LEFT_CENTER, shown, font, t.accent_text);
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp.on_hover_text(&m.link).clicked() {
+                *act = Some(Act::Open(m.link.clone()));
+            }
+        }
+        if !m.text.is_empty() {
+            ui.add(egui::Label::new(egui::RichText::new(&m.text).font(theme::ui_font(13.0)).color(t.text)).wrap());
+        }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(&m.created).font(theme::ui_font(11.0)).color(t.text_dim));
@@ -657,7 +688,258 @@ pub(crate) fn marks_of(app: &mut SheetApp) -> Vec<(u64, usize, String)> {
         return Vec::new();
     }
     let text = live_text(app);
-    placed(app, &path, &text).into_iter().filter_map(|(m, at)| Some((m.id, at?, m.text))).collect()
+    placed(app, &path, &text).into_iter().filter(|(m, _)| m.link.is_empty()).filter_map(|(m, at)| Some((m.id, at?, m.text))).collect()
+}
+
+/// A link to draw on the document in front: its memo's id and file, the paragraph's line, the file
+/// linked and its note.
+pub(crate) struct Link {
+    pub id: u64,
+    pub path: String,
+    pub line: usize,
+    pub to: String,
+    pub note: String,
+}
+
+/// A memo's mark as [`draw_marks`] takes it: the memo's id, its paragraph's line and its text.
+pub(crate) type Mark = (u64, usize, String);
+
+/// What a link in the margin asked for.
+pub(crate) enum LinkAsk {
+    Open(String),
+    Remove(u64, String),
+}
+
+/// The links to draw on the document in front, in its order.
+pub(crate) fn links_of(app: &mut SheetApp) -> Vec<Link> {
+    let Ok(path) = memo_file(app) else { return Vec::new() };
+    root_file::ensure(app);
+    if !all(app).any(|m| !m.link.is_empty() && same_path(&m.path, &path)) {
+        return Vec::new();
+    }
+    let text = live_text(app);
+    placed(app, &path, &text)
+        .into_iter()
+        .filter(|(m, _)| !m.link.is_empty())
+        .filter_map(|(m, at)| Some(Link { id: m.id, path: m.path, line: at?, to: m.link, note: m.text }))
+        .collect()
+}
+
+/// A path's file name.
+fn name_of(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()).unwrap_or(path)
+}
+
+/// Room a link needs left of the memos' marks: its icon alone.
+pub(crate) const LINK_ROOM: f32 = 24.0;
+
+/// The links on the rendered document's paragraphs in view, in the margin left of the page (whose
+/// left edge is `ui`'s) from `from` to the page, or to the memos' marks on a paragraph with a memo
+/// (`marks`, as [`draw_marks`] takes them): each its file's icon and name (its icon alone where the
+/// margin is narrow), several on one paragraph one under the other. A click opens the file; the
+/// right button also copies its path or removes the link.
+pub(crate) fn draw_links(
+    ui: &mut Ui,
+    (lines, marks): (&[(usize, Rect)], &[Mark]),
+    links: &[Link],
+    from: f32,
+    lang: crate::i18n::Language,
+) -> Option<LinkAsk> {
+    let t = Tokens::get(ui.ctx());
+    let page = ui.max_rect().left();
+    let font = theme::ui_font(12.0);
+    let mut asked = None;
+    let mut done: Vec<usize> = Vec::new();
+    for link in links {
+        let Some(rect) = lines.iter().find(|(l, _)| *l == link.line).map(|(_, r)| *r) else { continue };
+        let k = done.iter().filter(|l| **l == link.line).count();
+        done.push(link.line);
+        let name = name_of(&link.to);
+        let top = rect.top() + k as f32 * 24.0;
+        let right = if marks.iter().any(|(_, l, _)| *l == link.line) { page - 32.0 } else { page - 10.0 };
+        let room = right - from;
+        let width = if room >= 72.0 {
+            let w = ui.painter().layout_no_wrap(name.to_string(), font.clone(), t.text).size().x + 30.0;
+            w.min(room).min(260.0)
+        } else {
+            20.0
+        };
+        let chip = Rect::from_min_max(pos2(right - width, top), pos2(right, top + 21.0));
+        let resp = ui.interact(chip, ui.scope_id().with(("monun.doc_link", link.id)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+        let fill = if resp.hovered() { t.accent_soft } else { t.window };
+        ui.painter().rect(chip, 10.0, fill, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.ribbon_border }), egui::StrokeKind::Inside);
+        let icon = Rect::from_center_size(pos2(chip.left() + 10.5, chip.center().y), vec2(12.0, 12.0));
+        icons::paint(ui.painter(), icon, Icon::Link, t.accent);
+        if width > 20.0 {
+            let shown = crate::file_tabs::fit(ui, name, &font, (chip.right() - icon.right() - 10.0).max(10.0));
+            ui.painter().text(pos2(icon.right() + 5.0, chip.center().y), Align2::LEFT_CENTER, shown, font.clone(), t.accent_text);
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let tip = if link.note.is_empty() { link.to.clone() } else { format!("{}\n\n{}", link.to, link.note) };
+        let resp = resp.on_hover_text(tip);
+        if resp.clicked() {
+            asked = Some(LinkAsk::Open(link.to.clone()));
+        }
+        resp.context_menu(|ui| {
+            if ui.button(lang.tr("Open")).clicked() {
+                asked = Some(LinkAsk::Open(link.to.clone()));
+            }
+            if ui.button(lang.tr("Copy Full Path")).clicked() {
+                ui.ctx().copy_text(link.to.clone());
+            }
+            ui.separator();
+            if ui.button(lang.tr("Remove Link")).clicked() {
+                asked = Some(LinkAsk::Remove(link.id, link.path.clone()));
+            }
+        });
+    }
+    asked
+}
+
+/// Does what a link asked for: opens its file (or brings it to the front), or removes it.
+pub(crate) fn link_asked(app: &mut SheetApp, asked: LinkAsk) {
+    match asked {
+        LinkAsk::Open(to) => open_link(app, &to),
+        LinkAsk::Remove(id, path) => delete(app, id, &path),
+    }
+}
+
+/// Opens the file a link goes to, or brings it to the front when it is open.
+fn open_link(app: &mut SheetApp, to: &str) {
+    if !std::path::Path::new(to).exists() {
+        let lang = app.ui.language;
+        app.message = Some(("Monun".into(), format!("{}\n{to}", lang.tr("The linked file isn't there any more:"))));
+        return;
+    }
+    app.open_path(to);
+}
+
+/// Starts a link on line `line` of the file in front (Link to File… on a paragraph): a dialog
+/// asks which file.
+pub(crate) fn start_link(app: &mut SheetApp, line: usize) {
+    let Ok(path) = memo_file(app) else { return };
+    let quote = quote_of(&live_text(app), line);
+    app.open_dialog("linkFile", json!({"path": path, "line": line, "quote": quote}));
+}
+
+/// Link to File: the files of the group (a filter narrows them) or one found with Browse…; OK (or
+/// a double-click on one) links the paragraph to it.
+pub(crate) fn link_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog, open: &mut bool) {
+    use crate::widgets::DialogButton;
+    use serde_json::Value as Json;
+    let lang = app.ui.language;
+    let t = Tokens::get(ui.ctx());
+    let text = |d: &crate::dialogs::Dialog, k: &str| d.values.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    let path = text(d, "path");
+    let quote = plain_quote(&text(d, "quote"));
+    ui.add_space(4.0);
+    if !quote.is_empty() {
+        let mut job = egui::text::LayoutJob::simple_singleline(format!("“{quote}”"), theme::ui_font(12.0), t.text_dim);
+        job.wrap.max_width = ui.available_width();
+        job.wrap.max_rows = 1;
+        ui.label(job);
+        ui.add_space(4.0);
+    }
+    ui.label(lang.tr("Find:"));
+    let mut find = text(d, "find");
+    let field = ui.add(egui::TextEdit::singleline(&mut find).desired_width(f32::INFINITY)).accessible_name(lang.tr("Find:"));
+    if d.values.get("focused").and_then(Json::as_bool) != Some(true) {
+        field.request_focus();
+        d.values.insert("focused".into(), json!(true));
+    }
+    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    d.values.insert("find".into(), json!(find));
+    let mut target = text(d, "target");
+    let wanted = find.trim().to_lowercase();
+    let files: Vec<(String, String, Icon)> = crate::groups::open_files_listed(app)
+        .into_iter()
+        .filter_map(|f| {
+            let p = f.path?;
+            (!same_path(&p, &path)).then(|| (p, f.title, crate::file_tabs::file_icon(f.kind)))
+        })
+        .filter(|(_, title, _)| wanted.is_empty() || title.to_lowercase().contains(&wanted))
+        .collect();
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new(lang.tr("Files of the group")).color(t.text_dim));
+    let mut chosen_twice = false;
+    egui::Frame::new().stroke(Stroke::new(1.0, t.ribbon_border)).corner_radius(4.0).inner_margin(4).show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(240.0).auto_shrink([false, true]).show(ui, |ui| {
+            if files.is_empty() {
+                ui.label(egui::RichText::new(lang.tr("No other file of the group.")).italics().color(t.text_dim));
+            }
+            for (p, title, icon) in &files {
+                let on = same_path(p, &target);
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, on, title));
+                if on {
+                    ui.painter().rect_filled(r, 4.0, t.accent_soft);
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(r, 4.0, t.hover);
+                }
+                let at = Rect::from_center_size(pos2(r.left() + 14.0, r.center().y), vec2(14.0, 14.0));
+                icons::paint(ui.painter(), at, *icon, t.text_dim);
+                ui.painter().text(pos2(at.right() + 6.0, r.center().y), Align2::LEFT_CENTER, title, theme::ui_font(12.5), t.text);
+                let resp = resp.on_hover_text(p);
+                if resp.clicked() {
+                    target = p.clone();
+                }
+                if resp.double_clicked() {
+                    target = p.clone();
+                    chosen_twice = true;
+                }
+            }
+        });
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if let Some(pick) = app.services.pick_any.as_ref()
+            && ui.button(lang.tr("Browse…")).clicked()
+            && let Some(p) = pick()
+        {
+            target = p;
+        }
+        if !target.is_empty() && !files.iter().any(|(p, _, _)| same_path(p, &target)) {
+            let mut job = egui::text::LayoutJob::simple_singleline(format!("{} {target}", lang.tr("Link to:")), theme::ui_font(12.0), t.text);
+            job.wrap.max_width = ui.available_width();
+            job.wrap.max_rows = 1;
+            ui.label(job);
+        }
+    });
+    if target != text(d, "target") {
+        d.values.remove("error");
+    }
+    d.values.insert("target".into(), json!(target));
+    let error = text(d, "error");
+    if !error.is_empty() {
+        ui.label(egui::RichText::new(lang.tr(&error)).color(t.danger));
+    }
+    ui.add_space(8.0);
+    let row = [DialogButton::confirm("OK"), DialogButton::neutral("Cancel")];
+    match crate::widgets::dialog_buttons(ui, &row) {
+        Some(0) => {}
+        Some(_) => {
+            *open = false;
+            return;
+        }
+        None if chosen_twice || enter => {}
+        None => return,
+    }
+    // The one file the filter leaves is the one meant.
+    if target.trim().is_empty()
+        && let [(only, _, _)] = files.as_slice()
+    {
+        target = only.clone();
+    }
+    if target.trim().is_empty() {
+        d.values.insert("error".into(), json!("Choose the file to link to."));
+        return;
+    }
+    *open = false;
+    let line = d.values.get("line").and_then(Json::as_u64).and_then(|l| usize::try_from(l).ok()).unwrap_or(0);
+    keep_new(app, (path, line, text(d, "quote")), String::new(), target.trim().to_string());
 }
 
 /// A mark clicked: the memo panel opens with the memo picked.

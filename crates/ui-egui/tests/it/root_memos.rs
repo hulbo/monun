@@ -115,7 +115,7 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
 }
 
 fn memo(id: u64, path: &str, quote: &str, text: &str) -> DocMemo {
-    DocMemo { id, path: path.into(), line: 2, quote: quote.into(), text: text.into(), created: "2026-11-01 09:00".into() }
+    DocMemo { id, path: path.into(), line: 2, quote: quote.into(), text: text.into(), created: "2026-11-01 09:00".into(), ..DocMemo::default() }
 }
 
 #[test]

@@ -723,3 +723,59 @@ fn a_web_page_with_no_page_left_passes_the_back_button_to_the_files() {
     assert_eq!(front_title(&h), second);
     assert!(h.state().web.file_steps.is_empty());
 }
+
+#[test]
+fn a_paragraph_links_to_another_file_in_the_margin_and_back_comes_back() {
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("monun-doc-links-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(dir.join("guide.md"), "# Guide\n\nCall the order API.\n\nCheck the totals.\n").unwrap();
+    std::fs::write(dir.join("orders.http"), "GET https://x.test/orders\n").unwrap();
+    let (md, http) = (dir.join("guide.md").to_string_lossy().into_owned(), dir.join("orders.http").to_string_lossy().into_owned());
+    let mut h = harness(Session::new());
+    h.state_mut().run("file.open", json!({"path": http})).unwrap();
+    h.state_mut().run("file.open", json!({"path": md})).unwrap();
+    h.run_steps(4);
+    // A right click on the paragraph, Link to File…: the group's other files to pick from.
+    h.get_by_label("Call the order API.").click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Link to File…").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("linkFile"));
+    assert!(h.query_by_role_and_label(Role::ListItem, "guide.md").is_none(), "not the file itself");
+    h.get_by_role_and_label(Role::ListItem, "orders.http").click();
+    h.run_steps(2);
+    h.get_all_by_label("OK").last().unwrap().click();
+    h.run_steps(3);
+    let memos = h.state().ui.memos.clone();
+    assert_eq!(memos.len(), 1);
+    assert_eq!((memos[0].line, memos[0].link.as_str(), memos[0].text.as_str()), (2, http.as_str(), ""));
+    assert!(!std::fs::read_to_string(&md).unwrap().contains("orders"), "the .md stays as it was");
+    // In the margin left of the page, beside its paragraph: a click opens the file.
+    let link = h.get_by_role_and_label(Role::Link, "orders.http").rect();
+    let paragraph = h.get_by_label("Call the order API.").rect();
+    assert!(link.right() < paragraph.left() && (link.top() - paragraph.top()).abs() < 4.0, "{link:?} beside {paragraph:?}");
+    h.get_by_role_and_label(Role::Link, "orders.http").click();
+    h.run_steps(4);
+    assert_eq!(h.state().session.active().unwrap().display_title(), "orders.http");
+    // The mouse's Back button comes back to the document.
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: egui::pos2(600.0, 400.0),
+            button: egui::PointerButton::Extra1,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().session.active().unwrap().display_title(), "guide.md");
+    // Its right-click menu takes it away.
+    h.get_by_role_and_label(Role::Link, "orders.http").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Remove Link").click();
+    h.run_steps(3);
+    assert!(h.state().ui.memos.is_empty());
+    assert!(h.query_by_role_and_label(Role::Link, "orders.http").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

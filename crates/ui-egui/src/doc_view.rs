@@ -1240,10 +1240,13 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     }
     let (mut action, mut positions) = (None, Vec::new());
     let (marks, picked) = (crate::memos::marks_of(app), app.memos.picked);
-    let mut marked = None;
+    let links = crate::memos::links_of(app);
+    let (mut marked, mut linked) = (None, None);
     let shown = scroll.show(ui, |ui| {
-        // Room either side, the left for the memos' marks.
-        let width = (PAGE_WIDTH * z).min(ui.available_width() - 80.0).max(120.0);
+        // Room either side, the left for the memos' marks and the links.
+        let from = ui.max_rect().left() + 6.0;
+        let room = if links.is_empty() { 80.0 } else { 80.0 + 2.0 * crate::memos::LINK_ROOM };
+        let width = (PAGE_WIDTH * z).min(ui.available_width() - room).max(120.0);
         let margin = ((ui.available_width() - width) / 2.0).max(0.0);
         ui.horizontal_top(|ui| {
             ui.add_space(margin);
@@ -1252,6 +1255,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
                 ui.add_space(lead);
                 let drawn = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
                 marked = crate::memos::draw_marks(ui, &drawn.lines, &marks, picked);
+                linked = crate::memos::draw_links(ui, (&drawn.lines, &marks), &links, from, lang);
                 (action, positions) = (drawn.action, drawn.positions);
                 ui.add_space(48.0 * z);
                 if jump == Some(Jump::Bottom) {
@@ -1262,6 +1266,9 @@ fn view(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     });
     if let Some(id) = marked {
         crate::memos::pick(app, id);
+    }
+    if let Some(asked) = linked {
+        crate::memos::link_asked(app, asked);
     }
     // The first block in view, for a zoom to keep there; one to keep there goes to the top once
     // this frame has placed the blocks at the new zoom.
@@ -1350,16 +1357,19 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     }
     let (mut action, mut positions) = (None, Vec::new());
     let (marks, picked) = (crate::memos::marks_of(app), app.memos.picked);
-    let mut marked = None;
+    let links = crate::memos::links_of(app);
+    let (mut marked, mut linked) = (None, None);
+    let from = right.left() + 4.0;
     scroll.show(&mut right_ui, |ui| {
-        // Room on the left for the memos' marks.
+        // Room on the left for the memos' marks and the links.
         ui.horizontal_top(|ui| {
-            ui.add_space(MARKS_ROOM);
+            ui.add_space(MARKS_ROOM + if links.is_empty() { 0.0 } else { crate::memos::LINK_ROOM });
             ui.vertical(|ui| {
                 ui.set_width((ui.available_width() - 4.0).max(60.0));
                 ui.add_space(lead);
                 let drawn = preview::show(ui, &blocks, &look, &mut app.doc_view.diagrams, &mut app.doc_view.heights);
                 marked = crate::memos::draw_marks(ui, &drawn.lines, &marks, picked);
+                linked = crate::memos::draw_links(ui, (&drawn.lines, &marks), &links, from, lang);
                 (action, positions) = (drawn.action, drawn.positions);
                 ui.add_space(48.0 * z);
             });
@@ -1367,6 +1377,9 @@ fn edit(app: &mut SheetApp, ui: &mut Ui, z: f32, t: &Tokens) {
     });
     if let Some(id) = marked {
         crate::memos::pick(app, id);
+    }
+    if let Some(asked) = linked {
+        crate::memos::link_asked(app, asked);
     }
     app.doc_view.positions = positions;
     ui.allocate_rect(area, Sense::hover());
@@ -1387,6 +1400,7 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, action: Option<preview::Action>,
         }
         Some(preview::Action::Link(target)) => follow_link(app, ctx, &target),
         Some(preview::Action::Memo(line)) => crate::memos::start(app, line),
+        Some(preview::Action::LinkFile(line)) => crate::memos::start_link(app, line),
         Some(preview::Action::Goto(line)) if mode != Mode::View => {
             app.doc_view.goto_line = Some(line);
             app.doc_view.focus_editor = true;

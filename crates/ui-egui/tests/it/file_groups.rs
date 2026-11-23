@@ -273,6 +273,7 @@ fn the_memo_panel_lists_the_groups_other_files_and_goes_to_them() {
         quote: "# b".into(),
         text: "Rename this heading".into(),
         created: "2026-11-05 15:00".into(),
+        ..Default::default()
     });
     let md = h.state().session.windows()[1].id;
     h.state_mut().enter_window(md);

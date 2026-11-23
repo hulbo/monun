@@ -25,8 +25,10 @@ use crate::projects;
 pub const FOLDER: &str = "memos";
 pub const FILE: &str = "memos.json";
 
-/// The memo file format's version.
-const VERSION: u32 = 1;
+/// The memo file format's version: 2 once it holds a link (which a 모눈 of version 1 can't read,
+/// so it leaves the file alone rather than write it back without them), else 1.
+const VERSION: u32 = 2;
+const VERSION_WITHOUT_LINKS: u32 = 1;
 
 /// How often the file is looked at for a change made outside 모눈, in milliseconds.
 const CHECK_MS: f64 = 2000.0;
@@ -74,6 +76,9 @@ struct StoredMemo {
     quote: String,
     text: String,
     created: String,
+    /// The file a link goes to: under the root, relative to it (with `/`); elsewhere, its path.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    link: String,
 }
 
 /// Where the memos of `root` are kept.
@@ -106,6 +111,7 @@ fn parse(root: &str, text: &str) -> Result<Vec<DocMemo>, String> {
             quote: m.quote,
             text: m.text,
             created: m.created,
+            link: if m.link.trim().is_empty() { String::new() } else { projects::resolve(root, m.link.trim()) },
         }));
     }
     Ok(out)
@@ -116,13 +122,15 @@ fn parse(root: &str, text: &str) -> Result<Vec<DocMemo>, String> {
 fn render(root: &str, memos: &[DocMemo]) -> Option<String> {
     let mut files: BTreeMap<String, Vec<StoredMemo>> = BTreeMap::new();
     for m in memos {
-        let stored = StoredMemo { id: m.id, line: m.line, quote: m.quote.clone(), text: m.text.clone(), created: m.created.clone() };
+        let link = if m.link.is_empty() { String::new() } else { projects::stored(root, &m.link) };
+        let stored = StoredMemo { id: m.id, line: m.line, quote: m.quote.clone(), text: m.text.clone(), created: m.created.clone(), link };
         files.entry(projects::stored(root, &m.path)).or_default().push(stored);
     }
     for list in files.values_mut() {
         list.sort_by_key(|m| m.id);
     }
-    let mut text = serde_json::to_string_pretty(&MemoFile { monun: VERSION, memos: files }).ok()?;
+    let monun = if memos.iter().any(|m| !m.link.is_empty()) { VERSION } else { VERSION_WITHOUT_LINKS };
+    let mut text = serde_json::to_string_pretty(&MemoFile { monun, memos: files }).ok()?;
     text.push('\n');
     Some(text)
 }
@@ -357,10 +365,10 @@ fn next_id(memos: &[DocMemo], ui_max: u64) -> u64 {
 /// Keeps a new memo in the root's file, when it is on a file under the root, with an id after every
 /// memo's (the file's as it is now, a git pull's too); returns its id. It is given back (for
 /// `ui.json`) otherwise: no root, a file elsewhere, a memo file 모눈 can't read or write.
-pub(crate) fn add(app: &mut SheetApp, memo: DocMemo) -> Result<u64, DocMemo> {
+pub(crate) fn add(app: &mut SheetApp, memo: DocMemo) -> Result<u64, Box<DocMemo>> {
     ensure(app);
     if !takes(app, &memo.path) {
-        return Err(memo);
+        return Err(Box::new(memo));
     }
     let mut kept = memo.clone();
     match commit(app, |memos, ui_max| {
@@ -376,7 +384,7 @@ pub(crate) fn add(app: &mut SheetApp, memo: DocMemo) -> Result<u64, DocMemo> {
                 let lang = app.ui.language;
                 tell(app, COULD_NOT_SAVE, &format!("{e}\n\n{}", lang.tr(KEPT_HERE)));
             }
-            Err(memo)
+            Err(Box::new(memo))
         }
     }
 }
@@ -484,7 +492,7 @@ mod tests {
     use super::*;
 
     fn memo(id: u64, path: &str, text: &str) -> DocMemo {
-        DocMemo { id, path: path.into(), line: 2, quote: "First".into(), text: text.into(), created: "2026-11-11 10:00".into() }
+        DocMemo { id, path: path.into(), line: 2, quote: "First".into(), text: text.into(), created: "2026-11-11 10:00".into(), ..DocMemo::default() }
     }
 
     #[test]
@@ -510,9 +518,24 @@ mod tests {
     }
 
     #[test]
+    fn a_link_is_kept_relative_to_the_root_and_marks_the_file_for_this_version() {
+        let root = std::env::temp_dir().join("monun-memo-links").to_string_lossy().into_owned();
+        let md = projects::resolve(&root, "docs/guide.md");
+        let plain = render(&root, &[memo(1, &md, "a memo")]).unwrap();
+        assert!(plain.contains("\"monun\": 1") && !plain.contains("link"), "a file without links stays readable by version 1: {plain}");
+        let inside = DocMemo { link: projects::resolve(&root, "api/orders.http"), ..memo(2, &md, "") };
+        let outside = DocMemo { link: "/elsewhere/sheet.xlsx".into(), ..memo(3, &md, "") };
+        let text = render(&root, &[memo(1, &md, "a memo"), inside.clone(), outside.clone()]).unwrap();
+        assert!(text.contains("\"monun\": 2") && text.contains("\"link\": \"api/orders.http\""), "{text}");
+        let back = parse(&root, &text).unwrap();
+        assert_eq!(back.iter().find(|m| m.id == 2).map(|m| m.link.as_str()), Some(inside.link.as_str()));
+        assert_eq!(back.iter().find(|m| m.id == 3).map(|m| m.link.as_str()), Some(outside.link.as_str()));
+    }
+
+    #[test]
     fn a_file_that_isnt_a_memo_file_is_refused() {
         let root = "/r";
-        assert!(parse(root, r#"{"monun": 2, "memos": {}}"#).is_err(), "a newer version's");
+        assert!(parse(root, r#"{"monun": 3, "memos": {}}"#).is_err(), "a newer version's");
         assert!(parse(root, r#"{"monun": 1, "groups": []}"#).is_err(), "a project's");
         assert!(parse(root, "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> theirs\n").is_err(), "a git conflict");
         assert_eq!(parse(root, r#"{"monun": 1, "memos": {}}"#), Ok(vec![]));

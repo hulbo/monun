@@ -21,6 +21,8 @@ pub enum Action {
     Goto(usize),
     /// Put a memo on the paragraph starting on this line.
     Memo(usize),
+    /// Link the paragraph starting on this line to a file.
+    LinkFile(usize),
 }
 
 /// How to draw: the zoom, the theme, the language, the fields' values and the text being looked
@@ -76,7 +78,7 @@ pub struct Shown {
 }
 
 /// An element's clicks: a double-click goes to its line in the editor, a right click offers Add
-/// Memo on it. Its place is kept for the memos' marks.
+/// Memo and Link to File on it. Its place is kept for the memos' marks.
 fn clicks(resp: &egui::Response, line: usize, cx: &Cx, out: &mut Out) {
     if resp.double_clicked() {
         out.action = Some(Action::Goto(line));
@@ -88,6 +90,11 @@ fn clicks(resp: &egui::Response, line: usize, cx: &Cx, out: &mut Out) {
             let item = item.on_disabled_hover_text(cx.lang.tr("Save the file to put memos on its paragraphs."));
             if item.clicked() {
                 out.action = Some(Action::Memo(line));
+            }
+            let item = ui.add_enabled(saved, egui::Button::new(cx.lang.tr("Link to File…")));
+            let item = item.on_disabled_hover_text(cx.lang.tr("Save the file to put memos on its paragraphs."));
+            if item.on_hover_text(cx.lang.tr("Shows in the margin; a click opens the file, and the mouse's Back button comes back.")).clicked() {
+                out.action = Some(Action::LinkFile(line));
             }
         });
     }
