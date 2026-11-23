@@ -1015,7 +1015,7 @@ impl Dialog {
             "newFolder" => Dialog::custom(
                 "newFolder",
                 "New Folder",
-                json!({"group": p("group"), "parent": p("parent"), "path": p("path"), "doc": p("doc"), "name": ""}),
+                json!({"group": p("group"), "parent": p("parent"), "path": p("path"), "doc": p("doc"), "files": p("files"), "name": ""}),
             ),
             "renameFolder" => Dialog::custom("renameFolder", "Rename Folder", json!({"group": p("group"), "id": p("id"), "name": p("name")})),
             "deleteFolder" => Dialog::custom("deleteFolder", "Delete Folder", json!({"group": p("group"), "id": p("id")})),

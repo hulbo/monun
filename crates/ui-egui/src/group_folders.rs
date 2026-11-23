@@ -281,13 +281,15 @@ pub(crate) enum MoveTo {
     NewFolder,
 }
 
-/// The Move to Folder menu of a file or a folder: the group's top, every folder (but, for a folder
-/// moved, itself and the folders within it), and for a file New Folder…. `now` is where it is.
-pub(crate) fn move_menu(ui: &mut egui::Ui, g: &FileGroup, lang: crate::i18n::Language, now: Option<u64>, moving: Option<u64>) -> Option<MoveTo> {
+/// The Move to Folder menu of files or a folder: the group's top, every folder (but, for a folder
+/// moved, itself and the folders within it), and for files New Folder…. `now` is where they are (a
+/// place is offered unless they all are there already).
+pub(crate) fn move_menu(ui: &mut egui::Ui, g: &FileGroup, lang: crate::i18n::Language, now: &[Option<u64>], moving: Option<u64>) -> Option<MoveTo> {
     let mut chosen = None;
+    let elsewhere = |to: Option<u64>| now.iter().any(|n| *n != to);
     ui.menu_button(lang.tr("Move to Folder"), |ui| {
         ui.set_min_width(180.0);
-        if ui.add_enabled(now.is_some(), egui::Button::new(lang.tr("Top of the Group"))).clicked() {
+        if ui.add_enabled(elsewhere(None), egui::Button::new(lang.tr("Top of the Group"))).clicked() {
             chosen = Some(MoveTo::Folder(None));
         }
         for (f, depth) in g.folder_tree() {
@@ -295,7 +297,7 @@ pub(crate) fn move_menu(ui: &mut egui::Ui, g: &FileGroup, lang: crate::i18n::Lan
                 continue;
             }
             let label = format!("{}{}", "    ".repeat(depth), f.name);
-            if ui.add_enabled(now != Some(f.id), egui::Button::new(label)).clicked() {
+            if ui.add_enabled(elsewhere(Some(f.id)), egui::Button::new(label)).clicked() {
                 chosen = Some(MoveTo::Folder(Some(f.id)));
             }
         }
@@ -393,8 +395,11 @@ pub(crate) fn dialog(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open
 fn submit(app: &mut SheetApp, d: &mut Dialog, open: &mut bool, (parent, renaming): (Option<u64>, Option<u64>)) {
     let typed = d.values.get("name").and_then(Json::as_str).unwrap_or_default().to_string();
     let group = d.values.get("group").and_then(Json::as_str).unwrap_or_default().to_string();
-    let path = d.values.get("path").and_then(Json::as_str).map(str::to_string);
-    let doc = d.values.get("doc").and_then(Json::as_u64);
+    // The files it was made for: `files` (each a path, or a document never saved), or one `path` or `doc`.
+    let file = |path: Option<&Json>, doc: Option<&Json>| (path.and_then(Json::as_str).map(str::to_string), doc.and_then(Json::as_u64));
+    let mut made_for: Vec<(Option<String>, Option<u64>)> =
+        d.values.get("files").and_then(Json::as_array).map(|a| a.iter().map(|f| file(f.get("path"), f.get("doc"))).collect()).unwrap_or_default();
+    made_for.push(file(d.values.get("path"), d.values.get("doc")));
     let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) else {
         *open = false;
         return;
@@ -411,12 +416,14 @@ fn submit(app: &mut SheetApp, d: &mut Dialog, open: &mut bool, (parent, renaming
         Some(r) => g.rename_folder(r, &name),
         None => {
             let made = g.add_folder(&name, parent);
-            match (path, doc) {
-                (Some(path), _) => g.place(&path, Some(made)),
-                (None, Some(doc)) => {
-                    app.folder_pending.insert(doc, made);
+            for (path, doc) in made_for {
+                match (path, doc) {
+                    (Some(path), _) => g.place(&path, Some(made)),
+                    (None, Some(doc)) => {
+                        app.folder_pending.insert(doc, made);
+                    }
+                    (None, None) => {}
                 }
-                (None, None) => {}
             }
         }
     }

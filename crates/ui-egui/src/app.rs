@@ -94,6 +94,7 @@ impl SheetApp {
             file_tabs: false,
             group_peek: None,
             group_handle: None,
+            group_picks: Default::default(),
             history: Default::default(),
             groups_frozen: false,
             folder_pending: Default::default(),

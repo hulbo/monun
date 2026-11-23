@@ -483,6 +483,8 @@ pub struct SheetApp {
     /// Where the tucked group panel's handle stands this frame ([`panes::show`], before the files
     /// are drawn): the files' vertical scroll bars start below it ([`panes::below_handle`]).
     pub(crate) group_handle: Option<egui::Rect>,
+    /// The files picked in the group panel with Shift or Ctrl, to move, close or take out together.
+    pub(crate) group_picks: groups::Picks,
     /// The files that were in front, for the mouse's Back and Forward buttons ([`file_history`]).
     pub(crate) history: file_history::History,
     /// Quitting is asking about unsaved files: the group in use keeps the files it closes

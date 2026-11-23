@@ -819,3 +819,96 @@ fn a_file_keeps_its_folder_when_saved_under_a_new_name_and_a_new_one_goes_in_onc
     assert!(!h.state().ui.groups[0].placed.contains_key(&path(&dir, "d.md")));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Clicks the group panel's row `label` with these keys held.
+fn click_row(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, keys: egui::Modifiers) {
+    let at = h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center();
+    h.get_all_by_label(label).find(|n| n.rect().center() == at).unwrap().click_modifiers(keys);
+    h.run_steps(3);
+}
+
+/// The panel's row `label` (the one furthest right).
+fn row_center(h: &egui_kittest::Harness<'static, SheetApp>, label: &str) -> egui::Pos2 {
+    h.get_all_by_label(label).map(|n| n.rect()).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap().center()
+}
+
+#[test]
+fn files_picked_with_shift_and_ctrl_move_together() {
+    let dir = folder("picks");
+    for name in ["c.md", "d.md"] {
+        std::fs::write(dir.join(name), "# x\n").unwrap();
+    }
+    let names = ["a.xlsx", "b.md", "c.md", "d.md"];
+    let mut h = harness(&names.map(|n| path(&dir, n)));
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    // Ctrl picks c.md with d.md (the file in front); dragged above a.xlsx, both go there in their order.
+    click_row(&mut h, "c.md", egui::Modifiers::CTRL);
+    assert_eq!(h.state().session.active().unwrap().display_title(), "d.md", "a Ctrl-click doesn't show the file");
+    let (from, to) = (row_center(&h, "c.md"), row_center(&h, "a.xlsx") - egui::vec2(0.0, 8.0));
+    drag(&mut h, from, to);
+    assert_eq!(open_names(&h), ["c.md", "d.md", "a.xlsx", "b.md"]);
+
+    // Shift picks every file from the one clicked last: dragged onto a folder, they all go in.
+    panel_menu(&mut h, "Default group", "New Folder…");
+    name_folder(&mut h, "API");
+    let id = h.state().ui.groups[0].folders[0].id;
+    click_row(&mut h, "d.md", egui::Modifiers::NONE);
+    click_row(&mut h, "b.md", egui::Modifiers::SHIFT);
+    let api = |h: &egui_kittest::Harness<'static, SheetApp>| h.get_by_role_and_label(egui::accesskit::Role::Button, "API").rect().center();
+    let (from, to) = (row_center(&h, "a.xlsx"), api(&h));
+    drag(&mut h, from, to);
+    let placed = |h: &egui_kittest::Harness<'static, SheetApp>| {
+        let g = &h.state().ui.groups[0];
+        names.iter().filter(|n| g.placed.get(&path(&dir, n)) == Some(&id)).copied().collect::<Vec<_>>()
+    };
+    assert_eq!(placed(&h), ["a.xlsx", "b.md", "d.md"]);
+
+    // A file not picked, dragged, goes alone, and the others are picked no more.
+    let (from, to) = (row_center(&h, "c.md"), api(&h));
+    drag(&mut h, from, to);
+    assert_eq!(placed(&h), names);
+    // Move to Folder on a file picked moves the others picked with it.
+    click_row(&mut h, "a.xlsx", egui::Modifiers::NONE);
+    click_row(&mut h, "c.md", egui::Modifiers::CTRL);
+    move_to_folder(&mut h, "c.md", "Top of the Group");
+    assert_eq!(placed(&h), ["b.md", "d.md"]);
+    // And Close closes them all.
+    click_row(&mut h, "b.md", egui::Modifiers::NONE);
+    click_row(&mut h, "d.md", egui::Modifiers::CTRL);
+    panel_menu(&mut h, "d.md", "Close");
+    assert_eq!(open_names(&h), ["c.md", "a.xlsx"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn files_of_another_group_picked_are_taken_out_together() {
+    let dir = folder("picks-other");
+    std::fs::write(dir.join("c.md"), "# c\n").unwrap();
+    let mut h = harness(&["a.xlsx", "b.md", "c.md"].map(|n| path(&dir, n)));
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Group panel").click();
+    h.run_steps(3);
+    groups::switch(h.state_mut(), Target::New { name: "SFR002".into(), take: false });
+    h.run_steps(3);
+    // Its files shown: the arrow unfolds it.
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, "Default group").rect().left_center() + egui::vec2(10.0, 0.0);
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerMoved(arrow));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: arrow,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(2);
+    // Picked without going to the group, one by one with Ctrl.
+    click_row(&mut h, "a.xlsx", egui::Modifiers::CTRL);
+    click_row(&mut h, "c.md", egui::Modifiers::CTRL);
+    assert_eq!(h.state().ui.group, "SFR002", "a pick stays in the group in use");
+    panel_menu(&mut h, "c.md", "Remove from Group");
+    let default = h.state().ui.groups.iter().find(|g| g.name == "Default group").unwrap();
+    assert_eq!(default.files, [path(&dir, "b.md")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
