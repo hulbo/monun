@@ -3645,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "monun"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "arboard",
  "chrono",
@@ -3673,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "monun-calc"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "log",
  "monun-core",
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "monun-chart"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-calc",
  "monun-core",
@@ -3696,7 +3696,7 @@ dependencies = [
 
 [[package]]
 name = "monun-cli"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "log",
  "monun-engine",
@@ -3708,7 +3708,7 @@ dependencies = [
 
 [[package]]
 name = "monun-core"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "chrono",
  "js-sys",
@@ -3719,7 +3719,7 @@ dependencies = [
 
 [[package]]
 name = "monun-engine"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "encoding_rs",
  "image",
@@ -3743,7 +3743,7 @@ dependencies = [
 
 [[package]]
 name = "monun-formula"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-core",
  "serde",
@@ -3752,7 +3752,7 @@ dependencies = [
 
 [[package]]
 name = "monun-functions"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-core",
  "monun-numfmt",
@@ -3761,7 +3761,7 @@ dependencies = [
 
 [[package]]
 name = "monun-markdown"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "mermaid-rs-renderer",
  "pulldown-cmark",
@@ -3770,7 +3770,7 @@ dependencies = [
 
 [[package]]
 name = "monun-mcp"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "log",
  "monun-engine",
@@ -3779,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "monun-model"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-core",
  "monun-formula",
@@ -3791,18 +3791,18 @@ dependencies = [
 
 [[package]]
 name = "monun-numfmt"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-core",
 ]
 
 [[package]]
 name = "monun-pdf"
-version = "1.1.7"
+version = "1.1.8"
 
 [[package]]
 name = "monun-pptx"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "roxmltree 0.21.2",
  "zip 3.0.0",
@@ -3810,7 +3810,7 @@ dependencies = [
 
 [[package]]
 name = "monun-ui-egui"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "craft-ui",
  "craft-window",
@@ -3848,7 +3848,7 @@ dependencies = [
 
 [[package]]
 name = "monun-web"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "eframe",
  "egui",
@@ -3865,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "monun-xlsx"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "aes",
  "encoding_rs",
@@ -8829,7 +8829,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "1.1.7"
+version = "1.1.8"
 dependencies = [
  "monun-engine",
  "serde_json",
