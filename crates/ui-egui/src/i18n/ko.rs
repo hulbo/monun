@@ -1942,6 +1942,8 @@ const MORE: &[(&str, &str)] = &[
     ("Groups", "그룹"),
     ("No memos in this document yet.", "이 문서에는 아직 메모가 없습니다."),
     ("Add Memo", "메모 추가"),
+    ("Resize the request and its answer", "요청과 응답 크기 조절"),
+    ("Drag to resize; double-click to fit what the request shows.", "끌어서 크기를 바꿉니다. 두 번 클릭하면 요청 내용에 맞춥니다."),
     ("Link to File…", "파일 링크 추가…"),
     ("Link to File", "파일 링크"),
     (

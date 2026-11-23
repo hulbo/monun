@@ -45,7 +45,14 @@ const COMMON: [(&str, &str); 5] = [
 #[derive(Default)]
 pub struct State {
     tabs: HashMap<u64, Tab>,
+    /// The request's part as tall as the line under it was dragged to, in every request tab; `None`
+    /// (as at first, and after a double-click on the line): as tall as what it shows.
+    request_h: Option<f32>,
 }
+
+/// The request's part is never lower than this, and leaves the answer at least [`ANSWER_MIN`].
+const REQUEST_MIN: f32 = 60.0;
+const ANSWER_MIN: f32 = 120.0;
 
 impl State {
     /// Whether the tab of `uid` has a request on its way.
@@ -511,18 +518,27 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let counts = (query_pairs(&req.url).len(), req.headers.len() + scope.headers.len());
     section_tabs(ui, &mut section, counts, lang, &mut acts);
     ui.separator();
-    let height = (ui.available_height() * 0.45).clamp(110.0, 420.0);
-    let width = ui.available_width();
-    ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::Min), |ui| {
-        ui.set_min_size(vec2(width, height));
-        let env = body_ui::Env { lang, t: &t, base: base.as_deref(), pick: app.services.pick_any.as_deref() };
-        egui::ScrollArea::vertical().id_salt(("monun.api.request", uid)).auto_shrink([false, false]).show(ui, |ui| match section {
-            Section::Params => params(ui, &mut req, lang, &t),
-            Section::Headers => headers(ui, &mut req, &scope, lang, &t),
-            Section::Body => body_ui::show(ui, &mut req, &mut stash, &env),
-        });
+    // As tall as what it shows (a scroll bar beyond 60% of the tab), or as the line under it was
+    // dragged to: no empty band between the request and its answer.
+    let most = (ui.available_height() - ANSWER_MIN).max(REQUEST_MIN);
+    let fixed = app.api.request_h.map(|h| h.clamp(REQUEST_MIN, most));
+    let fit = (ui.available_height() * 0.6).clamp(REQUEST_MIN, most);
+    let env = body_ui::Env { lang, t: &t, base: base.as_deref(), pick: app.services.pick_any.as_deref() };
+    let scroll = egui::ScrollArea::vertical().id_salt(("monun.api.request", uid));
+    let scroll = match fixed {
+        Some(h) => scroll.min_scrolled_height(h).max_height(h).auto_shrink([false, false]),
+        None => scroll.max_height(fit).auto_shrink([false, true]),
+    };
+    let shown = scroll.show(ui, |ui| match section {
+        Section::Params => params(ui, &mut req, lang, &t),
+        Section::Headers => headers(ui, &mut req, &scope, lang, &t),
+        Section::Body => body_ui::show(ui, &mut req, &mut stash, &env),
     });
-    ui.separator();
+    // How tall it shows now (its view is as tall as it may be; what it holds may be less).
+    let now = fixed.unwrap_or_else(|| shown.content_size.y.min(shown.inner_rect.height()));
+    if let Some(h) = split_line(ui, now, (REQUEST_MIN, most), lang, &t) {
+        app.api.request_h = h;
+    }
     // The answer of the request shown (another's waits until it shows again).
     let call = app.api.tabs.get(&uid).and_then(|tab| tab.call.as_ref()).filter(|c| c.index == index);
     answer(ui, (uid, lang, &t), call, (&mut answer_view, &mut look), &mut acts);
@@ -721,6 +737,25 @@ fn scope_line(ui: &mut Ui, scope: &Scope, lang: crate::i18n::Language, t: &Token
 }
 
 /// Parameters, Headers and Body, and File Text at the right.
+/// The line between the request and its answer: dragged, it sets how tall the request's part is
+/// (`Some(Some(h))`, from `now`, within `range`); a double-click lets it fit what it shows again
+/// (`Some(None)`).
+fn split_line(ui: &mut Ui, now: f32, (low, high): (f32, f32), lang: crate::i18n::Language, t: &Tokens) -> Option<Option<f32>> {
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), egui::Sense::click_and_drag());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, lang.tr("Resize the request and its answer")));
+    let on = resp.hovered() || resp.dragged();
+    if on {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    let ink = if on { t.accent } else { t.ribbon_border };
+    ui.painter().hline(r.x_range(), r.center().y, egui::Stroke::new(if on { 2.0 } else { 1.0 }, ink));
+    let resp = resp.on_hover_text(lang.tr("Drag to resize; double-click to fit what the request shows."));
+    if resp.double_clicked() {
+        return Some(None);
+    }
+    (resp.dragged() && resp.drag_delta().y != 0.0).then(|| Some((now + resp.drag_delta().y).clamp(low, high.max(low))))
+}
+
 fn section_tabs(ui: &mut Ui, section: &mut Section, (params, headers): (usize, usize), lang: crate::i18n::Language, acts: &mut Vec<Act>) {
     ui.horizontal(|ui| {
         let count = |label: &str, n: usize| if n > 0 { format!("{} {n}", lang.tr(label)) } else { lang.tr(label).to_string() };

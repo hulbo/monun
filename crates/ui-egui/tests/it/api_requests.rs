@@ -358,9 +358,46 @@ fn folder_settings_name_environments_and_keep_each_variables_values() {
 #[test]
 fn a_request_with_a_body_opens_on_it() {
     let path = file("body-first", "post.http", "POST https://x.test/orders\nContent-Type: application/json\n\n{\"id\": 1}\n");
-    let h = harness(&path, |_| {});
+    let mut h = harness(&path, |_| {});
     assert!(h.query_by_label("x-www-form-urlencoded").is_some(), "the Body shows");
     assert!(h.query_by_label("Add Parameter").is_none());
+    // The answer follows right under it, without an empty band.
+    let splitter = |h: &H| h.get_by_role_and_label(egui::accesskit::Role::Splitter, "Resize the request and its answer").rect();
+    let body = h.get_by_role_and_label(egui::accesskit::Role::MultilineTextInput, "Body").rect();
+    let line = splitter(&h);
+    assert!(line.top() >= body.bottom() - 1.0 && line.top() - body.bottom() < 16.0, "{body:?} then {line:?}");
+    // Dragged down, the request's part is taller; a double-click fits it again.
+    let from = line.center();
+    let to = from + egui::vec2(0.0, 120.0);
+    for (pos, pressed) in [(from, true), (from + egui::vec2(0.0, 60.0), true), (to, true), (to, false)] {
+        h.input_mut().events.push(egui::Event::PointerMoved(pos));
+        if pressed && pos == from || !pressed {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+    }
+    h.run_steps(2);
+    let dragged = splitter(&h);
+    assert!((dragged.top() - (line.top() + 120.0)).abs() < 6.0, "as far as it was dragged: {line:?} → {dragged:?}");
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            let pos = dragged.center();
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+    }
+    h.run_steps(2);
+    assert!((splitter(&h).top() - line.top()).abs() < 1.0, "fitted again");
     let _ = std::fs::remove_file(&path);
     // One without a body opens on its Parameters.
     let path = file("body-first", "get.http", "GET https://x.test/orders\n");

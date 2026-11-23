@@ -176,7 +176,7 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
             }
         }
         BodyKind::Raw(k) => {
-            code_field(ui, &mut req.body, lang_of(k), (lang.tr("Body"), 12), t);
+            code_field(ui, &mut req.body, lang_of(k), (lang.tr("Body"), 6), t);
         }
         BodyKind::Binary => binary(ui, req, env),
         BodyKind::GraphQl => {
