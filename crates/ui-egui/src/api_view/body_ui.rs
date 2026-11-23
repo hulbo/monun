@@ -28,6 +28,8 @@ pub(super) struct Env<'a> {
     pub base: Option<&'a Path>,
     /// Chooses any file (the desktop's file dialog).
     pub pick: Option<&'a dyn Fn() -> Option<String>>,
+    /// The variables without a value, marked in red where `{{…}}` names them.
+    pub missing: &'a [String],
 }
 
 /// A way's place, the raw kinds sharing one.
@@ -166,7 +168,7 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
         BodyKind::FormData => form_data(ui, req, env),
         BodyKind::UrlEncoded => {
             let mut pairs = body::pairs(&req.body);
-            let mut changed = super::pairs_table(ui, ("monun.api.urlencoded", 0), &mut pairs, lang, t);
+            let mut changed = super::pairs_table(ui, ("monun.api.urlencoded", 0), &mut pairs, (lang, t), env.missing);
             if ui.button(lang.tr("Add Field")).clicked() {
                 pairs.push((String::new(), String::new()));
                 changed = true;
@@ -176,7 +178,7 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
             }
         }
         BodyKind::Raw(k) => {
-            code_field(ui, &mut req.body, lang_of(k), (lang.tr("Body"), 6), t);
+            code_field(ui, &mut req.body, lang_of(k), (lang.tr("Body"), 6), (t, env.missing));
         }
         BodyKind::Binary => binary(ui, req, env),
         BodyKind::GraphQl => {
@@ -187,12 +189,12 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
                 ui.vertical(|ui| {
                     ui.set_width(w);
                     ui.label(RichText::new(lang.tr("Query")).color(t.text_dim));
-                    changed |= code_field(ui, &mut q, Lang::Plain, (lang.tr("Query"), 12), t);
+                    changed |= code_field(ui, &mut q, Lang::Plain, (lang.tr("Query"), 12), (t, env.missing));
                 });
                 ui.vertical(|ui| {
                     ui.set_width(w);
                     ui.label(RichText::new(lang.tr("GraphQL variables")).color(t.text_dim));
-                    changed |= code_field(ui, &mut v, Lang::Json, (lang.tr("GraphQL variables"), 12), t);
+                    changed |= code_field(ui, &mut v, Lang::Json, (lang.tr("GraphQL variables"), 12), (t, env.missing));
                 });
             });
             if changed {
@@ -202,12 +204,14 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
     }
 }
 
-/// A code editor of `text` coloured as `code` reads, its rows even (Hangul too); `true` when edited.
-fn code_field(ui: &mut Ui, text: &mut String, code: Lang, (name, rows): (&str, usize), t: &Tokens) -> bool {
+/// A code editor of `text` coloured as `code` reads, its `{{…}}` marked as variables, its rows even
+/// (Hangul too); `true` when edited.
+fn code_field(ui: &mut Ui, text: &mut String, code: Lang, (name, rows): (&str, usize), (t, missing): (&Tokens, &[String])) -> bool {
     let font = mono(13.0);
     let (plain, syntax) = (t.text, t.syntax);
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let mut job = crate::code_editor::layout_job(buf.as_str(), code, &font, plain, &syntax, wrap);
+        super::mark_vars(&mut job, missing, t);
         crate::doc_view::even_code_rows(ui.ctx(), &mut job, &font);
         ui.fonts_mut(|f| f.layout_job(job))
     };
@@ -290,10 +294,9 @@ fn form_data(ui: &mut Ui, req: &mut Request, env: &Env) {
                 if f.file {
                     changed |= file_field(ui, &mut f.value, (value_w - 200.0).max(140.0), env);
                 } else {
-                    changed |= ui
-                        .add(egui::TextEdit::singleline(&mut f.value).font(mono(13.0)).desired_width(value_w).hint_text(lang.tr("Value")))
-                        .accessible_name(lang.tr("Value"))
-                        .changed();
+                    let mut marked = super::var_layouter(mono(13.0), (env.missing, t));
+                    let value = egui::TextEdit::singleline(&mut f.value).font(mono(13.0)).desired_width(value_w).hint_text(lang.tr("Value"));
+                    changed |= ui.add(value.layouter(&mut marked)).accessible_name(lang.tr("Value")).changed();
                 }
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
                     remove = Some(i);

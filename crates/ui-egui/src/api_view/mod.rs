@@ -506,7 +506,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let prepared = ready(&scope, &file_vars, (&req, base.as_deref()), crate::now_ms());
     let busy = app.api.busy(uid);
 
-    request_bar(ui, (uid, lang, &t), (&requests, index), (&mut req, &scope), (busy, &mut acts));
+    request_bar(ui, (uid, lang, &t), (&requests, index), (&mut req, &scope, &prepared.missing), (busy, &mut acts));
     ui.add_space(4.0);
     ui.add(egui::Label::new(RichText::new(format!("→ {}", prepared.shown_url)).font(mono(12.0)).color(t.text_dim)).truncate());
     if !prepared.missing.is_empty() {
@@ -523,15 +523,15 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let most = (ui.available_height() - ANSWER_MIN).max(REQUEST_MIN);
     let fixed = app.api.request_h.map(|h| h.clamp(REQUEST_MIN, most));
     let fit = (ui.available_height() * 0.6).clamp(REQUEST_MIN, most);
-    let env = body_ui::Env { lang, t: &t, base: base.as_deref(), pick: app.services.pick_any.as_deref() };
+    let env = body_ui::Env { lang, t: &t, base: base.as_deref(), pick: app.services.pick_any.as_deref(), missing: &prepared.missing };
     let scroll = egui::ScrollArea::vertical().id_salt(("monun.api.request", uid));
     let scroll = match fixed {
         Some(h) => scroll.min_scrolled_height(h).max_height(h).auto_shrink([false, false]),
         None => scroll.max_height(fit).auto_shrink([false, true]),
     };
     let shown = scroll.show(ui, |ui| match section {
-        Section::Params => params(ui, &mut req, lang, &t),
-        Section::Headers => headers(ui, &mut req, &scope, lang, &t),
+        Section::Params => params(ui, &mut req, (lang, &t), &prepared.missing),
+        Section::Headers => headers(ui, &mut req, &scope, (lang, &t), &prepared.missing),
         Section::Body => body_ui::show(ui, &mut req, &mut stash, &env),
     });
     // How tall it shows now (its view is as tall as it may be; what it holds may be less).
@@ -625,7 +625,7 @@ fn request_bar(
     ui: &mut Ui,
     (uid, lang, t): (u64, crate::i18n::Language, &Tokens),
     (requests, index): (&[&Part], usize),
-    (req, scope): (&mut Request, &Scope),
+    (req, scope, missing): (&mut Request, &Scope, &[String]),
     (busy, acts): (bool, &mut Vec<Act>),
 ) {
     ui.horizontal(|ui| {
@@ -686,7 +686,9 @@ fn request_bar(
             .accessible_name(lang.tr("Method"));
         let button_w = 84.0;
         let url_w = (ui.available_width() - button_w - 8.0).max(120.0);
-        let field = egui::TextEdit::singleline(&mut req.url).font(mono(13.5)).desired_width(url_w).hint_text("https://{{Domain}}/path");
+        let mut marked = var_layouter(mono(13.5), (missing, t));
+        let field =
+            egui::TextEdit::singleline(&mut req.url).font(mono(13.5)).desired_width(url_w).hint_text("https://{{Domain}}/path").layouter(&mut marked);
         ui.add(field).accessible_name(lang.tr("Address"));
         let size = vec2(button_w, 26.0);
         if busy {
@@ -802,9 +804,78 @@ fn with_pairs(url: &str, pairs: &[(String, String)]) -> String {
     out
 }
 
-/// A table of names and values to edit, a row's ✕ taking it out; `true` when one changed. Rows are
-/// laid out side by side (a grid would keep a field as narrow as it first was).
-pub(super) fn pairs_table(ui: &mut Ui, salt: (&str, usize), rows: &mut Vec<(String, String)>, lang: crate::i18n::Language, t: &Tokens) -> bool {
+/// Where `{{…}}` are in `text` (byte ranges, the braces included), each with its name trimmed, as
+/// [`http_file::substitute`] reads them.
+fn var_spans(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(open) = text.get(at..).and_then(|r| r.find("{{")).map(|i| at + i) {
+        let Some(close) = text.get(open + 2..).and_then(|r| r.find("}}")).map(|i| open + 2 + i) else { break };
+        let name = text.get(open + 2..close).unwrap_or_default().trim();
+        out.push((open..close + 2, name));
+        at = close + 2;
+    }
+    out
+}
+
+/// Paints the `{{…}}` of `job` as variables, as Postman marks them: in the accent colour on its
+/// tint, one without a value (`missing`) in red on a red tint.
+pub(super) fn mark_vars(job: &mut egui::text::LayoutJob, missing: &[String], t: &Tokens) {
+    let spans = var_spans(&job.text);
+    if spans.is_empty() {
+        return;
+    }
+    let (ink, tint) = (t.accent_text, t.accent_soft);
+    let (bad, bad_tint) = (t.danger, t.danger.gamma_multiply(0.18));
+    let mut sections = Vec::with_capacity(job.sections.len() + 2 * spans.len());
+    for s in std::mem::take(&mut job.sections) {
+        let (mut from, end) = (s.byte_range.start.0, s.byte_range.end.0);
+        let range = |a: usize, b: usize| egui::epaint::text::ByteIndex(a)..egui::epaint::text::ByteIndex(b);
+        let mut leading = s.leading_space;
+        let start = from;
+        for (r, name) in spans.iter().filter(|(r, _)| r.start < end && r.end > start) {
+            let (a, b) = (r.start.max(from), r.end.min(end));
+            if a > from {
+                sections.push(egui::text::LayoutSection { leading_space: leading, byte_range: range(from, a), format: s.format.clone() });
+                leading = 0.0;
+            }
+            let mut format = s.format.clone();
+            let gone = missing.iter().any(|m| m == name);
+            (format.color, format.background) = if gone { (bad, bad_tint) } else { (ink, tint) };
+            sections.push(egui::text::LayoutSection { leading_space: leading, byte_range: range(a, b), format });
+            leading = 0.0;
+            from = b;
+        }
+        if from < end {
+            sections.push(egui::text::LayoutSection { leading_space: leading, byte_range: range(from, end), format: s.format });
+        }
+    }
+    job.sections = sections;
+}
+
+/// Lays out a one-line field's text in `font`, its `{{…}}` marked as variables (for
+/// `TextEdit::layouter`).
+pub(super) fn var_layouter<'a>(
+    font: FontId,
+    (missing, t): (&'a [String], &'a Tokens),
+) -> impl FnMut(&Ui, &dyn egui::TextBuffer, f32) -> Arc<egui::Galley> + 'a {
+    move |ui: &Ui, buf: &dyn egui::TextBuffer, _wrap: f32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(buf.as_str().to_string(), font.clone(), t.text);
+        mark_vars(&mut job, missing, t);
+        ui.fonts_mut(|f| f.layout_job(job))
+    }
+}
+
+/// A table of names and values to edit, a row's ✕ taking it out, its `{{…}}` marked as variables
+/// (those without a value, `missing`, in red); `true` when one changed. Rows are laid out side by
+/// side (a grid would keep a field as narrow as it first was).
+pub(super) fn pairs_table(
+    ui: &mut Ui,
+    salt: (&str, usize),
+    rows: &mut Vec<(String, String)>,
+    (lang, t): (crate::i18n::Language, &Tokens),
+    missing: &[String],
+) -> bool {
     let mut changed = false;
     let mut remove = None;
     let name_w = 200.0;
@@ -821,8 +892,12 @@ pub(super) fn pairs_table(ui: &mut Ui, salt: (&str, usize), rows: &mut Vec<(Stri
     for (i, (k, v)) in rows.iter_mut().enumerate() {
         ui.push_id((salt, i), |ui| {
             ui.horizontal(|ui| {
-                changed |= ui.add(egui::TextEdit::singleline(k).font(mono(13.0)).desired_width(name_w)).accessible_name(lang.tr("Name")).changed();
-                changed |= ui.add(egui::TextEdit::singleline(v).font(mono(13.0)).desired_width(value_w)).accessible_name(lang.tr("Value")).changed();
+                let mut marked = var_layouter(mono(13.0), (missing, t));
+                let name = egui::TextEdit::singleline(k).font(mono(13.0)).desired_width(name_w).layouter(&mut marked);
+                changed |= ui.add(name).accessible_name(lang.tr("Name")).changed();
+                let mut marked = var_layouter(mono(13.0), (missing, t));
+                let value = egui::TextEdit::singleline(v).font(mono(13.0)).desired_width(value_w).layouter(&mut marked);
+                changed |= ui.add(value).accessible_name(lang.tr("Value")).changed();
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
                     remove = Some(i);
                 }
@@ -836,9 +911,9 @@ pub(super) fn pairs_table(ui: &mut Ui, salt: (&str, usize), rows: &mut Vec<(Stri
     changed
 }
 
-fn params(ui: &mut Ui, req: &mut Request, lang: crate::i18n::Language, t: &Tokens) {
+fn params(ui: &mut Ui, req: &mut Request, (lang, t): (crate::i18n::Language, &Tokens), missing: &[String]) {
     let mut pairs = query_pairs(&req.url);
-    let mut changed = pairs_table(ui, ("monun.api.params", 0), &mut pairs, lang, t);
+    let mut changed = pairs_table(ui, ("monun.api.params", 0), &mut pairs, (lang, t), missing);
     if ui.button(lang.tr("Add Parameter")).clicked() {
         pairs.push((String::new(), String::new()));
         changed = true;
@@ -848,7 +923,7 @@ fn params(ui: &mut Ui, req: &mut Request, lang: crate::i18n::Language, t: &Token
     }
 }
 
-fn headers(ui: &mut Ui, req: &mut Request, scope: &Scope, lang: crate::i18n::Language, t: &Tokens) {
+fn headers(ui: &mut Ui, req: &mut Request, scope: &Scope, (lang, t): (crate::i18n::Language, &Tokens), missing: &[String]) {
     if !scope.headers.is_empty() {
         let own: Vec<String> = req.headers.iter().map(|(k, _)| k.trim().to_ascii_lowercase()).collect();
         egui::Grid::new("monun.api.folder_headers").num_columns(3).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
@@ -869,7 +944,7 @@ fn headers(ui: &mut Ui, req: &mut Request, scope: &Scope, lang: crate::i18n::Lan
         });
         ui.add_space(6.0);
     }
-    pairs_table(ui, ("monun.api.headers", 0), &mut req.headers, lang, t);
+    pairs_table(ui, ("monun.api.headers", 0), &mut req.headers, (lang, t), missing);
     ui.horizontal(|ui| {
         if ui.button(lang.tr("Add Header")).clicked() {
             req.headers.push((String::new(), String::new()));
@@ -1230,6 +1305,29 @@ fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, envs:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn variables_are_marked_and_one_without_a_value_in_red() {
+        let t = Tokens::light();
+        let text = "https://{{ Domain }}/a/{{Nope}}?at={{$timestamp}}&x={{";
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), mono(13.0), t.text);
+        mark_vars(&mut job, &["Nope".to_string()], &t);
+        let parts: Vec<(&str, egui::Color32)> =
+            job.sections.iter().map(|s| (text.get(s.byte_range.start.0..s.byte_range.end.0).unwrap_or_default(), s.format.color)).collect();
+        assert_eq!(
+            parts,
+            [
+                ("https://", t.text),
+                ("{{ Domain }}", t.accent_text),
+                ("/a/", t.text),
+                ("{{Nope}}", t.danger),
+                ("?at=", t.text),
+                ("{{$timestamp}}", t.accent_text),
+                ("&x={{", t.text),
+            ]
+        );
+        assert!(job.sections.iter().filter(|s| s.format.color != t.text).all(|s| s.format.background != egui::Color32::TRANSPARENT));
+    }
 
     #[test]
     fn a_request_reads_the_innermost_folders_values_and_its_own_headers_win() {
