@@ -354,3 +354,17 @@ fn folder_settings_name_environments_and_keep_each_variables_values() {
     assert!(json.contains("\"envs\":[\"Dev2\",\"Local\"]") && json.contains("\"byEnv\":{\"Dev2\":"), "{json}");
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_request_with_a_body_opens_on_it() {
+    let path = file("body-first", "post.http", "POST https://x.test/orders\nContent-Type: application/json\n\n{\"id\": 1}\n");
+    let h = harness(&path, |_| {});
+    assert!(h.query_by_label("x-www-form-urlencoded").is_some(), "the Body shows");
+    assert!(h.query_by_label("Add Parameter").is_none());
+    let _ = std::fs::remove_file(&path);
+    // One without a body opens on its Parameters.
+    let path = file("body-first", "get.http", "GET https://x.test/orders\n");
+    let h = harness(&path, |_| {});
+    assert!(h.query_by_label("Add Parameter").is_some());
+    let _ = std::fs::remove_file(&path);
+}

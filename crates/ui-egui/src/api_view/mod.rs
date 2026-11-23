@@ -59,6 +59,10 @@ struct Tab {
     /// Which request of the file shows (its place among them).
     request: usize,
     section: Section,
+    /// The section was chosen by hand; else each request shows its Body when it has one, its
+    /// Parameters otherwise. The request it was chosen for, so a body emptied stays in view.
+    section_picked: bool,
+    section_for: Option<usize>,
     answer_view: AnswerView,
     /// The file's text shows as it is, to edit by hand.
     raw: bool,
@@ -474,6 +478,10 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
         tab.work = Some(Work { text: text.clone(), index, request: requests.get(index).map(|p| p.request.clone()).unwrap_or_default() });
     }
     let mut req = tab.work.as_ref().map(|w| w.request.clone()).unwrap_or_default();
+    if !tab.section_picked && tab.section_for != Some(index) {
+        tab.section = if req.body.trim().is_empty() { Section::Params } else { Section::Body };
+        tab.section_for = Some(index);
+    }
     let (mut section, mut answer_view) = (tab.section, tab.answer_view);
     let mut look = Look { format: tab.format, as_it_came: tab.as_it_came, wrap: tab.wrap };
     let mut stash = std::mem::take(&mut tab.stash);
@@ -521,6 +529,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
 
     if let Some(tab) = app.api.tabs.get_mut(&uid) {
         tab.request = index;
+        tab.section_picked |= tab.section != section;
         tab.section = section;
         tab.answer_view = answer_view;
         (tab.format, tab.as_it_came, tab.wrap) = (look.format, look.as_it_came, look.wrap);
