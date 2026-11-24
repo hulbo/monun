@@ -22,6 +22,7 @@ pub mod doc_windows;
 pub mod editor;
 pub mod file_history;
 pub mod file_tabs;
+mod find_file;
 mod floating_pictures;
 pub mod fonts;
 pub mod formula_bar;

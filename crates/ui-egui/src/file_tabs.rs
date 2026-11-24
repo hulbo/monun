@@ -15,17 +15,23 @@ use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
 /// Ctrl+Tab and Ctrl+Shift+Tab show the next and previous file (in tab order, round the end),
-/// and Ctrl+F4 closes the one in front, as in Visual Studio and Excel. Taken before anything else
-/// sees them, so the document editor never types a tab for Ctrl+Tab.
+/// and Ctrl+F4 closes the one in front, as in Visual Studio and Excel; Ctrl+Shift+R finds a file of
+/// any group, as Eclipse's Open Resource ([`crate::find_file`]). Taken before anything else sees
+/// them, so the document editor never types a tab for Ctrl+Tab.
 pub(crate) fn keys(app: &mut SheetApp, ctx: &egui::Context) {
     if app.dialog.is_some() || app.backstage.is_some() {
         return;
     }
-    let (back, next, close) = ctx.input_mut(|i| {
+    let (back, next, close, find) = ctx.input_mut(|i| {
         let back = i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Tab);
         let next = i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab);
-        (back, next, i.consume_key(egui::Modifiers::CTRL, egui::Key::F4))
+        let find = i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
+        (back, next, i.consume_key(egui::Modifiers::CTRL, egui::Key::F4), find)
     });
+    if find {
+        app.open_dialog("findFile", json!({}));
+        return;
+    }
     let windows: Vec<u64> = app.session.windows().iter().map(|w| w.id).collect();
     let at = app.session.active_window().and_then(|a| windows.iter().position(|w| *w == a));
     if let Some(at) = at

@@ -139,6 +139,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "zoom" => 220.0,
         "pasteSpecial" => 480.0,
         "folderSettings" => 820.0,
+        "findFile" => 620.0,
         _ => 380.0,
     };
     // In the middle of the window each time it opens (egui would bring it back where it was last,
@@ -350,6 +351,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "newProject" | "renameProject" | "deleteProject" => crate::projects::dialog(app, ui, &mut d, &mut open),
                 "siteLink" => crate::web_view::dialog(app, ui, &mut d, &mut open),
                 "newFile" => crate::file_tabs::new_file_dialog(app, ui, &mut d, &mut open),
+                "findFile" => crate::find_file::dialog(app, ui, &mut d, &mut open),
                 "linkFile" => crate::memos::link_dialog(app, ui, &mut d, &mut open),
                 "saveChanges" => {
                     // The window title asks the question; the window bar names the workbook.

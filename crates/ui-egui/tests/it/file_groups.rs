@@ -913,3 +913,59 @@ fn files_of_another_group_picked_are_taken_out_together() {
     assert_eq!(default.files, [path(&dir, "b.md")]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ctrl_shift_r_finds_a_file_of_any_group_and_goes_to_it_with_its_group() {
+    use egui::accesskit::Role;
+    let dir = folder("find-file");
+    for name in ["c.md", "d.sql"] {
+        std::fs::write(dir.join(name), "x\n").unwrap();
+    }
+    let mut h = harness(&[path(&dir, "a.xlsx"), path(&dir, "b.md")]);
+    // Another group keeps c.md and d.sql; Default group is in use.
+    groups::switch(h.state_mut(), Target::New { name: "Orders".into(), take: false });
+    for name in ["c.md", "d.sql"] {
+        h.state_mut().run("file.open", json!({"path": path(&dir, name)})).unwrap();
+    }
+    h.run_steps(3);
+    groups::switch(h.state_mut(), Target::Group("Default group".into()));
+    h.run_steps(3);
+    assert_eq!(open_names(&h), ["a.xlsx", "b.md"]);
+    // Ctrl+Shift+R: every group's files, the name typed narrowing them.
+    h.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("findFile"));
+    for name in ["a.xlsx", "b.md", "c.md", "d.sql"] {
+        assert!(h.query_by_role_and_label(Role::ListItem, name).is_some(), "{name} listed");
+    }
+    h.get_by_role_and_label(Role::TextInput, "File name").type_text(".sql");
+    h.run_steps(2);
+    assert!(h.query_by_role_and_label(Role::ListItem, "b.md").is_none(), "narrowed");
+    // Enter: its group opens, with it in front.
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().ui.group, "Orders");
+    assert_eq!(h.state().session.active().unwrap().display_title(), "d.sql");
+    // A file of the group in use comes to the front without leaving it.
+    h.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "File name").type_text("c.md");
+    h.run_steps(2);
+    h.get_all_by_label("Open").last().unwrap().click();
+    h.run_steps(4);
+    assert_eq!(h.state().ui.group, "Orders");
+    assert_eq!(h.state().session.active().unwrap().display_title(), "c.md");
+    // Down picks the next found (the group in use's come first): b.md, back in Default group.
+    h.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "File name").type_text(".md");
+    h.run_steps(2);
+    h.key_press(egui::Key::ArrowDown);
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().ui.group, "Default group");
+    assert_eq!(h.state().session.active().unwrap().display_title(), "b.md");
+    let _ = std::fs::remove_dir_all(&dir);
+}
