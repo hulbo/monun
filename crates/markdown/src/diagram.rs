@@ -142,8 +142,66 @@ fn laid_out(
         // Rows and frames opened up where they met.
         sequence::tidy(source, &graph, &mut layout, options.theme.font_size);
     }
+    if graph.kind == DiagramKind::Kanban {
+        kanban(&mut layout);
+    }
     readable_text(&mut layout);
     Ok((layout, config, graph.kind))
+}
+
+/// The room around a kanban board's cards: within a column, before its title, between the title
+/// and the first card, between cards, below the last; and between columns.
+const KANBAN_PAD_X: f32 = 10.0;
+const KANBAN_TITLE_TOP: f32 = 12.0;
+const KANBAN_TITLE_GAP: f32 = 12.0;
+const KANBAN_CARD_GAP: f32 = 8.0;
+const KANBAN_PAD_BOTTOM: f32 = 10.0;
+const KANBAN_COLUMN_GAP: f32 = 12.0;
+
+/// A kanban board laid out as Mermaid draws one: each column's cards as wide as the column, below
+/// its title with room between (the renderer started the first card where the title is drawn), a
+/// little apart from each other, and every column as tall as the tallest.
+fn kanban(layout: &mut mermaid_rs_renderer::Layout) {
+    if !layout.edges.is_empty() || layout.subgraphs.is_empty() {
+        return;
+    }
+    let origin = 6.0;
+    let mut x = origin;
+    let mut bottom = origin;
+    // Left to right as the renderer put them (the board's order; its list of columns is in another).
+    let mut order: Vec<usize> = (0..layout.subgraphs.len()).collect();
+    order.sort_by(|a, b| {
+        let at = |i: &usize| layout.subgraphs.get(*i).map_or(0.0, |s| s.x);
+        at(a).total_cmp(&at(b))
+    });
+    for i in order {
+        let Some(sub) = layout.subgraphs.get_mut(i) else { continue };
+        let ids: Vec<String> = sub.nodes.iter().filter(|id| layout.nodes.contains_key(*id)).cloned().collect();
+        if ids.is_empty() {
+            continue;
+        }
+        let widest = ids.iter().filter_map(|id| layout.nodes.get(id)).map(|n| n.width).fold(sub.label_block.width, f32::max);
+        let title = if sub.label.trim().is_empty() { 0.0 } else { sub.label_block.height + KANBAN_TITLE_GAP };
+        let mut y = origin + KANBAN_TITLE_TOP + title;
+        for (i, id) in ids.iter().enumerate() {
+            if let Some(n) = layout.nodes.get_mut(id) {
+                if i > 0 {
+                    y += KANBAN_CARD_GAP;
+                }
+                (n.x, n.y, n.width) = (x + KANBAN_PAD_X, y, widest);
+                y += n.height;
+            }
+        }
+        (sub.x, sub.y, sub.width) = (x, origin, widest + 2.0 * KANBAN_PAD_X);
+        sub.height = y + KANBAN_PAD_BOTTOM - origin;
+        bottom = bottom.max(y + KANBAN_PAD_BOTTOM);
+        x += sub.width + KANBAN_COLUMN_GAP;
+    }
+    for sub in layout.subgraphs.iter_mut().filter(|s| s.width > 0.0) {
+        sub.height = bottom - origin;
+    }
+    layout.width = x - KANBAN_COLUMN_GAP + origin;
+    layout.height = bottom + origin;
 }
 
 /// Each table (an ER diagram's entity with columns) as tall as its title and rows as the renderer
@@ -847,6 +905,37 @@ mod tests {
             assert_eq!(image.rgba.len(), image.width as usize * image.height as usize * 4);
             assert!(image.rgba.chunks(4).any(|px| px[3] > 0), "{source}: something is drawn");
         }
+    }
+
+    #[test]
+    fn a_kanban_columns_cards_sit_below_its_title_as_wide_as_the_column() {
+        let source = "kanban\n  done[✅ 완료 3]\n    a1[요구사항 정리]\n    a2[화면 설계 · 12칸]\n    a3[개발 서버 배포와 데이터 점검 11-17]\n  doing[🔄 진행 중 1]\n    b1[주문 화면]\n  todo[⬜ 남음 2]\n    c1[운영 배포]\n    c2[인수인계]";
+        let (layout, _, kind) = laid_out(source, &RenderOptions::default()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(kind, DiagramKind::Kanban);
+        let heights: Vec<f32> = layout.subgraphs.iter().map(|s| s.height).collect();
+        assert!(heights.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5), "every column as tall: {heights:?}");
+        let mut columns: Vec<&mermaid_rs_renderer::SubgraphLayout> = layout.subgraphs.iter().collect();
+        columns.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let titles: Vec<&str> = columns.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(titles, ["✅ 완료 3", "🔄 진행 중 1", "⬜ 남음 2"], "in the board's order");
+        for pair in columns.windows(2) {
+            assert!(pair[1].x >= pair[0].x + pair[0].width + 8.0, "columns apart");
+        }
+        for sub in &layout.subgraphs {
+            let title_bottom = sub.y + 12.0 + sub.label_block.height;
+            let cards: Vec<&mermaid_rs_renderer::NodeLayout> = sub.nodes.iter().filter_map(|id| layout.nodes.get(id)).collect();
+            let first = cards.first().map(|n| n.y).unwrap_or_default();
+            assert!(first >= title_bottom + 8.0, "{}: the first card at {first}, the title ends at {title_bottom}", sub.label);
+            for n in &cards {
+                assert!((n.width - (sub.width - 20.0)).abs() < 0.5, "{}: a card as wide as its column", sub.label);
+                assert!(n.x >= sub.x + 8.0 && n.y + n.height <= sub.y + sub.height - 8.0, "{}: inside it with room", sub.label);
+            }
+            for pair in cards.windows(2) {
+                assert!(pair[1].y >= pair[0].y + pair[0].height + 6.0, "{}: cards apart", sub.label);
+            }
+        }
+        assert!(layout.width >= layout.subgraphs.last().map_or(0.0, |s| s.x + s.width));
+        assert!(draws(source).width > 20);
     }
 
     #[test]
