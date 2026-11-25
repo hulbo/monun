@@ -690,9 +690,11 @@ fn cylinder_at(s: &str) -> Option<(String, usize)> {
     Some((drawing, used))
 }
 
-/// A cylinder's label (the `<text>` that follows it, centred on it) moved down to clear the top's
-/// front arc, as far as the bottom's leaves room: its opening tag rewritten, and the bytes it took.
-/// `None` when it needs no move.
+/// A cylinder's label (the `<text>` that follows it, centred on the whole shape) moved down into the
+/// middle of its body, between the top's front arc and the bottom's, with as much room above as
+/// below (a label of one or two lines sat just under the top's arc, cramped there); one that fills
+/// the body clears the top's arc as far as the bottom's leaves room. Its opening tag rewritten, and
+/// the bytes it took; `None` when it needs no move.
 fn cylinder_label(rest: &str, (cx, cy, ry, h): (f32, f32, f32, f32)) -> Option<(String, usize)> {
     let lead = rest.len() - rest.trim_start().len();
     let t = rest.get(lead..)?;
@@ -709,7 +711,10 @@ fn cylinder_label(rest: &str, (cx, cy, ry, h): (f32, f32, f32, f32)) -> Option<(
     // The first line's top and the last line's bottom, at the renderer's 1.5 line spacing.
     let first_top = y - 0.85 * size;
     let last_bottom = y + (lines as f32 - 1.0) * size * 1.5 + 0.3 * size;
-    let shift = (cy + ry + 3.0 - first_top).min(cy + h + ry - 3.0 - last_bottom);
+    // How far it may go: below the top's arc, above the bottom's.
+    let (low, high) = (cy + ry + 3.0 - first_top, cy + h + ry - 3.0 - last_bottom);
+    let middle = (cy + ry + cy + h + ry) / 2.0 - (first_top + last_bottom) / 2.0;
+    let shift = if low <= high { middle.clamp(low, high) } else { low.min(high) };
     if shift <= 0.0 {
         return None;
     }
@@ -1055,6 +1060,22 @@ mod tests {
         let words: Vec<f32> = path.split_whitespace().map(|v| v.parse().unwrap_or(f32::NAN)).collect();
         let (cy, ry) = (words.get(3).copied().unwrap_or_default(), words.get(6).copied().unwrap_or_default());
         assert!(num(text, "y") - 0.85 * num(text, "font-size") >= cy + ry, "{cy} {ry}: {text:.80}");
+        // One or two lines sit in the middle of the body: as much room above them (to the top's
+        // front arc) as below (to the bottom's).
+        for label in ["원장", "이관본<br>BACKUP_DB"] {
+            let drawn = svg(&format!("flowchart TB\n    A[(\"{label}\")] --> B[끝]"), false).unwrap_or_else(|e| panic!("{e}"));
+            let arc = drawn.find(" A ").unwrap_or_default();
+            let path = drawn.get(..arc).and_then(|head| head.rfind("<path")).and_then(|i| drawn.get(i..)).unwrap_or_default();
+            let words: Vec<f32> = path.split_whitespace().map(|v| v.parse().unwrap_or(f32::NAN)).collect();
+            let (cy, ry, bottom) =
+                (words.get(3).copied().unwrap_or_default(), words.get(6).copied().unwrap_or_default(), words.get(14).copied().unwrap_or_default());
+            let text = drawn.find("<text ").and_then(|i| drawn.get(i..)).unwrap_or_default();
+            let (y, size) = (num(text, "y"), num(text, "font-size"));
+            let lines = if label.contains("<br>") { 2.0 } else { 1.0 };
+            let above = (y - 0.85 * size) - (cy + ry);
+            let below = (bottom + ry) - (y + (lines - 1.0) * size * 1.5 + 0.3 * size);
+            assert!(above > 4.0 && (above - below).abs() < 1.0, "{label}: {above} above, {below} below ({cy} {ry} {bottom})");
+        }
         // Anything else stays as written.
         let other = "<svg><ellipse cx=\"1\" cy=\"1\" rx=\"1\" ry=\"1\"/><rect x=\"0\" y=\"0\" width=\"5\" height=\"5\"/></svg>";
         assert_eq!(cylinders(other), other);
