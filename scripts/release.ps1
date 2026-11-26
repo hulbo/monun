@@ -246,11 +246,26 @@ try {
     }
     $notes = Join-Path ([IO.Path]::GetTempPath()) "monun-$tag-notes.md"
     [IO.File]::WriteAllText($notes, ($lines -join "`n") + "`n", $utf8)
-    & $gh release create $tag $setup --repo $repo --title "모눈 $Version" --notes-file $notes --verify-tag
+    # latest.json: what an installed 모눈 reads to update itself (crates/ui-egui/src/update.rs), at
+    # releases/latest/download/latest.json. Its setup's address and SHA-256, and what changed.
+    $changes = if ($Since) { @(git log --no-merges --format='- %s' "$Since..$tag~1") -join "`n" } else { '' }
+    $latestDir = Join-Path ([IO.Path]::GetTempPath()) "monun-$tag-latest"
+    New-Item -ItemType Directory -Force $latestDir | Out-Null
+    $latest = Join-Path $latestDir 'latest.json'
+    $latestJson = [ordered]@{
+        version = $Version
+        url     = "https://github.com/$repo/releases/download/$tag/Monun-$Version-Setup.exe"
+        sha256  = $sha256
+        notes   = $changes
+        date    = (Get-Date -Format 'yyyy-MM-dd')
+    } | ConvertTo-Json
+    [IO.File]::WriteAllText($latest, $latestJson + "`n", $utf8)
+    & $gh release create $tag $setup $latest --repo $repo --title "모눈 $Version" --notes-file $notes --verify-tag
     if ($LASTEXITCODE -ne 0) {
-        Stop-Release "커밋과 태그는 올렸지만 릴리스를 만들지 못했습니다. 다시 하려면:`n  gh release create $tag `"$setup`" --repo $repo --title `"모눈 $Version`" --notes-file `"$notes`" --verify-tag"
+        Stop-Release "커밋과 태그는 올렸지만 릴리스를 만들지 못했습니다. 다시 하려면:`n  gh release create $tag `"$setup`" `"$latest`" --repo $repo --title `"모눈 $Version`" --notes-file `"$notes`" --verify-tag"
     }
     Remove-Item $notes -ErrorAction SilentlyContinue
+    Remove-Item $latestDir -Recurse -ErrorAction SilentlyContinue
     Write-Host ''
     Write-Host "릴리스 완료: https://github.com/$repo/releases/tag/$tag" -ForegroundColor Green
 }

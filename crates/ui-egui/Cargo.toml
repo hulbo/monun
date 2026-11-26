@@ -20,7 +20,7 @@ hwp = ["dep:rhwp", "dep:resvg", "dep:lopdf"]
 # says it can't show them).
 slides = ["dep:monun-pptx"]
 # API requests (.http files) sent from their tab (desktop; the web build says it needs the desktop app).
-api = ["dep:ureq"]
+api = ["dep:ureq", "dep:sha2"]
 # Mermaid blocks of document tabs drawn as diagrams (desktop; the web build shows them as code).
 diagrams = ["monun-markdown/diagrams", "monun-engine/diagrams"]
 
@@ -54,6 +54,7 @@ monun-pptx = { workspace = true, optional = true }
 resvg = { workspace = true, optional = true }
 lopdf = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 
 # Linux only, where winit reports no system theme: the desktop portal's light/dark answer (see
 # `desktop_theme.rs`). Already in the tree, with these features, through egui's own

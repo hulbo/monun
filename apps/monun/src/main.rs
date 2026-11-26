@@ -61,11 +61,15 @@ impl eframe::App for App {
             }
             apple_events::poll(&self.events, &mut self.app, ctx);
         }
-        // Files another start handed over open as tabs here, and this window comes forward.
-        let handed: Vec<Vec<String>> = self.instance.as_ref().map(|l| l.rx.try_iter().collect()).unwrap_or_default();
-        for files in handed {
-            for f in files {
+        // Files another start handed over open as tabs here, and this window comes forward; the
+        // update shortcut's start (`--update`) starts the update here.
+        let handed: Vec<single_instance::Handed> = self.instance.as_ref().map(|l| l.rx.try_iter().collect()).unwrap_or_default();
+        for h in handed {
+            for f in h.files {
                 self.app.open_path(&f);
+            }
+            if h.update {
+                monun_ui_egui::update::run_unattended(&mut self.app);
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -109,6 +113,10 @@ impl eframe::App for App {
         }
         // A clean exit: the save questions are answered, so the recovery copies go.
         self.app.finish_recovery();
+        // An update waiting for 모눈 to close: its setup runs now, and starts the new version.
+        if let Some(setup) = self.app.update.take_install() {
+            run_setup(&setup);
+        }
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -120,6 +128,41 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         std::process::exit(0);
     }
+}
+
+/// The file noting the version an update replaced, in the settings folder: the new version says it
+/// was updated, once.
+const UPDATED_FROM: &str = "updated-from.txt";
+
+/// Runs an update's setup as 모눈 ends: quietly (its progress only), and starting the new version
+/// when it is done (`/RELAUNCH=1`, see `packaging/monun.iss`). The version it replaces is noted.
+fn run_setup(setup: &std::path::Path) {
+    if let Some(dir) = config_dir() {
+        let _ = std::fs::write(dir.join(UPDATED_FROM), env!("CARGO_PKG_VERSION"));
+    }
+    match std::process::Command::new(setup).args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAUNCH=1"]).spawn() {
+        Ok(_) => log::info!("update: running {}", setup.display()),
+        Err(e) => {
+            log::error!("update: {}: {e}", setup.display());
+            if let Some(dir) = config_dir() {
+                let _ = std::fs::remove_file(dir.join(UPDATED_FROM));
+            }
+        }
+    }
+}
+
+/// The version an update replaced, if this start follows one (read once).
+fn updated_from() -> Option<String> {
+    let path = config_dir()?.join(UPDATED_FROM);
+    let from = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    Some(from.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// Whether this exe is an installed copy (its setup's uninstaller beside it), which updates itself
+/// from the releases; a build from the source checkout updates with the checkout.
+fn installed() -> bool {
+    !cfg!(debug_assertions) && std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join("unins000.exe").is_file())).unwrap_or(false)
 }
 
 fn config_dir() -> Option<std::path::PathBuf> {
@@ -414,6 +457,8 @@ fn main() -> eframe::Result<()> {
     let mut control_token: Option<String> = std::env::var("MONUN_CONTROL_TOKEN").ok();
     let mut sample: Option<String> = None;
     let mut files: Vec<String> = Vec::new();
+    // The desktop's "모눈 업데이트" shortcut: update now, without asking.
+    let mut update = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -429,6 +474,7 @@ fn main() -> eframe::Result<()> {
                 i += 1;
                 sample = Some(args.get(i).cloned().unwrap_or_else(|| "sales".into()));
             }
+            "--update" => update = true,
             a if a.starts_with("-psn_") => {}
             a => files.push(a.to_string()),
         }
@@ -438,7 +484,7 @@ fn main() -> eframe::Result<()> {
     // preferences, `--control`) keep to themselves.
     let instance_dir = config_dir().filter(|_| prefs_enabled() && control_port.is_none());
     if let Some(dir) = &instance_dir
-        && single_instance::hand_over(dir, &files)
+        && single_instance::hand_over(dir, &files, update)
     {
         return Ok(());
     }
@@ -484,6 +530,16 @@ fn main() -> eframe::Result<()> {
     let control_port = control_port;
     CONTROLLED.store(control_port.is_some(), std::sync::atomic::Ordering::Relaxed);
     load_prefs(&mut app);
+    // An installed copy updates itself from the releases; not a test run's.
+    app.update.enabled = persists() && installed();
+    if persists()
+        && let Some(from) = updated_from()
+    {
+        monun_ui_egui::update::updated_from(&mut app, &from);
+    }
+    if update {
+        monun_ui_egui::update::run_unattended(&mut app);
+    }
     // File groups are written as soon as they change, so a crash keeps them. A run that keeps
     // nothing (an agent's or a test's) starts on This PC with no working root: it never writes to
     // the user's projects.

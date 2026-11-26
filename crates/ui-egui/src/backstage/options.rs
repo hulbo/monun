@@ -78,7 +78,24 @@ fn general_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
         let label = ui.label(lang.tr("Working root folder"));
         root_picker(app, ui, lang).labelled_by(label.id);
         ui.end_row();
+        let label = ui.label(lang.tr("Updates"));
+        updates(app, ui, lang).labelled_by(label.id);
+        ui.end_row();
     });
+}
+
+/// The version, whether an installed 모눈 looks for a newer one now and then, and Check for
+/// Updates ([`crate::update`]).
+fn updates(app: &mut SheetApp, ui: &mut Ui, lang: Language) -> egui::Response {
+    ui.vertical(|ui| {
+        ui.label(lang.tr("Monun {version}").replace("{version}", crate::update::current()));
+        ui.add_enabled(app.update.enabled, egui::Checkbox::new(&mut app.ui.update_check, lang.tr("Look for a newer version now and then")))
+            .on_disabled_hover_text(lang.tr("This Monun was built from its source: it updates with the source checkout."));
+        if ui.button(lang.tr("Check for Updates")).clicked() {
+            crate::update::check_now(app, ui.ctx());
+        }
+    })
+    .response
 }
 
 /// The working root folder of projects ([`crate::projects`]): where it is, Browse… and Clear, and

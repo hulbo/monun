@@ -63,6 +63,7 @@ pub mod slides_view;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+pub mod update;
 pub mod web_view;
 pub mod widgets;
 mod window_ui;
@@ -149,6 +150,8 @@ pub struct UiState {
     /// The group panel ([`groups::panel`]) shows, whichever file is in front: it lists the files
     /// (there are no file tabs). Another pane shows in its place while that one is open.
     pub group_panel: bool,
+    /// An installed 모눈 looks for a newer version now and then (File › Options › General).
+    pub update_check: bool,
     /// The group panel is tucked into the window's edge ([`panes`]): a handle there slides it out
     /// over the files while the pointer is on it, and its pin keeps it shown again.
     pub group_tucked: bool,
@@ -235,6 +238,7 @@ impl Default for UiState {
             project_views: vec![],
             doc_views: vec![],
             group_panel: true,
+            update_check: true,
             group_tucked: false,
             group_order: groups::GroupOrder::Custom,
             file_order: groups::FileOrder::Tabs,
@@ -498,6 +502,8 @@ pub struct SheetApp {
     pub(crate) doc_paths: std::collections::HashMap<u64, Option<String>>,
     /// The API request tabs: what each shows and the request each has on its way ([`api_view`]).
     pub(crate) api: api_view::State,
+    /// Updates from the GitHub releases ([`update`]).
+    pub update: update::State,
     /// The project of the root in use, as read in this run ([`projects`]); `None` for This PC, or
     /// before it is read (a run that doesn't restore the user's files never writes to it).
     pub(crate) project_loaded: Option<projects::Loaded>,

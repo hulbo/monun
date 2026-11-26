@@ -100,6 +100,7 @@ impl SheetApp {
             folder_pending: Default::default(),
             doc_paths: Default::default(),
             api: Default::default(),
+            update: Default::default(),
             project_loaded: None,
             project_arrivals: Vec::new(),
             root_memos: None,
@@ -140,6 +141,7 @@ impl SheetApp {
 
     fn logic_pass(&mut self, ctx: &egui::Context) {
         self.ensure_text_width(ctx);
+        crate::update::tick(self, ctx);
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
         self.ui.keytip_invoke = None;

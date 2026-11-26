@@ -173,7 +173,11 @@ Cargo workspace, layered (`cargo xtask layers`): `core`/`numfmt` → `formula`/`
   `%LOCALAPPDATA%\Programs\Monun` under a fixed `AppId`, never touches `%APPDATA%\Monun`, and its
   uninstaller removes the file-type entries when they point at the installed exe. Beside the exe it
   installs the licences: `LICENSE-*`, `NOTICE`, `ATTRIBUTION.md` and `THIRD-PARTY-LICENSES.txt`,
-  which `cargo xtask third-party` writes from the crates built into monun.exe. The antivirus now and
+  which `cargo xtask third-party` writes from the crates built into monun.exe. Each release also
+  carries `latest.json` (version, setup URL, SHA-256, notes): an installed 모눈 (`unins000.exe`
+  beside it) reads it and updates itself, NanoGit's way (`crates/ui-egui/src/update.rs`; the setup
+  runs as the app exits with `/RELAUNCH=1`, and its desktop shortcut "모눈 업데이트" runs
+  `monun.exe --update`). Source builds update with `update.cmd` instead. The antivirus now and
   then stops ISCC writing the setup's icon (`EndUpdateResource failed (110)`); the script retries.
   `.cargo/config.toml` links the C runtime statically, so the exe needs no VC++ Redistributable.
 

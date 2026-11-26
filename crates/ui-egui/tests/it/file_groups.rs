@@ -969,3 +969,27 @@ fn ctrl_shift_r_finds_a_file_of_any_group_and_goes_to_it_with_its_group() {
     assert_eq!(h.state().session.active().unwrap().display_title(), "b.md");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_newer_version_is_offered_and_later_leaves_it() {
+    use monun_ui_egui::update::{Phase, Release};
+    let dir = folder("update");
+    let mut h = harness(&[path(&dir, "b.md")]);
+    // A build from the source checkout doesn't update itself: Check for Updates says so.
+    h.state_mut().open_dialog("update", json!({}));
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "nothing to show while nothing was found");
+    // An installed copy that found a newer version offers it.
+    h.state_mut().update.enabled = true;
+    let release = Release { version: "99.0.0".into(), notes: "- Something new".into(), ..Release::default() };
+    h.state_mut().update.phase = Phase::Available(release);
+    h.state_mut().open_dialog("update", json!({}));
+    h.run_steps(3);
+    assert!(h.query_by_label("Monun 99.0.0 is out.").is_some());
+    assert!(h.query_by_label("- Something new").is_some(), "with what changed");
+    h.get_all_by_label("Later").last().unwrap().click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert!(h.state_mut().update.take_install().is_none(), "nothing waits to be installed");
+    let _ = std::fs::remove_dir_all(&dir);
+}

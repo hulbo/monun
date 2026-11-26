@@ -21,17 +21,25 @@ const FILE: &str = "instance.json";
 /// The longest request read (a few hundred paths).
 const REQUEST_LIMIT: u64 = 256 * 1024;
 
-/// The running 모눈's side: the files other starts handed over, as they arrive.
+/// What another start handed over: files to open, and whether to update (the desktop's "모눈
+/// 업데이트" shortcut, `--update`).
+pub struct Handed {
+    pub files: Vec<String>,
+    pub update: bool,
+}
+
+/// The running 모눈's side: what other starts handed over, as it arrives.
 pub struct Listener {
-    pub rx: mpsc::Receiver<Vec<String>>,
+    pub rx: mpsc::Receiver<Handed>,
     file: PathBuf,
     token: String,
     /// The UI to wake when files arrive, once it exists.
     wake: Arc<Mutex<Option<egui::Context>>>,
 }
 
-/// Hands `files` to the 모눈 already running, if one is. `true` when it took them: this run ends.
-pub fn hand_over(dir: &Path, files: &[String]) -> bool {
+/// Hands `files` (and `update`, the shortcut's ask to update) to the 모눈 already running, if one
+/// is. `true` when it took them: this run ends.
+pub fn hand_over(dir: &Path, files: &[String], update: bool) -> bool {
     let Some((port, token)) = read(dir) else { return false };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else { return false };
@@ -41,7 +49,7 @@ pub fn hand_over(dir: &Path, files: &[String]) -> bool {
     // The running 모눈 has a folder of its own to start from: paths go as full ones.
     let open: Vec<String> =
         files.iter().map(|f| std::path::absolute(f).ok().and_then(|p| p.to_str().map(str::to_string)).unwrap_or_else(|| f.clone())).collect();
-    let request = json!({"token": token, "open": open}).to_string();
+    let request = json!({"token": token, "open": open, "update": update}).to_string();
     if writeln!(stream, "{request}").is_err() {
         return false;
     }
@@ -92,7 +100,7 @@ pub fn listen(dir: &Path) -> Option<Listener> {
 
 /// One request: its files are queued for the UI, which is woken, and the start that sent them is
 /// told to end.
-fn serve(stream: TcpStream, token: &str, tx: &mpsc::Sender<Vec<String>>, wake: &Mutex<Option<egui::Context>>) {
+fn serve(stream: TcpStream, token: &str, tx: &mpsc::Sender<Handed>, wake: &Mutex<Option<egui::Context>>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut line = String::new();
     if BufReader::new((&stream).take(REQUEST_LIMIT)).read_line(&mut line).is_err() {
@@ -104,7 +112,8 @@ fn serve(stream: TcpStream, token: &str, tx: &mpsc::Sender<Vec<String>>, wake: &
     }
     let files: Vec<String> =
         request.get("open").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_string).collect()).unwrap_or_default();
-    if tx.send(files).is_err() {
+    let update = request.get("update").and_then(Json::as_bool).unwrap_or(false);
+    if tx.send(Handed { files, update }).is_err() {
         return;
     }
     if let Ok(ctx) = wake.lock()
@@ -139,13 +148,16 @@ mod tests {
     fn a_second_start_hands_its_files_to_the_first() {
         let dir = std::env::temp_dir().join(format!("monun-instance-{}", std::process::id()));
         let first = listen(&dir).expect("the first start listens");
-        assert!(hand_over(&dir, &["a.xlsx".into(), "b.md".into()]), "the second start hands over");
+        assert!(hand_over(&dir, &["a.xlsx".into(), "b.md".into()], false), "the second start hands over");
         let got = first.rx.recv_timeout(Duration::from_secs(5)).expect("the files arrive");
-        assert_eq!(got.len(), 2);
-        assert!(got.iter().all(|p| Path::new(p).is_absolute()), "as full paths: {got:?}");
+        assert_eq!((got.files.len(), got.update), (2, false));
+        assert!(got.files.iter().all(|p| Path::new(p).is_absolute()), "as full paths: {:?}", got.files);
+        // The update shortcut's start asks the running one to update.
+        assert!(hand_over(&dir, &[], true));
+        assert!(first.rx.recv_timeout(Duration::from_secs(5)).expect("asked").update);
         first.close();
         assert!(!dir.join(FILE).exists(), "the file goes at exit");
-        assert!(!hand_over(&dir, &[]), "with no 모눈 running, nothing takes the files");
+        assert!(!hand_over(&dir, &[], false), "with no 모눈 running, nothing takes the files");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -155,7 +167,7 @@ mod tests {
         let first = listen(&dir).expect("listens");
         let (port, _) = read(&dir).expect("instance.json");
         std::fs::write(dir.join(FILE), json!({"port": port, "token": "wrong"}).to_string()).expect("rewrites");
-        assert!(!hand_over(&dir, &["a.xlsx".into()]), "refused");
+        assert!(!hand_over(&dir, &["a.xlsx".into()], false), "refused");
         assert!(first.rx.try_recv().is_err(), "nothing queued");
         let _ = std::fs::remove_dir_all(&dir);
     }

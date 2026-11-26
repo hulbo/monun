@@ -1029,6 +1029,7 @@ impl Dialog {
             "siteLink" => Dialog::custom("siteLink", "Site Link", json!({"url": "", "name": ""})),
             "newFile" => Dialog::custom("newFile", "New File", json!({"name": "", "folder": p("folder")})),
             "findFile" => Dialog::custom("findFile", "Find File", json!({"find": ""})),
+            "update" => Dialog::custom("update", "Update", json!({})),
             "linkFile" => Dialog::custom("linkFile", "Link to File", json!({"path": p("path"), "line": p("line"), "quote": p("quote"), "find": ""})),
             "renameProject" => Dialog::custom("renameProject", "Rename Project", json!({"name": p("name"), "was": p("name")})),
             "deleteProject" => Dialog::custom("deleteProject", "Delete Project", json!({"name": p("name")})),

@@ -30,7 +30,18 @@ cargo run --release -p monun                  # 바로 실행
 
 ### 소스로 쓰는 PC의 업데이트
 
-저장소 폴더의 `update.cmd`(바탕화면의 '모눈 업데이트' 바로가기)는 `scripts/update.ps1`을 실행합니다. origin `main`을 빨리감기로 받아 릴리스 exe를 다시 빌드하고, 모눈이 켜져 있으면 닫을 때까지 기다립니다.
+저장소 폴더의 `update.cmd`는 `scripts/update.ps1`을 실행합니다. origin `main`을 빨리감기로 받아 릴리스 exe를 다시 빌드하고, 모눈이 켜져 있으면 닫을 때까지 기다립니다. 소스에서 빌드한 모눈은 아래의 앱 안 업데이트를 하지 않습니다.
+
+### 앱 안 업데이트 (설치한 모눈)
+
+NanoGit의 방식과 같습니다(`crates/ui-egui/src/update.rs`).
+
+- 설치본(exe 옆에 설치 프로그램의 `unins000.exe`가 있는 것, `apps/monun/src/main.rs`의 `installed`)만 스스로 업데이트합니다. 디버그 빌드, 소스 빌드, `--control`·`MONUN_NO_PREFS` 실행은 확인하지 않습니다.
+- 켠 뒤 15초, 그다음 6시간마다 `https://github.com/hulbo/monun/releases/latest/download/latest.json`을 읽습니다(옵션의 '새 버전 자동 확인'으로 끔). `latest.json`이 없는 릴리스(1.1.8까지)는 새 버전이 없는 것으로 봅니다.
+- '지금 업데이트': 설치 파일을 `%TEMP%\monun-update`에 받으며 SHA-256을 확인합니다. 주소가 이 저장소의 릴리스(`https://github.com/hulbo/monun/releases/download/`)가 아니거나 SHA-256이 맞지 않으면 실행하지 않습니다. 그다음 끝내기와 같이 저장 질문을 하고, 모눈이 끝날 때(`on_exit`) 설치 파일을 `/SILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1`로 실행합니다. 설치 프로그램은 `/RELAUNCH=1`이면 설치 뒤 모눈을 다시 켭니다(`packaging/monun.iss`의 `Relaunch`).
+- 끝나기 전 버전을 `%APPDATA%\Monun\updated-from.txt`에 적어 두고, 새 버전이 켜질 때 한 번 읽어 '업데이트했습니다'를 알립니다.
+- 바탕화면의 '모눈 업데이트' 바로가기는 설치 프로그램이 만듭니다(`monun.exe --update`, 작업 `updateicon`). 묻지 않고 받아 설치합니다. 모눈이 이미 켜져 있으면 single instance가 `update`를 넘겨받아 그 모눈이 업데이트합니다.
+- 서명 대신 HTTPS와 SHA-256으로 확인합니다. 설치 파일과 `latest.json`이 같은 GitHub 릴리스에 있으므로, 저장소 권한을 가진 사람만 바꿀 수 있습니다.
 
 ## 저장소 구조
 
@@ -129,6 +140,7 @@ pwsh scripts/release.ps1 -Version 1.2.0
 2. 릴리스 빌드를 하고 `cargo xtask third-party`로 `THIRD-PARTY-LICENSES.txt`를 만듭니다.
 3. Inno Setup으로 `dist\Monun-1.2.0-Setup.exe`를 만듭니다(백신이 아이콘 쓰기를 막으면 다시 시도합니다).
 4. "모눈 1.2.0" 커밋과 `v1.2.0` 태그를 main에 올리고, 지난 릴리스 뒤의 커밋 목록으로 GitHub 릴리스를 만듭니다.
+5. 릴리스에 설치 파일과 함께 `latest.json`(버전, 설치 파일 주소, SHA-256, 변경 목록, 날짜)을 올립니다. 설치한 모눈은 이것을 보고 업데이트합니다.
 
 - `-BuildOnly`는 설치 파일만 만들고 버전 · git · GitHub는 건드리지 않습니다.
 - `target\release`의 모눈이 실행 중이면 `target\installer`에서 따로 빌드합니다.

@@ -12,6 +12,10 @@
 ; File types are not registered here: monun.exe registers itself under HKCU on every normal start
 ; (apps/monun/src/file_types.rs). The uninstaller removes those entries when they point at this
 ; copy (see [Code]).
+;
+; Updates (crates/ui-egui/src/update.rs): the installed 모눈 downloads a newer setup from the
+; releases and runs it as it closes, with /SILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1; then
+; [Run] starts the new version. The desktop's "모눈 업데이트" shortcut runs monun.exe --update.
 
 #ifndef AppVersion
   #error Pass the version: ISCC.exe /DAppVersion=x.y.z packaging\monun.iss
@@ -75,6 +79,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "updateicon"; Description: "바탕화면에 '모눈 업데이트' 바로가기 만들기 (누르면 새 버전으로 바로 업데이트)"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "monun.exe"; Flags: ignoreversion
@@ -92,13 +97,23 @@ Source: "{#ThirdParty}"; DestDir: "{app}"; DestName: "THIRD-PARTY-LICENSES.txt";
 ; Started in Documents, like the update script starts it, so file dialogs open there.
 Name: "{autoprograms}\모눈"; Filename: "{app}\monun.exe"; WorkingDir: "{userdocs}"
 Name: "{autodesktop}\모눈"; Filename: "{app}\monun.exe"; WorkingDir: "{userdocs}"; Tasks: desktopicon
+; Updates 모눈 to the latest release at once, as NanoGit's shortcut does (monun.exe --update).
+Name: "{autodesktop}\모눈 업데이트"; Filename: "{app}\monun.exe"; Parameters: "--update"; WorkingDir: "{userdocs}"; Comment: "모눈을 최신 버전으로 업데이트합니다"; Tasks: updateicon
 
 [Run]
 Filename: "{app}\monun.exe"; Description: "{cm:LaunchProgram,모눈}"; WorkingDir: "{userdocs}"; Flags: nowait postinstall skipifsilent
+; An update the app ran as it closed: the new version starts again when the setup is done.
+Filename: "{app}\monun.exe"; WorkingDir: "{userdocs}"; Flags: nowait; Check: Relaunch
 
 [Code]
 const
   AppKey = '{#RegRoot}\Classes\Applications\monun.exe';
+
+// Run by the app to update itself (/RELAUNCH=1): start the new version once installed.
+function Relaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 
 // The app's file-type entries belong to this copy when their open command runs it. Another
 // 모눈 (a build from the source checkout) may have registered itself since: then they stay.

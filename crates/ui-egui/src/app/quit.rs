@@ -58,7 +58,8 @@ impl SheetApp {
     /// can't be entered.
     pub fn answer_save_changes(&mut self, answer: SaveAnswer, quitting: bool, ctx: &egui::Context) -> bool {
         match answer {
-            SaveAnswer::Cancel => {}
+            // Quitting stops: an update waiting for it waits on.
+            SaveAnswer::Cancel => self.update.quit_cancelled(),
             SaveAnswer::DontSave => {
                 self.run_or_alert("file.close", json!({"force": true, "document": true}));
                 if quitting {
