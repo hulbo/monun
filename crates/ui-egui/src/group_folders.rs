@@ -52,7 +52,8 @@ pub struct Folder {
     pub envs: Vec<String>,
 }
 
-/// A folder's variable or header: a name and a value; a secret one shows as dots.
+/// A folder's variable or header: a name and a value; a secret one shows as dots. A variable may be
+/// out of use (`off`): kept, but not read, so a folder may hold several of one name and use one.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Setting {
@@ -60,6 +61,10 @@ pub struct Setting {
     pub value: String,
     #[serde(skip_serializing_if = "is_false")]
     pub secret: bool,
+    /// Not in use: a request doesn't read it. Of a folder's variables of one name, one at most is
+    /// in use (Folder Settings keeps it so, [`crate::api_view`]).
+    #[serde(skip_serializing_if = "is_false")]
+    pub off: bool,
     /// A variable's value in each of its folder's environments (by name), read instead of `value`
     /// while that environment is in use; one left empty reads `value`.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]

@@ -274,8 +274,8 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
                 envs.push(e.clone());
             }
         }
-        // A variable's value in the environment in use, where it has one.
-        for v in f.vars.iter().filter(|v| !v.name.trim().is_empty()) {
+        // A variable in use, its value in the environment in use where it has one.
+        for v in f.vars.iter().filter(|v| !v.off && !v.name.trim().is_empty()) {
             upsert(&mut vars, v.name.trim(), v.value_in(env.as_deref()), v.secret, false);
         }
         for h in f.headers.iter().filter(|h| !h.name.trim().is_empty()) {
@@ -1138,7 +1138,7 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     ui.label(RichText::new(lang.tr("Variables")).strong());
     ui.label(RichText::new(lang.tr("Write {{Name}} in a request's address, headers or body.")).font(theme::ui_font(12.0)).color(t.text_dim));
     let envs = work.envs.clone();
-    settings_table(ui, ("monun.api.folder_vars", id), &mut work.vars, Some(&envs), (lang, &t));
+    let typing = settings_table(ui, ("monun.api.folder_vars", id), &mut work.vars, Some(&envs), (lang, &t));
     ui.add_space(8.0);
     ui.label(RichText::new(lang.tr("Headers")).strong());
     let note = lang.tr("Every request in the folder sends these; a request's own header of the same name goes instead.");
@@ -1154,6 +1154,8 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     match crate::widgets::dialog_buttons(ui, &row) {
         Some(0) => {
             *open = false;
+            // A name still being typed is done now: one of a name in use at most.
+            one_in_use(&mut work.vars, None, typing, None);
             // Environments named once each; a variable's values only for those, and only filled.
             let mut envs: Vec<String> = Vec::new();
             for e in work.envs.iter().map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
@@ -1244,15 +1246,26 @@ fn envs_editor(ui: &mut Ui, id: u64, work: &mut Folder, (lang, t): (crate::i18n:
 }
 
 /// A folder's variables or headers to edit: name, value (dots for a hidden variable), a value for
-/// each of `envs` (a variable's; `None` for headers), Hidden, ✕.
-fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, envs: Option<&[String]>, (lang, t): (crate::i18n::Language, &Tokens)) {
+/// each of `envs` (a variable's; `None` for headers), Use and Hidden (a variable's), ✕. Of the
+/// variables of one name, one at most is in use ([`one_in_use`]). The variable whose name is being
+/// typed, if any.
+fn settings_table(
+    ui: &mut Ui,
+    salt: (&str, u64),
+    rows: &mut Vec<Setting>,
+    envs: Option<&[String]>,
+    (lang, t): (crate::i18n::Language, &Tokens),
+) -> Option<usize> {
     let secrets = envs.is_some();
     let envs = envs.unwrap_or_default();
     let mut remove = None;
+    // The name being typed, the one just typed, and the variable whose Use was just ticked.
+    let (mut typing, mut named, mut chose) = (None, None, None);
     let gap = ui.spacing().item_spacing.x;
     let name_w = if envs.is_empty() { 170.0 } else { 140.0 };
-    // The values share what the name, Hidden and ✕ leave.
-    let rest = ui.available_width() - name_w - if secrets { 64.0 } else { 0.0 } - 22.0 - gap * (envs.len() as f32 + 3.0);
+    // The values share what the name, Use, Hidden and ✕ leave.
+    let flags = if secrets { 120.0 + gap } else { 0.0 };
+    let rest = ui.available_width() - name_w - flags - 22.0 - gap * (envs.len() as f32 + 3.0);
     let value_w = (rest / (envs.len() as f32 + 1.0)).clamp(80.0, 360.0);
     if !envs.is_empty() {
         // The columns' names over them.
@@ -1270,21 +1283,47 @@ fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, envs:
     for (i, r) in rows.iter_mut().enumerate() {
         ui.push_id((salt, i), |ui| {
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut r.name).font(mono(13.0)).desired_width(name_w).hint_text(lang.tr("Name")))
+                // A variable out of use shows dim.
+                let ink = if r.off { t.text_dim } else { t.text };
+                let name = ui
+                    .add(egui::TextEdit::singleline(&mut r.name).font(mono(13.0)).text_color(ink).desired_width(name_w).hint_text(lang.tr("Name")))
                     .accessible_name(lang.tr("Name"));
+                if name.has_focus() {
+                    typing = Some(i);
+                }
+                if name.lost_focus() {
+                    named = Some(i);
+                }
                 ui.add(
-                    egui::TextEdit::singleline(&mut r.value).font(mono(13.0)).desired_width(value_w).password(r.secret).hint_text(lang.tr("Value")),
+                    egui::TextEdit::singleline(&mut r.value)
+                        .font(mono(13.0))
+                        .text_color(ink)
+                        .desired_width(value_w)
+                        .password(r.secret)
+                        .hint_text(lang.tr("Value")),
                 )
                 .accessible_name(lang.tr("Value"));
                 for e in envs {
                     let mut value = r.by_env.get(e).cloned().unwrap_or_default();
-                    let field =
-                        egui::TextEdit::singleline(&mut value).font(mono(13.0)).desired_width(value_w).password(r.secret).hint_text(e.as_str());
+                    let field = egui::TextEdit::singleline(&mut value)
+                        .font(mono(13.0))
+                        .text_color(ink)
+                        .desired_width(value_w)
+                        .password(r.secret)
+                        .hint_text(e.as_str());
                     if ui.add(field).accessible_name(format!("{} · {e}", lang.tr("Value"))).changed() {
                         r.by_env.insert(e.clone(), value);
                     }
                 }
                 if secrets {
+                    let mut on = !r.off;
+                    let tip = lang.tr("Requests read this variable. Of variables with the same name, only one is in use.");
+                    if ui.checkbox(&mut on, lang.tr("Use")).on_hover_text(tip).changed() {
+                        r.off = !on;
+                        if on {
+                            chose = Some(i);
+                        }
+                    }
                     ui.checkbox(&mut r.secret, lang.tr("Hidden")).on_hover_text(lang.tr("Show the value as dots (a password or a token)"));
                 }
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
@@ -1293,12 +1332,52 @@ fn settings_table(ui: &mut Ui, salt: (&str, u64), rows: &mut Vec<Setting>, envs:
             });
         });
     }
+    if secrets {
+        one_in_use(rows, chose, named, typing);
+    }
     if let Some(i) = remove.filter(|i| *i < rows.len()) {
         rows.remove(i);
+        return None;
     }
     let add = if secrets { "Add Variable" } else { "Add Header" };
     if ui.button(lang.tr(add)).clicked() {
         rows.push(Setting::default());
+    }
+    typing
+}
+
+/// Leaves one variable of each name in use at most; the others stay, out of use. One whose Use was
+/// just ticked (`chose`) takes its name from the others; one whose name was just typed (`named`)
+/// gives way to another of that name in use; otherwise the first in the list keeps it, so a
+/// variable added later starts out of use. The one whose name is being typed (`typing`) waits
+/// until its name is done.
+fn one_in_use(rows: &mut [Setting], chose: Option<usize>, named: Option<usize>, typing: Option<usize>) {
+    let key = |r: &Setting| r.name.trim().to_string();
+    if let Some(name) = chose.and_then(|i| rows.get(i)).filter(|r| !r.off).map(key).filter(|n| !n.is_empty()) {
+        for (j, r) in rows.iter_mut().enumerate() {
+            if Some(j) != chose && key(r) == name {
+                r.off = true;
+            }
+        }
+    }
+    if let Some(i) = named.filter(|i| Some(*i) != chose)
+        && let Some(name) = rows.get(i).filter(|r| !r.off).map(key).filter(|n| !n.is_empty())
+        && rows.iter().enumerate().any(|(j, r)| j != i && !r.off && key(r) == name)
+        && let Some(r) = rows.get_mut(i)
+    {
+        r.off = true;
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for (j, r) in rows.iter_mut().enumerate() {
+        let name = key(r);
+        if r.off || name.is_empty() || Some(j) == typing {
+            continue;
+        }
+        if seen.contains(&name) {
+            r.off = true;
+        } else {
+            seen.push(name);
+        }
     }
 }
 
@@ -1360,6 +1439,34 @@ mod tests {
         assert_eq!(r.shown_url, "https://dev.example.com/pay/C1024?a=1");
         let hidden = ready(&scope, &[], (&Request { url: "https://x/{{Token}}/{{Nope}}".into(), ..Request::default() }, None), 0.0);
         assert_eq!((hidden.shown_url.as_str(), hidden.missing.as_slice()), ("https://x/••••/{{Nope}}", ["Nope".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn one_variable_of_a_name_is_in_use() {
+        let var = |name: &str, off: bool| Setting { name: name.into(), off, ..Setting::default() };
+        let used = |rows: &[Setting]| rows.iter().map(|r| !r.off).collect::<Vec<_>>();
+        // A second URL added: it starts out of use, the first keeps it.
+        let mut rows = vec![var("URL", false), var("CI", false), var("URL", false)];
+        one_in_use(&mut rows, None, None, None);
+        assert_eq!(used(&rows), [true, true, false]);
+        // Its Use ticked: it takes the name from the first.
+        rows[2].off = false;
+        one_in_use(&mut rows, Some(2), None, None);
+        assert_eq!(used(&rows), [false, true, true]);
+        // A name being typed waits; once typed, it gives way to the one in use, even ahead of it.
+        let mut rows = vec![var("CI", false), var("URL", false)];
+        rows[0].name = "URL".into();
+        one_in_use(&mut rows, None, None, Some(0));
+        assert_eq!(used(&rows), [true, true]);
+        one_in_use(&mut rows, None, Some(0), None);
+        assert_eq!(used(&rows), [false, true]);
+        // Names are told apart as typed (trimmed); an empty one counts for none.
+        let mut rows = vec![var(" Url ", false), var("URL", false), var("", false), var("", false)];
+        one_in_use(&mut rows, None, None, None);
+        assert_eq!(used(&rows), [true, true, true, true]);
+        // Kept with the folder: out of use says so, in use says nothing (as before).
+        assert_eq!(serde_json::to_value(var("URL", true)).unwrap()["off"], true);
+        assert!(serde_json::to_value(var("URL", false)).unwrap().get("off").is_none());
     }
 
     #[test]

@@ -2136,6 +2136,11 @@ const MORE: &[(&str, &str)] = &[
     ),
     ("Don't check certificates (a development server's own)", "인증서를 검사하지 않음 (개발 서버의 자체 인증서)"),
     ("Show the value as dots (a password or a token)", "값을 점으로 가립니다 (비밀번호, 토큰)"),
+    ("Use", "사용"),
+    (
+        "Requests read this variable. Of variables with the same name, only one is in use.",
+        "요청이 이 변수를 읽습니다. 이름이 같은 변수는 하나만 사용합니다.",
+    ),
     ("The server didn't answer in time.", "서버가 제시간에 응답하지 않았습니다."),
     ("The server's name wasn't found (DNS).", "서버 이름을 찾지 못했습니다 (DNS)."),
     ("Couldn't connect to the server.", "서버에 연결하지 못했습니다."),
