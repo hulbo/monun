@@ -356,7 +356,7 @@ fn folder_settings_name_environments_and_keep_each_variables_values() {
 }
 
 #[test]
-fn variables_of_one_name_are_kept_and_the_one_in_use_is_read() {
+fn variables_of_one_name_are_kept_and_the_first_is_read() {
     let path = file(
         "var-use",
         "use.http",
@@ -370,42 +370,89 @@ fn variables_of_one_name_are_kept_and_the_one_in_use_is_read() {
         h.state_mut().open_dialog("folderSettings", json!({"group": group, "id": id}));
         h.run_steps(3);
     };
-    let used =
+    let read =
         |h: &H| h.state().ui.groups.iter().find(|g| g.name == group).unwrap().folder(id).unwrap().vars.iter().map(|v| !v.off).collect::<Vec<_>>();
-    // A second URL added: the first stays in use, the new one is out of use.
+    let note = "Of variables with the same name, one is read (the others show dim): click {{Name}} in a request to choose.";
+    // A second URL added: both kept, the first read.
     settings(&mut h);
+    assert!(h.query_by_label(note).is_none(), "no name twice yet");
     h.get_by_label("Add Variable").click();
     h.run_steps(2);
-    let uses = |h: &H| {
-        use egui_kittest::kittest::NodeT as _;
-        let mut boxes: Vec<(f32, bool)> = h
-            .get_all_by_role_and_label(egui::accesskit::Role::CheckBox, "Use")
-            .map(|n| (n.rect().top(), n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)))
-            .collect();
-        boxes.sort_by(|a, b| a.0.total_cmp(&b.0));
-        boxes.into_iter().map(|b| b.1).collect::<Vec<_>>()
-    };
-    assert_eq!(uses(&h), [true, true], "a new variable is in use");
     type_into(&mut h, "Name", 1, "URL");
-    assert_eq!(uses(&h), [true, true], "not while its name is typed");
     type_into(&mut h, "Value", 1, "http://b.test");
-    assert_eq!(uses(&h), [true, false], "once typed, the same name is out of use");
+    assert!(h.query_by_label(note).is_some(), "how one of them is chosen");
+    assert!(h.query_by_label("Use").is_none(), "no box to tick");
     h.get_by_label("OK").click();
     h.run_steps(3);
-    assert_eq!(used(&h), [true, false]);
-    assert!(h.query_by_label("→ http://a.test/x").is_some(), "the request reads the one in use");
-    // The second's Use ticked: it takes the name from the first.
+    assert_eq!(read(&h), [true, false]);
+    assert!(h.query_by_label("→ http://a.test/x").is_some(), "the request reads the first");
+    // The one read taken out: the one left is read.
     settings(&mut h);
-    let mut boxes: Vec<egui::Rect> = h.get_all_by_role_and_label(egui::accesskit::Role::CheckBox, "Use").map(|n| n.rect()).collect();
-    boxes.sort_by(|a, b| a.top().total_cmp(&b.top()));
-    let second = boxes[1].center();
-    h.get_all_by_role_and_label(egui::accesskit::Role::CheckBox, "Use").find(|n| n.rect().center() == second).unwrap().click();
+    let mut removes: Vec<egui::Rect> = h.get_all_by_label("Remove").map(|n| n.rect()).collect();
+    removes.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    let first = removes[0].center();
+    h.get_all_by_label("Remove").find(|n| n.rect().center() == first).unwrap().click();
     h.run_steps(2);
-    assert_eq!(uses(&h), [false, true]);
     h.get_by_label("OK").click();
     h.run_steps(3);
-    assert_eq!(used(&h), [false, true]);
+    assert_eq!(read(&h), [true]);
     assert!(h.query_by_label("→ http://b.test/x").is_some());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_click_on_a_variable_lists_every_variable_and_switches_it() {
+    let path = file(
+        "var-pick",
+        "pick.http",
+        "GET {{ORDER_URL}}
+",
+    );
+    let mut id = 0;
+    let vars = [("ORDER_URL", "http://a.test/1", false), ("OTHER_URL", "http://b.test/2", false), ("OTHER_URL", "http://c.test/3", false)];
+    let mut h = harness(&path, |app| {
+        id = in_folder(app, &path, &vars, &[]);
+        let group = groups::current(app);
+        let f = app.ui.groups.iter_mut().find(|g| g.name == group).unwrap().folders.iter_mut().find(|f| f.id == id).unwrap();
+        f.vars[2].off = true;
+    });
+    let group = groups::current(h.state_mut());
+    assert!(h.query_by_label("→ http://a.test/1").is_some());
+    // A click inside the {{…}} of the address.
+    let click = |h: &mut H| {
+        let address = h.get_by_label("Address").rect();
+        let at = egui::pos2(address.left() + 34.0, address.center().y);
+        h.input_mut().events.push(egui::Event::PointerMoved(at));
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+        }
+        h.run_steps(2);
+    };
+    // Every variable listed, with its value.
+    click(&mut h);
+    assert!(h.query_by_label("Switch {{ORDER_URL}} to").is_some(), "the list");
+    for (name, value, _) in vars {
+        assert!(h.query_by_label(&format!("{name}  {value}")).is_some(), "{name} {value}");
+    }
+    // Another chosen: the request names it in its place, and reads it.
+    h.get_by_label("OTHER_URL  http://b.test/2").click();
+    h.run_steps(3);
+    assert!(draft(&h).contains("GET {{OTHER_URL}}"), "{}", draft(&h));
+    assert!(h.query_by_label("→ http://b.test/2").is_some());
+    assert!(h.query_by_label("Switch {{ORDER_URL}} to").is_none(), "closed");
+    // Of one name, the one not read chosen: read from now on.
+    click(&mut h);
+    h.get_by_label("OTHER_URL  http://c.test/3").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("→ http://c.test/3").is_some());
+    let read: Vec<bool> = h.state().ui.groups.iter().find(|g| g.name == group).unwrap().folder(id).unwrap().vars.iter().map(|v| !v.off).collect();
+    assert_eq!(read, [true, false, true]);
     let _ = std::fs::remove_file(&path);
 }
 

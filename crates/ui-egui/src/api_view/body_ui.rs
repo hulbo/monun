@@ -204,8 +204,8 @@ pub(super) fn show(ui: &mut Ui, req: &mut Request, stash: &mut Stash, env: &Env)
     }
 }
 
-/// A code editor of `text` coloured as `code` reads, its `{{…}}` marked as variables, its rows even
-/// (Hangul too); `true` when edited.
+/// A code editor of `text` coloured as `code` reads, its `{{…}}` marked as variables (a click on
+/// one lists the variables to switch it to), its rows even (Hangul too); `true` when edited.
 fn code_field(ui: &mut Ui, text: &mut String, code: Lang, (name, rows): (&str, usize), (t, missing): (&Tokens, &[String])) -> bool {
     let font = mono(13.0);
     let (plain, syntax) = (t.text, t.syntax);
@@ -215,9 +215,10 @@ fn code_field(ui: &mut Ui, text: &mut String, code: Lang, (name, rows): (&str, u
         crate::doc_view::even_code_rows(ui.ctx(), &mut job, &font);
         ui.fonts_mut(|f| f.layout_job(job))
     };
-    ui.add(egui::TextEdit::multiline(text).code_editor().desired_width(f32::INFINITY).desired_rows(rows).layouter(&mut layouter))
-        .accessible_name(name)
-        .changed()
+    let field = ui
+        .add(egui::TextEdit::multiline(text).code_editor().desired_width(f32::INFINITY).desired_rows(rows).layouter(&mut layouter))
+        .accessible_name(name);
+    super::var_field(ui, &field, text) | field.changed()
 }
 
 /// A file path field and Choose File…: the path as the request writes it (relative to its file's
@@ -296,7 +297,8 @@ fn form_data(ui: &mut Ui, req: &mut Request, env: &Env) {
                 } else {
                     let mut marked = super::var_layouter(mono(13.0), (env.missing, t));
                     let value = egui::TextEdit::singleline(&mut f.value).font(mono(13.0)).desired_width(value_w).hint_text(lang.tr("Value"));
-                    changed |= ui.add(value.layouter(&mut marked)).accessible_name(lang.tr("Value")).changed();
+                    let field = ui.add(value.layouter(&mut marked)).accessible_name(lang.tr("Value"));
+                    changed |= super::var_field(ui, &field, &mut f.value) | field.changed();
                 }
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
                     remove = Some(i);

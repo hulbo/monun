@@ -83,6 +83,8 @@ struct Tab {
     format: Option<Format>,
     as_it_came: bool,
     wrap: bool,
+    /// The variables listed to switch a `{{…}}` clicked to.
+    var_menu: Option<VarClick>,
 }
 
 /// What an answer's body is shown as.
@@ -218,6 +220,23 @@ struct Scope {
     envs: Vec<String>,
     /// The environment in use (its group's), if any.
     env: Option<String>,
+    /// Every variable its folders hold (read or not), outermost folder first: what a click on a
+    /// `{{…}}` offers to switch it to.
+    choices: Vec<Choice>,
+}
+
+/// A folder's variable: where it is, its name and value (in the environment in use), whether it is
+/// kept unread (another of its name is read, `on` false), and whether the request reads it (of a
+/// name, the innermost on).
+struct Choice {
+    folder: u64,
+    index: usize,
+    folder_name: String,
+    name: String,
+    value: String,
+    secret: bool,
+    on: bool,
+    read: bool,
 }
 
 /// A request with its variables read.
@@ -240,6 +259,9 @@ enum Act {
     AddRequest,
     /// The environment the group's requests read in (`None`: none).
     Env(Option<String>),
+    /// A folder's variable chosen to read: each variable of its name (folder and place), and
+    /// whether it is read now (the one chosen; the others kept unread).
+    UseVar(String, Vec<(u64, usize, bool)>),
 }
 
 /// Puts `(name, value)` in `list`, over one of that name (`ci`: regardless of case).
@@ -268,6 +290,7 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
     let mut vars: Vec<(String, String, bool)> = Vec::new();
     let mut headers: Vec<(String, String, ())> = Vec::new();
     let mut envs: Vec<String> = Vec::new();
+    let mut choices: Vec<Choice> = Vec::new();
     for f in chain.iter().rev() {
         for e in &f.envs {
             if !envs.contains(e) {
@@ -278,8 +301,21 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
         for v in f.vars.iter().filter(|v| !v.off && !v.name.trim().is_empty()) {
             upsert(&mut vars, v.name.trim(), v.value_in(env.as_deref()), v.secret, false);
         }
+        for (index, v) in f.vars.iter().enumerate().filter(|(_, v)| !v.name.trim().is_empty()) {
+            let value = v.value_in(env.as_deref()).to_string();
+            let name = v.name.trim().to_string();
+            choices.push(Choice { folder: f.id, index, folder_name: f.name.clone(), name, value, secret: v.secret, on: !v.off, read: false });
+        }
         for h in f.headers.iter().filter(|h| !h.name.trim().is_empty()) {
             upsert(&mut headers, h.name.trim(), &h.value, (), true);
+        }
+    }
+    // Of each name, the one read is the innermost on, as `vars` reads it.
+    let mut named: Vec<String> = Vec::new();
+    for c in choices.iter_mut().rev().filter(|c| c.on) {
+        if !named.contains(&c.name) {
+            c.read = true;
+            named.push(c.name.clone());
         }
     }
     Scope {
@@ -289,6 +325,7 @@ fn scope(app: &SheetApp, uid: u64) -> Scope {
         insecure: chain.iter().any(|f| f.insecure),
         envs,
         env,
+        choices,
     }
 }
 
@@ -492,6 +529,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     let (mut section, mut answer_view) = (tab.section, tab.answer_view);
     let mut look = Look { format: tab.format, as_it_came: tab.as_it_came, wrap: tab.wrap };
     let mut stash = std::mem::take(&mut tab.stash);
+    let mut var_menu = tab.var_menu.take();
     let before = req.clone();
     let scope = scope(app, uid);
     // A file the request sends is named relative to the request's own file.
@@ -542,6 +580,21 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
     // The answer of the request shown (another's waits until it shows again).
     let call = app.api.tabs.get(&uid).and_then(|tab| tab.call.as_ref()).filter(|c| c.index == index);
     answer(ui, (uid, lang, &t), call, (&mut answer_view, &mut look), &mut acts);
+    // A click on a `{{…}}` lists the variables to switch it to; an edit closes the list, and a
+    // switch its field didn't take (it went out of view) is dropped.
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.ctx().data_mut(|d| {
+        if d.get_temp::<VarSwap>(egui::Id::unique(VAR_SWAP)).is_some_and(|s| s.frame + 2 < frame) {
+            d.remove_temp::<VarSwap>(egui::Id::unique(VAR_SWAP));
+        }
+    });
+    if let Some(click) = ui.ctx().data_mut(|d| d.remove_temp::<VarClick>(egui::Id::unique(VAR_CLICK))) {
+        var_menu = Some(click);
+    } else if req != before {
+        var_menu = None;
+    }
+    let own: Vec<(String, String)> = file_vars.iter().chain(&req.vars).cloned().collect();
+    choice_menu(ui, uid, (&scope, &own), (lang, &t), &mut var_menu, &mut acts);
 
     if let Some(tab) = app.api.tabs.get_mut(&uid) {
         tab.request = index;
@@ -550,6 +603,7 @@ pub fn show(app: &mut SheetApp, outer: &mut Ui, (uid, sheet): (u64, usize)) {
         tab.answer_view = answer_view;
         (tab.format, tab.as_it_came, tab.wrap) = (look.format, look.as_it_came, look.wrap);
         tab.stash = stash;
+        tab.var_menu = var_menu;
     }
     let edited = (req != before).then(|| {
         let range = requests.get(index).map(|p| p.range.clone()).unwrap_or(text.len()..text.len());
@@ -590,6 +644,19 @@ fn finish(app: &mut SheetApp, uid: u64, (text, edited): (&str, Option<(String, u
                 let group = app.ui.group.clone();
                 if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
                     g.env = env;
+                }
+                crate::groups::persist(app);
+            }
+            Act::UseVar(name, each) => {
+                // As Folder Settings' Use: the one chosen in use, the others of its name not.
+                let group = app.ui.group.clone();
+                if let Some(g) = app.ui.groups.iter_mut().find(|g| g.name == group) {
+                    for (folder, index, on) in each {
+                        let var = g.folders.iter_mut().find(|f| f.id == folder).and_then(|f| f.vars.get_mut(index));
+                        if let Some(v) = var.filter(|v| v.name.trim() == name) {
+                            v.off = !on;
+                        }
+                    }
                 }
                 crate::groups::persist(app);
             }
@@ -689,7 +756,8 @@ fn request_bar(
         let mut marked = var_layouter(mono(13.5), (missing, t));
         let field =
             egui::TextEdit::singleline(&mut req.url).font(mono(13.5)).desired_width(url_w).hint_text("https://{{Domain}}/path").layouter(&mut marked);
-        ui.add(field).accessible_name(lang.tr("Address"));
+        let address = ui.add(field).accessible_name(lang.tr("Address"));
+        var_field(ui, &address, &mut req.url);
         let size = vec2(button_w, 26.0);
         if busy {
             if ui.add_sized(size, egui::Button::new(lang.tr("Cancel"))).clicked() {
@@ -818,6 +886,194 @@ fn var_spans(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
     out
 }
 
+/// Where a field notes the `{{…}}` a click landed in, for the tab to list the variables to switch
+/// it to; and where the switch chosen waits for that field.
+const VAR_CLICK: &str = "monun.api.var_click";
+const VAR_SWAP: &str = "monun.api.var_swap";
+
+/// A click on a `{{…}}` of a field: the variable's name, where the click was, and the field (its
+/// id) and the `{{…}}` in it (its bytes and text), for a switch to replace.
+#[derive(Clone, Default)]
+struct VarClick {
+    name: String,
+    at: egui::Pos2,
+    field: u64,
+    range: std::ops::Range<usize>,
+    text: String,
+}
+
+/// A switch chosen: in the field `field`, the `{{…}}` at `range` (if it still reads `text`) becomes
+/// `with`; chosen at `frame`.
+#[derive(Clone, Default)]
+struct VarSwap {
+    field: u64,
+    range: std::ops::Range<usize>,
+    text: String,
+    with: String,
+    frame: u64,
+}
+
+/// After a field of `text` is drawn: the switch chosen for it is made, and a click that put its
+/// caret inside a `{{…}}` (not a selection) is noted for the tab to list the variables to switch
+/// it to. `true` when `text` changed.
+pub(super) fn var_field(ui: &Ui, field: &egui::Response, text: &mut String) -> bool {
+    let id = field.id.value();
+    let mut changed = false;
+    let swap = ui.ctx().data_mut(|d| d.get_temp::<VarSwap>(egui::Id::unique(VAR_SWAP))).filter(|s| s.field == id);
+    if let Some(swap) = swap {
+        ui.ctx().data_mut(|d| d.remove_temp::<VarSwap>(egui::Id::unique(VAR_SWAP)));
+        if text.get(swap.range.clone()) == Some(swap.text.as_str()) {
+            text.replace_range(swap.range, &swap.with);
+            changed = true;
+        }
+    }
+    if !field.clicked() {
+        return changed;
+    }
+    let Some(at) = field.interact_pointer_pos().or_else(|| ui.ctx().pointer_latest_pos()) else { return changed };
+    let Some(range) = egui::TextEdit::load_state(ui.ctx(), field.id).and_then(|s| s.cursor.char_range()) else { return changed };
+    if range.primary.index != range.secondary.index {
+        return changed;
+    }
+    let byte = text.char_indices().nth(range.primary.index.0).map_or(text.len(), |(b, _)| b);
+    if let Some((r, name)) = var_spans(text).into_iter().find(|(r, _)| r.start < byte && byte < r.end) {
+        let click = VarClick { name: name.to_string(), at, field: id, text: text.get(r.clone()).unwrap_or_default().to_string(), range: r };
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(VAR_CLICK), click));
+    }
+    changed
+}
+
+/// A variable's value as the list shows it: on one line, cut short; a hidden one as dots.
+fn value_text(value: &str, secret: bool, lang: crate::i18n::Language) -> String {
+    if secret {
+        return "••••••••".to_string();
+    }
+    let line = value.replace(['\r', '\n'], " ");
+    if line.trim().is_empty() {
+        return lang.tr("(empty)").to_string();
+    }
+    let mut shown: String = line.chars().take(64).collect();
+    if line.chars().count() > 64 {
+        shown.push('…');
+    }
+    shown
+}
+
+/// How many cells of a fixed-width font `s` takes: Hangul and other wide letters two.
+fn cells(s: &str) -> usize {
+    s.chars().map(|c| if u32::from(c) >= 0x1100 { 2 } else { 1 }).sum()
+}
+
+/// A variable in the list: its name (filled out to `width` cells, so the values line up), its
+/// value, and where it is (`place`, when that tells it apart); dim when the request doesn't read
+/// it (`read`), highlighted when it is the one clicked (`current`).
+fn choice_row(
+    ui: &mut Ui,
+    (name, value, place): (&str, &str, Option<&str>),
+    (current, read): (bool, bool),
+    (t, width): (&Tokens, usize),
+) -> egui::Response {
+    let format = |font_id: FontId, color: egui::Color32| egui::TextFormat { font_id, color, ..Default::default() };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(name, 0.0, format(mono(13.0), if read { t.accent_text } else { t.text_dim }));
+    job.append(&" ".repeat(width.saturating_sub(cells(name)) + 2), 0.0, format(mono(13.0), t.text));
+    job.append(value, 0.0, format(mono(12.5), if read { t.text } else { t.text_dim }));
+    if let Some(place) = place {
+        job.append("  ", 0.0, format(theme::ui_font(11.5), t.text_dim));
+        job.append(place, 0.0, format(theme::ui_font(11.5), t.text_dim));
+    }
+    ui.selectable_label(current, job)
+}
+
+/// The variables to switch the `{{…}}` clicked (`menu`) to, each with its value: the folders'
+/// (`scope`; of a name, the one read in full colour) and the file's own (`own`). One of another
+/// name is written in the `{{…}}`'s place; a folder's not read is read from now on (the others of
+/// its name kept unread), so of one name too it switches. A choice, Esc or a click elsewhere
+/// closes it.
+fn choice_menu(
+    ui: &Ui,
+    uid: u64,
+    (scope, own): (&Scope, &[(String, String)]),
+    (lang, t): (crate::i18n::Language, &Tokens),
+    menu: &mut Option<VarClick>,
+    acts: &mut Vec<Act>,
+) {
+    let Some(click) = menu.clone() else { return };
+    let first = scope.choices.first().map(|c| c.folder);
+    let folders = scope.choices.iter().any(|c| Some(c.folder) != first);
+    // The file's own, the last of a name (the request's) over the others and the folders'.
+    let mut file: Vec<(&str, &str)> = Vec::new();
+    for (k, v) in own {
+        match file.iter_mut().find(|(n, _)| *n == k.as_str()) {
+            Some(row) => row.1 = v,
+            None => file.push((k, v)),
+        }
+    }
+    let width = scope.choices.iter().map(|c| cells(&c.name)).chain(file.iter().map(|(n, _)| cells(n))).max().unwrap_or(0);
+    let mut picked: Option<(String, Option<(u64, usize)>)> = None;
+    let mut done = false;
+    let shown = egui::Area::new(egui::Id::unique(("monun.api.var_menu", uid)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(click.at + vec2(0.0, 12.0))
+        .constrain(true)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::menu(ui.style()).show(ui, |ui| {
+                ui.set_max_width(680.0);
+                let head = lang.tr("Switch {var} to").replace("{var}", &format!("{{{{{}}}}}", click.name));
+                ui.label(RichText::new(head).font(theme::ui_font(12.0)).color(t.text_dim));
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    for c in &scope.choices {
+                        let read = c.read && !file.iter().any(|(n, _)| *n == c.name);
+                        let value = value_text(&c.value, c.secret, lang);
+                        let place = folders.then_some(c.folder_name.as_str());
+                        if choice_row(ui, (&c.name, &value, place), (read && c.name == click.name, read), (t, width)).clicked() {
+                            picked = Some((c.name.clone(), Some((c.folder, c.index))));
+                        }
+                    }
+                    for (name, value) in &file {
+                        let value = value_text(value, false, lang);
+                        if choice_row(ui, (name, &value, Some(lang.tr("this file"))), (*name == click.name, true), (t, width)).clicked() {
+                            picked = Some((name.to_string(), None));
+                        }
+                    }
+                    if scope.choices.is_empty() && file.is_empty() {
+                        ui.label(RichText::new(lang.tr("No variables yet: add them in Folder Settings.")).color(t.text_dim));
+                    }
+                });
+                if let Some((group, id, _)) = &scope.folder {
+                    ui.separator();
+                    if ui.button(lang.tr("Folder Settings…")).clicked() {
+                        acts.push(Act::Settings(group.clone(), *id));
+                        done = true;
+                    }
+                }
+            });
+        });
+    if let Some((name, place)) = picked {
+        done = true;
+        if name != click.name {
+            // The `{{…}}` clicked names it now: its field takes the switch as it is drawn.
+            let with = format!("{{{{{name}}}}}");
+            let swap =
+                VarSwap { field: click.field, range: click.range.clone(), text: click.text.clone(), with, frame: ui.ctx().cumulative_frame_nr() };
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(VAR_SWAP), swap));
+            ui.ctx().request_repaint();
+        }
+        // A folder's variable not read: read from now on, the others of its name not.
+        if let Some((folder, index)) = place
+            && scope.choices.iter().any(|c| c.folder == folder && c.index == index && !c.read)
+        {
+            let each = scope.choices.iter().filter(|c| c.name == name).map(|c| (c.folder, c.index, c.folder == folder && c.index == index)).collect();
+            acts.push(Act::UseVar(name, each));
+        }
+    }
+    let elsewhere = ui.input(|i| i.pointer.any_pressed() && i.pointer.press_origin().is_some_and(|p| !shown.response.rect.contains(p)));
+    let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if done || esc || elsewhere {
+        *menu = None;
+    }
+}
+
 /// Paints the `{{…}}` of `job` as variables, as Postman marks them: in the accent colour on its
 /// tint, one without a value (`missing`) in red on a red tint.
 pub(super) fn mark_vars(job: &mut egui::text::LayoutJob, missing: &[String], t: &Tokens) {
@@ -867,8 +1123,9 @@ pub(super) fn var_layouter<'a>(
 }
 
 /// A table of names and values to edit, a row's ✕ taking it out, its `{{…}}` marked as variables
-/// (those without a value, `missing`, in red); `true` when one changed. Rows are laid out side by
-/// side (a grid would keep a field as narrow as it first was).
+/// (those without a value, `missing`, in red; a click on one lists the variables to switch it to);
+/// `true` when one changed. Rows are laid out side by side (a grid would keep a field as narrow as
+/// it first was).
 pub(super) fn pairs_table(
     ui: &mut Ui,
     salt: (&str, usize),
@@ -894,10 +1151,12 @@ pub(super) fn pairs_table(
             ui.horizontal(|ui| {
                 let mut marked = var_layouter(mono(13.0), (missing, t));
                 let name = egui::TextEdit::singleline(k).font(mono(13.0)).desired_width(name_w).layouter(&mut marked);
-                changed |= ui.add(name).accessible_name(lang.tr("Name")).changed();
+                let name = ui.add(name).accessible_name(lang.tr("Name"));
+                changed |= var_field(ui, &name, k) | name.changed();
                 let mut marked = var_layouter(mono(13.0), (missing, t));
                 let value = egui::TextEdit::singleline(v).font(mono(13.0)).desired_width(value_w).layouter(&mut marked);
-                changed |= ui.add(value).accessible_name(lang.tr("Value")).changed();
+                let value = ui.add(value).accessible_name(lang.tr("Value"));
+                changed |= var_field(ui, &value, v) | value.changed();
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
                     remove = Some(i);
                 }
@@ -1137,6 +1396,11 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     ui.add_space(8.0);
     ui.label(RichText::new(lang.tr("Variables")).strong());
     ui.label(RichText::new(lang.tr("Write {{Name}} in a request's address, headers or body.")).font(theme::ui_font(12.0)).color(t.text_dim));
+    let names: Vec<&str> = work.vars.iter().map(|v| v.name.trim()).filter(|n| !n.is_empty()).collect();
+    if names.iter().enumerate().any(|(i, n)| names.get(..i).is_some_and(|before| before.contains(n))) {
+        let note = lang.tr("Of variables with the same name, one is read (the others show dim): click {{Name}} in a request to choose.");
+        ui.label(RichText::new(note).font(theme::ui_font(12.0)).color(t.text_dim));
+    }
     let envs = work.envs.clone();
     let typing = settings_table(ui, ("monun.api.folder_vars", id), &mut work.vars, Some(&envs), (lang, &t));
     ui.add_space(8.0);
@@ -1154,8 +1418,8 @@ pub(crate) fn settings_dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut Dialog, o
     match crate::widgets::dialog_buttons(ui, &row) {
         Some(0) => {
             *open = false;
-            // A name still being typed is done now: one of a name in use at most.
-            one_in_use(&mut work.vars, None, typing, None);
+            // A name still being typed is done now: one of each name read.
+            one_in_use(&mut work.vars, typing, None);
             // Environments named once each; a variable's values only for those, and only filled.
             let mut envs: Vec<String> = Vec::new();
             for e in work.envs.iter().map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
@@ -1246,9 +1510,9 @@ fn envs_editor(ui: &mut Ui, id: u64, work: &mut Folder, (lang, t): (crate::i18n:
 }
 
 /// A folder's variables or headers to edit: name, value (dots for a hidden variable), a value for
-/// each of `envs` (a variable's; `None` for headers), Use and Hidden (a variable's), ✕. Of the
-/// variables of one name, one at most is in use ([`one_in_use`]). The variable whose name is being
-/// typed, if any.
+/// each of `envs` (a variable's; `None` for headers), Hidden (a variable's), ✕. Of the variables
+/// of one name one is read ([`one_in_use`]; the others show dim), chosen by a click on its `{{…}}`
+/// in a request ([`choice_menu`]). The variable whose name is being typed, if any.
 fn settings_table(
     ui: &mut Ui,
     salt: (&str, u64),
@@ -1259,13 +1523,12 @@ fn settings_table(
     let secrets = envs.is_some();
     let envs = envs.unwrap_or_default();
     let mut remove = None;
-    // The name being typed, the one just typed, and the variable whose Use was just ticked.
-    let (mut typing, mut named, mut chose) = (None, None, None);
+    // The name being typed, and the one just typed.
+    let (mut typing, mut named) = (None, None);
     let gap = ui.spacing().item_spacing.x;
     let name_w = if envs.is_empty() { 170.0 } else { 140.0 };
-    // The values share what the name, Use, Hidden and ✕ leave.
-    let flags = if secrets { 120.0 + gap } else { 0.0 };
-    let rest = ui.available_width() - name_w - flags - 22.0 - gap * (envs.len() as f32 + 3.0);
+    // The values share what the name, Hidden and ✕ leave.
+    let rest = ui.available_width() - name_w - if secrets { 64.0 } else { 0.0 } - 22.0 - gap * (envs.len() as f32 + 3.0);
     let value_w = (rest / (envs.len() as f32 + 1.0)).clamp(80.0, 360.0);
     if !envs.is_empty() {
         // The columns' names over them.
@@ -1283,7 +1546,7 @@ fn settings_table(
     for (i, r) in rows.iter_mut().enumerate() {
         ui.push_id((salt, i), |ui| {
             ui.horizontal(|ui| {
-                // A variable out of use shows dim.
+                // A variable not read (another of its name is) shows dim.
                 let ink = if r.off { t.text_dim } else { t.text };
                 let name = ui
                     .add(egui::TextEdit::singleline(&mut r.name).font(mono(13.0)).text_color(ink).desired_width(name_w).hint_text(lang.tr("Name")))
@@ -1316,14 +1579,6 @@ fn settings_table(
                     }
                 }
                 if secrets {
-                    let mut on = !r.off;
-                    let tip = lang.tr("Requests read this variable. Of variables with the same name, only one is in use.");
-                    if ui.checkbox(&mut on, lang.tr("Use")).on_hover_text(tip).changed() {
-                        r.off = !on;
-                        if on {
-                            chose = Some(i);
-                        }
-                    }
                     ui.checkbox(&mut r.secret, lang.tr("Hidden")).on_hover_text(lang.tr("Show the value as dots (a password or a token)"));
                 }
                 if crate::widgets::icon_button(ui, Icon::Close, t.text_dim, lang.tr("Remove"), vec2(22.0, 22.0)).clicked() {
@@ -1333,7 +1588,7 @@ fn settings_table(
         });
     }
     if secrets {
-        one_in_use(rows, chose, named, typing);
+        one_in_use(rows, named, typing);
     }
     if let Some(i) = remove.filter(|i| *i < rows.len()) {
         rows.remove(i);
@@ -1346,21 +1601,14 @@ fn settings_table(
     typing
 }
 
-/// Leaves one variable of each name in use at most; the others stay, out of use. One whose Use was
-/// just ticked (`chose`) takes its name from the others; one whose name was just typed (`named`)
-/// gives way to another of that name in use; otherwise the first in the list keeps it, so a
-/// variable added later starts out of use. The one whose name is being typed (`typing`) waits
-/// until its name is done.
-fn one_in_use(rows: &mut [Setting], chose: Option<usize>, named: Option<usize>, typing: Option<usize>) {
+/// Leaves one variable of each name read, the others kept but not read: one whose name was just
+/// typed (`named`) gives way to another of that name read; otherwise the first in the list is
+/// read, so a variable added later is not; a name none is read of (the one read taken out or
+/// renamed) has its first read. The one whose name is being typed (`typing`) waits until its name
+/// is done, and keeps its name's read while it is.
+fn one_in_use(rows: &mut [Setting], named: Option<usize>, typing: Option<usize>) {
     let key = |r: &Setting| r.name.trim().to_string();
-    if let Some(name) = chose.and_then(|i| rows.get(i)).filter(|r| !r.off).map(key).filter(|n| !n.is_empty()) {
-        for (j, r) in rows.iter_mut().enumerate() {
-            if Some(j) != chose && key(r) == name {
-                r.off = true;
-            }
-        }
-    }
-    if let Some(i) = named.filter(|i| Some(*i) != chose)
+    if let Some(i) = named
         && let Some(name) = rows.get(i).filter(|r| !r.off).map(key).filter(|n| !n.is_empty())
         && rows.iter().enumerate().any(|(j, r)| j != i && !r.off && key(r) == name)
         && let Some(r) = rows.get_mut(i)
@@ -1378,6 +1626,15 @@ fn one_in_use(rows: &mut [Setting], chose: Option<usize>, named: Option<usize>, 
         } else {
             seen.push(name);
         }
+    }
+    seen.extend(typing.and_then(|i| rows.get(i)).filter(|r| !r.off).map(key));
+    for (j, r) in rows.iter_mut().enumerate() {
+        let name = key(r);
+        if !r.off || name.is_empty() || Some(j) == typing || seen.contains(&name) {
+            continue;
+        }
+        r.off = false;
+        seen.push(name);
     }
 }
 
@@ -1442,31 +1699,47 @@ mod tests {
     }
 
     #[test]
-    fn one_variable_of_a_name_is_in_use() {
+    fn one_variable_of_a_name_is_read() {
         let var = |name: &str, off: bool| Setting { name: name.into(), off, ..Setting::default() };
-        let used = |rows: &[Setting]| rows.iter().map(|r| !r.off).collect::<Vec<_>>();
-        // A second URL added: it starts out of use, the first keeps it.
+        let read = |rows: &[Setting]| rows.iter().map(|r| !r.off).collect::<Vec<_>>();
+        // A second URL added: the first stays read.
         let mut rows = vec![var("URL", false), var("CI", false), var("URL", false)];
-        one_in_use(&mut rows, None, None, None);
-        assert_eq!(used(&rows), [true, true, false]);
-        // Its Use ticked: it takes the name from the first.
-        rows[2].off = false;
-        one_in_use(&mut rows, Some(2), None, None);
-        assert_eq!(used(&rows), [false, true, true]);
-        // A name being typed waits; once typed, it gives way to the one in use, even ahead of it.
+        one_in_use(&mut rows, None, None);
+        assert_eq!(read(&rows), [true, true, false]);
+        // A name being typed waits; once typed, it gives way to the one read, even ahead of it.
         let mut rows = vec![var("CI", false), var("URL", false)];
         rows[0].name = "URL".into();
-        one_in_use(&mut rows, None, None, Some(0));
-        assert_eq!(used(&rows), [true, true]);
-        one_in_use(&mut rows, None, Some(0), None);
-        assert_eq!(used(&rows), [false, true]);
+        one_in_use(&mut rows, None, Some(0));
+        assert_eq!(read(&rows), [true, true]);
+        one_in_use(&mut rows, Some(0), None);
+        assert_eq!(read(&rows), [false, true]);
+        // The one read, clicked into and left as it was, stays read.
+        let mut rows = vec![var("URL", false), var("URL", true)];
+        one_in_use(&mut rows, None, Some(0));
+        one_in_use(&mut rows, Some(0), None);
+        assert_eq!(read(&rows), [true, false]);
+        // Renamed, it leaves its old name to the next; with none read, the first is.
+        let mut rows = vec![var("URL2", false), var("URL", true)];
+        one_in_use(&mut rows, None, Some(0));
+        assert_eq!(read(&rows), [true, true]);
+        let mut rows = vec![var("URL", true), var("URL", true)];
+        one_in_use(&mut rows, None, None);
+        assert_eq!(read(&rows), [true, false]);
         // Names are told apart as typed (trimmed); an empty one counts for none.
-        let mut rows = vec![var(" Url ", false), var("URL", false), var("", false), var("", false)];
-        one_in_use(&mut rows, None, None, None);
-        assert_eq!(used(&rows), [true, true, true, true]);
+        let mut rows = vec![var(" Url ", false), var("URL", false), var("", false), var("", true)];
+        one_in_use(&mut rows, None, None);
+        assert_eq!(read(&rows), [true, true, true, false]);
         // Kept with the folder: out of use says so, in use says nothing (as before).
         assert_eq!(serde_json::to_value(var("URL", true)).unwrap()["off"], true);
         assert!(serde_json::to_value(var("URL", false)).unwrap().get("off").is_none());
+    }
+
+    #[test]
+    fn the_list_lines_values_up_after_names_hangul_two_cells_wide() {
+        assert_eq!((cells("KEY_A"), cells("주문_KEY"), cells("")), (5, 8, 0));
+        assert_eq!(value_text("a\r\nb", false, crate::i18n::Language::En), "a  b");
+        assert_eq!(value_text(&"x".repeat(70), false, crate::i18n::Language::En).chars().count(), 65, "cut short");
+        assert_eq!(value_text("token", true, crate::i18n::Language::En), "••••••••");
     }
 
     #[test]
